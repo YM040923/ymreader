@@ -459,6 +459,71 @@ Content-Type: application/json
 
 如果物理目录仍满足自动识别条件，后续扫描、重建或自动刷新可能再次创建该目录作品。
 
+## 📚 作品（Work）
+
+Work 是统一阅读模型，用于把“整本书 / 一卷 / 一话 / 特典”组织成同一作品的阅读单元。以下接口全部需要认证；读取和进度接口按书库 `canView` 过滤，重建指定书库要求 `canManage`，重建全部仅管理员可用。
+
+| 方法 | 路径 | 说明 |
+|:---|:---|:---|
+| GET | `/api/works` | 作品列表，支持 `libraryIds` 和 `search` |
+| GET | `/api/works/:id` | 作品详情与阅读单元 |
+| GET | `/api/works/:id/continue` | 获取继续阅读位置；未读时返回首个阅读单元第 0 页 |
+| PUT | `/api/works/:id/progress` | 更新作品级阅读进度 |
+| GET | `/api/works/:id/units/:unitId/adjacent` | 获取当前阅读单元的上一/下一单元 |
+| POST | `/api/works/rebuild` | 重建作品投影，可选 `libraryId` |
+
+### 作品列表
+
+```http
+GET /api/works?libraryIds=lib-a,lib-b&search=大王
+Authorization: Bearer <token>
+```
+
+返回 `{ "works": [], "total": 0 }`。普通用户只能看到可访问书库中的 Work，传入 `libraryIds` 时会与自身可访问书库取交集。
+
+### 作品详情
+
+```http
+GET /api/works/:id
+```
+
+返回 `{ "work": Work, "units": WorkUnit[] }`。`units` 按作品内阅读顺序排列，可用于目录。
+
+### 继续阅读与进度
+
+```http
+GET /api/works/:id/continue
+PUT /api/works/:id/progress
+Content-Type: application/json
+
+{ "unitId": "unit_xxx", "pageIndex": 12 }
+```
+
+继续阅读返回：
+
+```json
+{ "workId": "work_xxx", "unitId": "unit_xxx", "comicId": "comic_xxx", "pageIndex": 12 }
+```
+
+更新进度时 `unitId` 必须属于该 Work；`pageIndex` 使用从 0 开始的页码。也可传 `comicId` 让服务端解析对应 WorkUnit。
+
+### 上一/下一单元
+
+```http
+GET /api/works/:id/units/:unitId/adjacent
+```
+
+返回 `{ "previous": WorkUnit|null, "next": WorkUnit|null }`。
+
+### 重建 Work 投影
+
+```http
+POST /api/works/rebuild?libraryId=lib_xxx
+POST /api/works/rebuild
+```
+
+指定 `libraryId` 时只重建该漫画书库；省略时重建全部启用漫画书库。
+
 ## 🏷️ 标签 & 分类
 
 | 方法 | 路径 | 说明 |

@@ -354,10 +354,19 @@ const workSummarySelectSQL = `
 
 func scanWorkSummary(scanner workScanner) (model.Work, error) {
 	var work model.Work
-	var lastReadAt sql.NullTime
+	var lastReadAt interface{}
 	err := scanner.Scan(&work.ID, &work.LibraryID, &work.RootRelativePath, &work.Title, &work.SortTitle, &work.CoverURL, &work.CoverUnitID, &work.Author, &work.Publisher, &work.Year, &work.Description, &work.Language, &work.Genre, &work.MetadataSource, &work.ContentType, &work.MetadataLocked, &work.ManualLocked, &work.ItemCount, &lastReadAt, &work.CreatedAt, &work.UpdatedAt)
-	if lastReadAt.Valid {
-		work.LastReadAt = &lastReadAt.Time
+	switch v := lastReadAt.(type) {
+	case time.Time:
+		work.LastReadAt = &v
+	case string:
+		if parsed := parseSQLiteTime(v); !parsed.IsZero() {
+			work.LastReadAt = &parsed
+		}
+	case []byte:
+		if parsed := parseSQLiteTime(string(v)); !parsed.IsZero() {
+			work.LastReadAt = &parsed
+		}
 	}
 	return work, err
 }

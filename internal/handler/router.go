@@ -50,6 +50,7 @@ func SetupRoutes(r *gin.Engine) {
 	}
 
 	registerAuthRoutes(api)
+	registerWorkRoutes(api)
 	registerComicRoutes(api)
 	registerSeriesRoutes(api)
 	registerContentRoutes(api)
