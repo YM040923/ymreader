@@ -62,15 +62,13 @@ func DetectWorks(items []SourceItem) []DetectedWork {
 		parentTitle := ""
 		if parent != "" {
 			parentTitle = path.Base(parent)
-			if top, ok := topLevelParent(parent); ok {
-				parentTitle = top
-			}
 		}
 
 		resolved := ResolvePath(rel, parentTitle)
 		root := parent
 		if top, ok := topLevelParent(parent); ok && resolved.Unit.Kind != UnitKindFull {
 			root = top
+			resolved.WorkTitle = top
 			applyNestedUnitContext(&resolved.Unit, rel, root)
 		}
 		if root == "" && resolved.Unit.Kind != UnitKindFull {

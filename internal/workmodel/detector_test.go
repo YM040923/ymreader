@@ -144,6 +144,25 @@ func TestDetectWorksSortsSameTitleAndRootAcrossLibrariesDeterministically(t *tes
 	}
 }
 
+func TestDetectWorksNestedSingleArchiveUsesDirectParentAsFullWorkTitle(t *testing.T) {
+	works := DetectWorks([]SourceItem{{
+		ID:           "comic-1",
+		LibraryID:    "library-1",
+		RelativePath: "??/??A/??A.cbz",
+	}})
+
+	if len(works) != 1 {
+		t.Fatalf("len(works) = %d", len(works))
+	}
+	work := works[0]
+	if work.Title != "??A" || work.RootRelativePath != "??/??A" {
+		t.Fatalf("work = %#v", work)
+	}
+	if len(work.Units) != 1 || work.Units[0].Kind != UnitKindFull {
+		t.Fatalf("Units = %#v", work.Units)
+	}
+}
+
 func TestDetectWorksNestedVolumeChaptersAsOneSortedWork(t *testing.T) {
 	vol01Chapter := "\u5927\u738b\u9976\u547d/Vol.01/\u7b2c001\u8bdd.cbz"
 	vol02Chapter := "\u5927\u738b\u9976\u547d/Vol.02/\u7b2c002\u8bdd.cbz"
