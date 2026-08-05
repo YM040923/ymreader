@@ -1,11 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nowen-reader/nowen-reader/internal/model"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
 
@@ -40,5 +44,45 @@ func TestRebuildWorksAfterScanRebuildsSuccessfulLibraryScan(t *testing.T) {
 	}
 	if len(works) != 1 || works[0].ItemCount != 2 {
 		t.Fatalf("works after middleware = %#v", works)
+	}
+}
+
+func TestLibraryScanRouteRebuildsWorksProjection(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	root := t.TempDir()
+	for _, name := range []string{"Da Wang Rao Ming Ch.001.cbz", "Da Wang Rao Ming Ch.002.cbz"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("comic"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := performAuthedRequest(r, http.MethodPost, "/api/admin/libraries", map[string]interface{}{
+		"name": "Route Work Hook", "type": "comic", "rootPaths": []string{root},
+	}, cookie)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create library: %d %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Library model.Library `json:"library"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	w = performAuthedRequest(r, http.MethodPost, "/api/admin/libraries/"+created.Library.ID+"/scan", nil, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("scan library: %d %s", w.Code, w.Body.String())
+	}
+
+	works, err := store.ListWorks([]string{created.Library.ID}, "admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 {
+		t.Fatalf("work count = %d, works = %#v", len(works), works)
+	}
+	if works[0].Title != "Da Wang Rao Ming" || works[0].ItemCount != 2 {
+		t.Fatalf("work projection = %#v", works[0])
 	}
 }
