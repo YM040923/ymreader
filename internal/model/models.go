@@ -266,40 +266,46 @@ type Work struct {
 	RootRelativePath string     `json:"rootRelativePath"`
 	Title            string     `json:"title"`
 	SortTitle        string     `json:"sortTitle"`
-	Author           string     `json:"author"`
-	Description      string     `json:"description"`
-	CoverComicID     string     `json:"coverComicId"`
 	CoverURL         string     `json:"coverUrl"`
-	ItemCount        int        `json:"itemCount,omitempty"`
-	Units            []WorkUnit `json:"units,omitempty"`
+	CoverUnitID      string     `json:"coverUnitId"`
+	Author           string     `json:"author"`
+	Publisher        string     `json:"publisher"`
+	Year             *int       `json:"year"`
+	Description      string     `json:"description"`
+	Language         string     `json:"language"`
+	Genre            string     `json:"genre"`
+	MetadataSource   string     `json:"metadataSource"`
+	ContentType      string     `json:"contentType"`
+	MetadataLocked   bool       `json:"metadataLocked"`
+	ManualLocked     bool       `json:"manualLocked"`
+	ItemCount        int        `json:"itemCount"`
+	LastReadAt       *time.Time `json:"lastReadAt"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 // WorkUnit represents one ordered source item inside a Work.
 type WorkUnit struct {
-	ID            string    `json:"id"`
-	WorkID        string    `json:"workId"`
-	ComicID       string    `json:"comicId"`
-	Title         string    `json:"title"`
-	DisplayLabel  string    `json:"displayLabel"`
-	RelativePath  string    `json:"relativePath"`
-	Kind          string    `json:"kind"`
-	VolumeNumber  *float64  `json:"volumeNumber,omitempty"`
-	ChapterNumber *float64  `json:"chapterNumber,omitempty"`
-	SortIndex     int       `json:"sortIndex"`
-	PageCount     int       `json:"pageCount"`
-	FileSize      int64     `json:"fileSize"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID            string   `json:"id"`
+	WorkID        string   `json:"workId"`
+	ComicID       string   `json:"comicId"`
+	RelativePath  string   `json:"relativePath"`
+	Title         string   `json:"title"`
+	DisplayLabel  string   `json:"displayLabel"`
+	UnitKind      string   `json:"unitKind"`
+	VolumeNumber  *float64 `json:"volumeNumber,omitempty"`
+	ChapterNumber *float64 `json:"chapterNumber,omitempty"`
+	SortIndex     int      `json:"sortIndex"`
+	PageCount     int      `json:"pageCount"`
+	FileSize      int64    `json:"fileSize"`
+	CoverURL      string   `json:"coverUrl"`
 }
 
 // UserWorkProgress stores per-user progress at the work level.
 type UserWorkProgress struct {
-	UserID    string    `json:"userId"`
-	WorkID    string    `json:"workId"`
-	UnitID    string    `json:"unitId"`
-	LastPage  int       `json:"lastPage"`
-	Progress  float64   `json:"progress"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	UserID    string     `json:"userId"`
+	WorkID    string     `json:"workId"`
+	UnitID    string     `json:"unitId"`
+	PageIndex int        `json:"pageIndex"`
+	UpdatedAt *time.Time `json:"updatedAt"`
 }
