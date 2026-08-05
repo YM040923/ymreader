@@ -53,20 +53,20 @@ type APIKey struct {
 
 // Library 代表一个可扫描的书库/目录
 type Library struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"` // "comic" | "novel" | "mixed"
-	RootPath  string    `json:"rootPath"`
-	RootPaths []string  `json:"rootPaths,omitempty"` // 多目录支持，包含主路径和额外路径
-	Enabled   bool      `json:"enabled"`
-	SortOrder int       `json:"sortOrder"`
-	DefaultAccess string    `json:"defaultAccess"` // "public" | "private"
-	LastScanAt    *time.Time `json:"lastScanAt"`   // 上次扫描时间
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"` // "comic" | "novel" | "mixed"
+	RootPath      string     `json:"rootPath"`
+	RootPaths     []string   `json:"rootPaths,omitempty"` // 多目录支持，包含主路径和额外路径
+	Enabled       bool       `json:"enabled"`
+	SortOrder     int        `json:"sortOrder"`
+	DefaultAccess string     `json:"defaultAccess"` // "public" | "private"
+	LastScanAt    *time.Time `json:"lastScanAt"`    // 上次扫描时间
 	LastScanAdded int        `json:"lastScanAdded"` // 上次扫描新增数
 	LastScanTotal int        `json:"lastScanTotal"` // 上次扫描文件总数
 	ScanEnabled   bool       `json:"scanEnabled"`   // 是否参与自动扫描
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
 // UserLibraryAccess 保存用户对特定书库的访问权限
@@ -140,13 +140,13 @@ type Comic struct {
 	TotalReadTime int `json:"totalReadTime"`
 
 	// Metadata (from scraping)
-	Author         string `json:"author"`
-	Publisher      string `json:"publisher"`
-	Year           *int   `json:"year"`
-	Description    string `json:"description"`
-	Language       string `json:"language"`
-	Genre          string `json:"genre"`          // comma-separated
-	MetadataSource string `json:"metadataSource"` // "comicvine" | "anilist" | "manual"
+	Author           string  `json:"author"`
+	Publisher        string  `json:"publisher"`
+	Year             *int    `json:"year"`
+	Description      string  `json:"description"`
+	Language         string  `json:"language"`
+	Genre            string  `json:"genre"`            // comma-separated
+	MetadataSource   string  `json:"metadataSource"`   // "comicvine" | "anilist" | "manual"
 	CoverImageURL    string  `json:"coverImageUrl"`    // external cover URL
 	CoverAspectRatio float64 `json:"coverAspectRatio"` // width/height ratio (>1 = landscape)
 
@@ -253,4 +253,53 @@ type ComicGroupSeriesItem struct {
 	GroupID   int    `json:"groupId"`
 	SeriesID  string `json:"seriesId"`
 	SortIndex int    `json:"sortIndex"`
+}
+
+// ============================================================
+// Work Model
+// ============================================================
+
+// Work represents a logical readable work made up of ordered source units.
+type Work struct {
+	ID               string     `json:"id"`
+	LibraryID        string     `json:"libraryId"`
+	RootRelativePath string     `json:"rootRelativePath"`
+	Title            string     `json:"title"`
+	SortTitle        string     `json:"sortTitle"`
+	Author           string     `json:"author"`
+	Description      string     `json:"description"`
+	CoverComicID     string     `json:"coverComicId"`
+	CoverURL         string     `json:"coverUrl"`
+	ItemCount        int        `json:"itemCount,omitempty"`
+	Units            []WorkUnit `json:"units,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
+// WorkUnit represents one ordered source item inside a Work.
+type WorkUnit struct {
+	ID            string    `json:"id"`
+	WorkID        string    `json:"workId"`
+	ComicID       string    `json:"comicId"`
+	Title         string    `json:"title"`
+	DisplayLabel  string    `json:"displayLabel"`
+	RelativePath  string    `json:"relativePath"`
+	Kind          string    `json:"kind"`
+	VolumeNumber  *float64  `json:"volumeNumber,omitempty"`
+	ChapterNumber *float64  `json:"chapterNumber,omitempty"`
+	SortIndex     int       `json:"sortIndex"`
+	PageCount     int       `json:"pageCount"`
+	FileSize      int64     `json:"fileSize"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// UserWorkProgress stores per-user progress at the work level.
+type UserWorkProgress struct {
+	UserID    string    `json:"userId"`
+	WorkID    string    `json:"workId"`
+	UnitID    string    `json:"unitId"`
+	LastPage  int       `json:"lastPage"`
+	Progress  float64   `json:"progress"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
