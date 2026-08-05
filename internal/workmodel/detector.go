@@ -1,68 +1,122 @@
 package workmodel
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// Work is a logical comic work detected from one or more physical inventory paths.
-type Work struct {
-	Title string
-	Units []WorkUnit
-}
-
-// WorkUnit links a resolved unit to its physical inventory path.
-type WorkUnit struct {
+// SourceItem is the physical comic inventory item used as work detection input.
+type SourceItem struct {
+	ID           string
+	LibraryID    string
 	RelativePath string
-	Unit         ResolvedUnit
+	Title        string
+	FileSize     int64
+	PageCount    int
 }
 
-// DetectWorks groups existing comic inventory paths into logical works.
-func DetectWorks(relativePaths []string) []Work {
-	byTitle := make(map[string]*Work)
-	order := make([]string, 0)
+// DetectedUnit is one readable item inside a detected logical work.
+type DetectedUnit struct {
+	ID            string
+	ComicID       string
+	RelativePath  string
+	Kind          UnitKind
+	Title         string
+	DisplayLabel  string
+	VolumeNumber  *float64
+	ChapterNumber *float64
+	SortIndex     int
+	PageCount     int
+	FileSize      int64
+	SortKey       SortKey
+}
 
-	for _, relativePath := range relativePaths {
-		clean := cleanInventoryPath(relativePath)
-		if clean == "" {
+// DetectedWork is a logical comic work detected from one or more source items.
+type DetectedWork struct {
+	ID               string
+	LibraryID        string
+	RootRelativePath string
+	Title            string
+	SortTitle        string
+	Units            []DetectedUnit
+}
+
+// DetectWorks groups existing comic inventory items into logical works.
+func DetectWorks(items []SourceItem) []DetectedWork {
+	groups := make(map[string]*DetectedWork)
+
+	for _, item := range items {
+		rel := cleanInventoryPath(item.RelativePath)
+		if rel == "" {
 			continue
 		}
 
-		resolved := ResolvePath(clean, parentWorkTitle(clean))
-		title := strings.TrimSpace(resolved.WorkTitle)
-		if title == "" {
-			continue
+		parent := path.Dir(rel)
+		if parent == "." || parent == "/" {
+			parent = ""
+		}
+		parentTitle := ""
+		if parent != "" {
+			parentTitle = path.Base(parent)
 		}
 
-		work := byTitle[title]
+		resolved := ResolvePath(rel, parentTitle)
+		root := parent
+		if root == "" && resolved.Unit.Kind != UnitKindFull {
+			root = resolved.WorkTitle
+		}
+		if root == "" {
+			root = trimKnownExt(path.Base(rel))
+		}
+
+		key := item.LibraryID + "\x00" + root
+		work := groups[key]
 		if work == nil {
-			work = &Work{Title: title}
-			byTitle[title] = work
-			order = append(order, title)
+			work = &DetectedWork{
+				ID:               stableID("work", item.LibraryID, root),
+				LibraryID:        item.LibraryID,
+				RootRelativePath: root,
+				Title:            resolved.WorkTitle,
+				SortTitle:        strings.ToLower(resolved.WorkTitle),
+			}
+			groups[key] = work
 		}
-		work.Units = append(work.Units, WorkUnit{RelativePath: resolved.RelativePath, Unit: resolved.Unit})
+
+		work.Units = append(work.Units, DetectedUnit{
+			ID:            stableID("unit", item.LibraryID, rel),
+			ComicID:       item.ID,
+			RelativePath:  rel,
+			Kind:          resolved.Unit.Kind,
+			Title:         resolved.Unit.Title,
+			DisplayLabel:  resolved.Unit.DisplayLabel,
+			VolumeNumber:  resolved.Unit.VolumeNumber,
+			ChapterNumber: resolved.Unit.ChapterNumber,
+			SortIndex:     0,
+			PageCount:     item.PageCount,
+			FileSize:      item.FileSize,
+			SortKey:       resolved.Unit.SortKey,
+		})
 	}
 
-	works := make([]Work, 0, len(order))
-	for _, title := range order {
-		work := *byTitle[title]
-		sortWorkUnits(work.Units)
-		works = append(works, work)
+	works := make([]DetectedWork, 0, len(groups))
+	for _, work := range groups {
+		sortDetectedUnits(work.Units)
+		for i := range work.Units {
+			work.Units[i].SortIndex = i
+		}
+		works = append(works, *work)
 	}
 	sort.SliceStable(works, func(i, j int) bool {
-		return strings.Compare(works[i].Title, works[j].Title) < 0
+		if works[i].SortTitle != works[j].SortTitle {
+			return works[i].SortTitle < works[j].SortTitle
+		}
+		return works[i].RootRelativePath < works[j].RootRelativePath
 	})
 	return works
-}
-
-func parentWorkTitle(cleanRelativePath string) string {
-	dir := path.Dir(cleanRelativePath)
-	if dir == "." || dir == "/" || dir == "" {
-		return ""
-	}
-	return path.Base(dir)
 }
 
 func cleanInventoryPath(relativePath string) string {
@@ -73,9 +127,9 @@ func cleanInventoryPath(relativePath string) string {
 	return clean
 }
 
-func sortWorkUnits(units []WorkUnit) {
+func sortDetectedUnits(units []DetectedUnit) {
 	sort.SliceStable(units, func(i, j int) bool {
-		a, b := units[i].Unit.SortKey, units[j].Unit.SortKey
+		a, b := units[i].SortKey, units[j].SortKey
 		if a.KindRank != b.KindRank {
 			return a.KindRank < b.KindRank
 		}
@@ -87,4 +141,9 @@ func sortWorkUnits(units []WorkUnit) {
 		}
 		return strings.Compare(units[i].RelativePath, units[j].RelativePath) < 0
 	})
+}
+
+func stableID(prefix, libraryID, value string) string {
+	sum := md5.Sum([]byte(libraryID + "\x00" + strings.ReplaceAll(value, "\\", "/")))
+	return prefix + "_" + hex.EncodeToString(sum[:])
 }
