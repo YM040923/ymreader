@@ -66,7 +66,13 @@ func DetectWorks(items []SourceItem) []DetectedWork {
 
 		resolved := ResolvePath(rel, parentTitle)
 		root := parent
-		if top, ok := topLevelParent(parent); ok && resolved.Unit.Kind != UnitKindFull {
+		if categoryRoot, categoryTitle, ok := categoryWorkRoot(parent, rel, resolved.Unit.Kind); ok {
+			root = categoryRoot
+			resolved.WorkTitle = categoryTitle
+			if resolved.Unit.Kind != UnitKindFull {
+				applyNestedUnitContext(&resolved.Unit, rel, root)
+			}
+		} else if top, ok := topLevelParent(parent); ok && resolved.Unit.Kind != UnitKindFull {
 			root = top
 			resolved.WorkTitle = top
 			applyNestedUnitContext(&resolved.Unit, rel, root)
@@ -128,6 +134,58 @@ func DetectWorks(items []SourceItem) []DetectedWork {
 		return works[i].ID < works[j].ID
 	})
 	return works
+}
+
+func categoryWorkRoot(parent, rel string, kind UnitKind) (root, title string, ok bool) {
+	segments := splitPathSegments(parent)
+	if len(segments) == 0 || !isCategorySegment(segments[0]) {
+		return "", "", false
+	}
+	if len(segments) >= 2 {
+		return path.Join(segments[0], segments[1]), segments[1], true
+	}
+	if kind == UnitKindFull {
+		title := trimKnownExt(path.Base(rel))
+		if title != "" {
+			return path.Join(segments[0], title), title, true
+		}
+	}
+	return "", "", false
+}
+
+func splitPathSegments(value string) []string {
+	if value == "" {
+		return nil
+	}
+	raw := strings.Split(value, "/")
+	segments := make([]string, 0, len(raw))
+	for _, segment := range raw {
+		segment = strings.TrimSpace(segment)
+		if segment != "" && segment != "." {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
+}
+
+func isCategorySegment(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, " ", "")
+	normalized = strings.ReplaceAll(normalized, "_", "")
+	normalized = strings.ReplaceAll(normalized, "-", "")
+	switch normalized {
+	case "国漫", "國漫", "大陆漫画", "大陸漫畫", "国产漫画", "國產漫畫", "国产", "國產",
+		"日漫", "日本漫画", "日本漫畫",
+		"韩漫", "韓漫", "韩国漫画", "韓國漫畫",
+		"美漫", "欧美漫画", "歐美漫畫",
+		"guoman", "cncomic", "cncomics", "manhua",
+		"riman", "jpcomic", "jpcomics", "manga",
+		"hanman", "krcomic", "krcomics", "manhwa",
+		"uscomic", "uscomics", "comic", "comics":
+		return true
+	default:
+		return false
+	}
 }
 
 func topLevelParent(parent string) (string, bool) {

@@ -200,3 +200,34 @@ func TestDetectWorksNestedVolumeChaptersAsOneSortedWork(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectWorksSkipsCommonCategoryFolder(t *testing.T) {
+	works := DetectWorks([]SourceItem{
+		{ID: "comic-1", LibraryID: "library-1", RelativePath: "guoman/DaWang/Ch.001.cbz"},
+		{ID: "comic-2", LibraryID: "library-1", RelativePath: "guoman/DaWang/Ch.002.cbz"},
+		{ID: "comic-3", LibraryID: "library-1", RelativePath: "riman/Makeine/Vol.01.cbz"},
+		{ID: "comic-4", LibraryID: "library-1", RelativePath: "riman/Makeine/Vol.02.cbz"},
+		{ID: "comic-5", LibraryID: "library-1", RelativePath: "guoman/Angel.zip"},
+	})
+
+	if len(works) != 3 {
+		t.Fatalf("len(works) = %d, works = %#v", len(works), works)
+	}
+	got := map[string]DetectedWork{}
+	for _, work := range works {
+		got[work.Title] = work
+	}
+	if got["DaWang"].RootRelativePath != "guoman/DaWang" || got["DaWang"].ItemCountForTest() != 2 {
+		t.Fatalf("DaWang work = %#v", got["DaWang"])
+	}
+	if got["Makeine"].RootRelativePath != "riman/Makeine" || got["Makeine"].ItemCountForTest() != 2 {
+		t.Fatalf("Makeine work = %#v", got["Makeine"])
+	}
+	if got["Angel"].RootRelativePath != "guoman/Angel" || got["Angel"].ItemCountForTest() != 1 {
+		t.Fatalf("Angel work = %#v", got["Angel"])
+	}
+}
+
+func (w DetectedWork) ItemCountForTest() int {
+	return len(w.Units)
+}
