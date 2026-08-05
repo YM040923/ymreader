@@ -62,10 +62,17 @@ func DetectWorks(items []SourceItem) []DetectedWork {
 		parentTitle := ""
 		if parent != "" {
 			parentTitle = path.Base(parent)
+			if top, ok := topLevelParent(parent); ok {
+				parentTitle = top
+			}
 		}
 
 		resolved := ResolvePath(rel, parentTitle)
 		root := parent
+		if top, ok := topLevelParent(parent); ok && resolved.Unit.Kind != UnitKindFull {
+			root = top
+			applyNestedUnitContext(&resolved.Unit, rel, root)
+		}
 		if root == "" && resolved.Unit.Kind != UnitKindFull {
 			root = resolved.WorkTitle
 		}
@@ -114,9 +121,43 @@ func DetectWorks(items []SourceItem) []DetectedWork {
 		if works[i].SortTitle != works[j].SortTitle {
 			return works[i].SortTitle < works[j].SortTitle
 		}
-		return works[i].RootRelativePath < works[j].RootRelativePath
+		if works[i].RootRelativePath != works[j].RootRelativePath {
+			return works[i].RootRelativePath < works[j].RootRelativePath
+		}
+		if works[i].LibraryID != works[j].LibraryID {
+			return works[i].LibraryID < works[j].LibraryID
+		}
+		return works[i].ID < works[j].ID
 	})
 	return works
+}
+
+func topLevelParent(parent string) (string, bool) {
+	if parent == "" || !strings.Contains(parent, "/") {
+		return "", false
+	}
+	return strings.Split(parent, "/")[0], true
+}
+
+func applyNestedUnitContext(unit *ResolvedUnit, rel, root string) {
+	nested := strings.TrimPrefix(rel, root+"/")
+	nestedTitle := trimKnownExt(nested)
+	if nestedTitle == "" {
+		return
+	}
+	unit.Title = nestedTitle
+	unit.DisplayLabel = nestedTitle
+	unit.SortKey.Raw = nestedTitle
+
+	volumeFolder := strings.Split(nested, "/")[0]
+	volumeUnit := resolveUnit(trimKnownExt(volumeFolder), "")
+	if volumeUnit.Kind != UnitKindVolume || volumeUnit.VolumeNumber == nil {
+		return
+	}
+	unit.VolumeNumber = volumeUnit.VolumeNumber
+	if unit.ChapterNumber != nil {
+		unit.SortKey.Number = (*volumeUnit.VolumeNumber * 1000000) + *unit.ChapterNumber
+	}
 }
 
 func cleanInventoryPath(relativePath string) string {

@@ -126,3 +126,58 @@ func TestDetectWorksSiblingChaptersAsOneWork(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectWorksSortsSameTitleAndRootAcrossLibrariesDeterministically(t *testing.T) {
+	items := []SourceItem{
+		{ID: "comic-b", LibraryID: "library-b", RelativePath: folderChapter001},
+		{ID: "comic-a", LibraryID: "library-a", RelativePath: folderChapter001},
+	}
+
+	for n := 0; n < 25; n++ {
+		works := DetectWorks(items)
+		if len(works) != 2 {
+			t.Fatalf("len(works) = %d", len(works))
+		}
+		if works[0].LibraryID != "library-a" || works[1].LibraryID != "library-b" {
+			t.Fatalf("iteration %d libraries = %q, %q", n, works[0].LibraryID, works[1].LibraryID)
+		}
+	}
+}
+
+func TestDetectWorksNestedVolumeChaptersAsOneSortedWork(t *testing.T) {
+	vol01Chapter := "\u5927\u738b\u9976\u547d/Vol.01/\u7b2c001\u8bdd.cbz"
+	vol02Chapter := "\u5927\u738b\u9976\u547d/Vol.02/\u7b2c002\u8bdd.cbz"
+	works := DetectWorks([]SourceItem{
+		{ID: "comic-2", LibraryID: "library-1", RelativePath: vol02Chapter},
+		{ID: "comic-1", LibraryID: "library-1", RelativePath: vol01Chapter},
+	})
+
+	if len(works) != 1 {
+		t.Fatalf("len(works) = %d", len(works))
+	}
+	work := works[0]
+	if work.Title != chapterWorkTitle || work.RootRelativePath != chapterWorkTitle {
+		t.Fatalf("work = %#v", work)
+	}
+	want := []struct {
+		comicID       string
+		relativePath  string
+		displayLabel  string
+		chapterNumber float64
+	}{
+		{"comic-1", vol01Chapter, "Vol.01/\u7b2c001\u8bdd", 1},
+		{"comic-2", vol02Chapter, "Vol.02/\u7b2c002\u8bdd", 2},
+	}
+	for i, w := range want {
+		unit := work.Units[i]
+		if unit.ComicID != w.comicID || unit.RelativePath != w.relativePath {
+			t.Fatalf("Units[%d] identity = %#v", i, unit)
+		}
+		if unit.Kind != UnitKindChapter || unit.ChapterNumber == nil || *unit.ChapterNumber != w.chapterNumber {
+			t.Fatalf("Units[%d] chapter = %#v", i, unit)
+		}
+		if unit.DisplayLabel != w.displayLabel || unit.SortIndex != i {
+			t.Fatalf("Units[%d] label/sort = %#v", i, unit)
+		}
+	}
+}
