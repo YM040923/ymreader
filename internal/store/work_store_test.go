@@ -261,6 +261,13 @@ func TestWorkMigrationRepairsLegacyMigration40Schema(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO "WorkUnit" ("id", "workId", "comicId", "relativePath", "title") VALUES ('legacy-dupe', 'legacy-work', 'comic-1', 'Legacy/01.cbz', 'dupe')`); err == nil {
 		t.Fatal("expected repaired WorkUnit unique(workId, relativePath) to reject duplicate")
 	}
+	progress, err := GetUserWorkProgress("user-legacy", "legacy-work")
+	if err != nil {
+		t.Fatalf("GetUserWorkProgress failed after repairing legacy progress without updatedAt: %v", err)
+	}
+	if progress == nil || progress.UnitID != "legacy-unit" || progress.PageIndex != 4 || progress.UpdatedAt == nil {
+		t.Fatalf("legacy progress after repair = %#v", progress)
+	}
 }
 
 func TestWorkUnitByComicAndSourceItems(t *testing.T) {

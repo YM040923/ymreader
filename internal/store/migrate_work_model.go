@@ -210,7 +210,7 @@ func init() {
 					REFERENCES "WorkUnit" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 			);`,
 			`INSERT OR IGNORE INTO "UserWorkProgress_migration_41" ("userId", "workId", "unitId", "pageIndex", "updatedAt")
-			 SELECT p."userId", p."workId", COALESCE(NULLIF(p."unitId", ''), (SELECT u."id" FROM "WorkUnit" u WHERE u."workId" = p."workId" ORDER BY u."sortIndex", u."id" LIMIT 1), ''), p."pageIndex", p."updatedAt"
+			 SELECT p."userId", p."workId", COALESCE(NULLIF(p."unitId", ''), (SELECT u."id" FROM "WorkUnit" u WHERE u."workId" = p."workId" ORDER BY u."sortIndex", u."id" LIMIT 1), ''), p."pageIndex", COALESCE(NULLIF(p."updatedAt", ''), CURRENT_TIMESTAMP)
 			 FROM "UserWorkProgress" p;`,
 			`DROP TABLE "UserWorkProgress";`,
 			`ALTER TABLE "UserWorkProgress_migration_41" RENAME TO "UserWorkProgress";`,
