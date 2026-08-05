@@ -387,6 +387,91 @@ func TestOPDSSeriesFeedsAreDownloadScopedAndFlattenSections(t *testing.T) {
 	}
 }
 
+func TestOPDSWorkFeedsAreDownloadScopedAndOrdered(t *testing.T) {
+	router := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations failed: %v", err)
+	}
+	user, token := createOPDSTestUserAndKey(t, "opds-work-user", "opds-work-user")
+	createOPDSHandlerLibrary(t, "opds-work-download", "comic", true)
+	createOPDSHandlerLibrary(t, "opds-work-view", "comic", true)
+	createOPDSHandlerComic(t, "opds-work-ch1", "大王饶命/第001话.cbz", "comic", "opds-work-download")
+	createOPDSHandlerComic(t, "opds-work-ch2", "大王饶命/第002话.cbz", "comic", "opds-work-download")
+	createOPDSHandlerComic(t, "opds-work-private", "私有漫画/第001话.cbz", "comic", "opds-work-view")
+
+	if err := store.SetUserLibraryAccess(user.ID, []store.LibraryAccessReq{
+		{LibraryID: "opds-work-download", CanDownload: true},
+		{LibraryID: "opds-work-view", CanView: true},
+	}); err != nil {
+		t.Fatalf("SetUserLibraryAccess failed: %v", err)
+	}
+	if _, err := store.DB().Exec(`
+		INSERT INTO "Work" ("id", "libraryId", "rootRelativePath", "title", "sortTitle", "coverUnitId", "contentType", "createdAt", "updatedAt") VALUES
+		('opds-work-visible', 'opds-work-download', '大王饶命', '大王饶命', '大王饶命', 'opds-work-u1', 'comic', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		('opds-work-hidden', 'opds-work-view', '私有漫画', '私有漫画', '私有漫画', 'opds-work-hidden-u1', 'comic', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+		INSERT INTO "WorkUnit" ("id", "workId", "comicId", "relativePath", "title", "displayLabel", "unitKind", "sortIndex", "pageCount", "fileSize", "coverUrl") VALUES
+		('opds-work-u1', 'opds-work-visible', 'opds-work-ch1', '大王饶命/第001话.cbz', '第001话', '第001话', 'chapter', 1, 10, 100, '/api/comics/opds-work-ch1/thumbnail'),
+		('opds-work-u2', 'opds-work-visible', 'opds-work-ch2', '大王饶命/第002话.cbz', '第002话', '第002话', 'chapter', 2, 10, 100, '/api/comics/opds-work-ch2/thumbnail'),
+		('opds-work-hidden-u1', 'opds-work-hidden', 'opds-work-private', '私有漫画/第001话.cbz', '第001话', '第001话', 'chapter', 1, 10, 100, '/api/comics/opds-work-private/thumbnail')
+	`); err != nil {
+		t.Fatalf("insert OPDS works failed: %v", err)
+	}
+
+	root := performOPDSBasicRequest(router, "/api/opds", user.Username, token)
+	if !strings.Contains(root.Body.String(), "/api/opds/works") {
+		t.Fatalf("root catalog is missing works entry: %s", root.Body.String())
+	}
+
+	list := performOPDSBasicRequest(router, "/api/opds/works", user.Username, token)
+	if list.Code != http.StatusOK {
+		t.Fatalf("OPDS works returned %d: %s", list.Code, list.Body.String())
+	}
+	if contentType := list.Header().Get("Content-Type"); !strings.HasPrefix(contentType, service.OPDSNavigationMIME) {
+		t.Fatalf("works Content-Type = %q, want navigation feed", contentType)
+	}
+	body := list.Body.String()
+	if !strings.Contains(body, "大王饶命") || strings.Contains(body, "私有漫画") {
+		t.Fatalf("works list did not enforce download access: %s", body)
+	}
+	if strings.Contains(body, "第001话") || strings.Contains(body, "第002话") {
+		t.Fatalf("works list should not flatten work units: %s", body)
+	}
+
+	detail := performOPDSBasicRequest(router, "/api/opds/works/opds-work-visible", user.Username, token)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("OPDS work detail returned %d: %s", detail.Code, detail.Body.String())
+	}
+	detailBody := detail.Body.String()
+	first := strings.Index(detailBody, "<title>第001话</title>")
+	second := strings.Index(detailBody, "<title>第002话</title>")
+	if first < 0 || second < 0 || first >= second {
+		t.Fatalf("work units were not emitted in order: %s", detailBody)
+	}
+	if !strings.Contains(detailBody, "/api/opds/download/opds-work-ch1/") || !strings.Contains(detailBody, "/api/opds/download/opds-work-ch2/") {
+		t.Fatalf("work detail entries are missing acquisition links: %s", detailBody)
+	}
+
+	denied := performOPDSBasicRequest(router, "/api/opds/works/opds-work-hidden", user.Username, token)
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("view-only work returned %d, want 404: %s", denied.Code, denied.Body.String())
+	}
+
+	viewer, viewerToken := createOPDSTestUserAndKey(t, "opds-work-viewer", "opds-work-viewer")
+	if err := store.SetUserLibraryAccess(viewer.ID, []store.LibraryAccessReq{
+		{LibraryID: "opds-work-download", CanView: true},
+		{LibraryID: "opds-work-view", CanView: true},
+	}); err != nil {
+		t.Fatalf("SetUserLibraryAccess(viewer) failed: %v", err)
+	}
+	viewerList := performOPDSBasicRequest(router, "/api/opds/works", viewer.Username, viewerToken)
+	if viewerList.Code != http.StatusOK {
+		t.Fatalf("view-only OPDS works returned %d: %s", viewerList.Code, viewerList.Body.String())
+	}
+	if strings.Contains(viewerList.Body.String(), "大王饶命") || strings.Contains(viewerList.Body.String(), "私有漫画") {
+		t.Fatalf("view-only user saw works without download access: %s", viewerList.Body.String())
+	}
+}
+
 func TestOPDSSearchDescriptionEndpoint(t *testing.T) {
 	router := setupTestRouter(t)
 	user, token := createOPDSTestUserAndKey(t, "opds-search", "opds-search")

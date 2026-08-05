@@ -887,6 +887,9 @@ Content-Type: application/json
 | GET | `/api/opds/all` | 全部漫画 |
 | GET | `/api/opds/recent` | 最近更新 |
 | GET | `/api/opds/favorites` | 收藏列表 |
+| GET | `/api/opds/works` | 作品导航列表 |
+| GET | `/api/opds/works/:id` | 作品内阅读单元列表 |
+| GET | `/api/opds/works/:id/cover` | 作品封面 |
 | GET | `/api/opds/series` | 合集导航列表 |
 | GET | `/api/opds/series/:id` | 合集内漫画列表 |
 | GET | `/api/opds/series/:id/cover` | 合集封面 |
@@ -912,6 +915,8 @@ Content-Type: application/json
 - **下载发现**：Feed 中的 acquisition URL 以经过转义的真实文件名结尾，并通过 Atom `length` 属性提供文件字节数。旧版不带文件名的下载地址继续可用。
 - **媒体类型**：CBZ/ZIP、CBR/RAR、CB7/7Z 和 PDF 分别使用 `application/vnd.comicbook+zip`、`application/x-cbr`、`application/x-cb7` 和 `application/pdf`；EPUB、MOBI、AZW3、TXT 和 HTML/HTM 分别使用 `application/epub+zip`、`application/x-mobipocket-ebook`、`application/vnd.amazon.mobi8-ebook`、`text/plain` 和 `text/html`。
 - **权限**：OPDS 是获取目录，只返回当前用户拥有 `canDownload` 权限的书库内容。公开书库或仅有 `canView` 权限不会自动获得 OPDS 下载权限。
+- **作品导航**：根目录包含 `/api/opds/works` 入口。该接口返回 `kind=navigation`，按 Work 模型只展示作品，不平铺每一话/每一卷；点击 `/api/opds/works/:id` 后按 WorkUnit 顺序返回可下载/可逐页阅读的条目。
+- **作品封面**：`/api/opds/works/:id/cover` 优先使用 Work 的 `coverUnitId` 对应条目封面，缺失时回退到首个阅读单元封面，并重新校验当前用户下载权限。
 - **合集导航**：根目录包含 `/api/opds/series` 入口。该接口返回 `kind=navigation`，每个合集链接到 `/api/opds/series/:id` 获取 Feed；合集内按现有篇章和成员顺序扁平排列，篇章名会作为条目标题前缀。
 - **合集过滤**：合集及成员使用与普通 OPDS 条目相同的 `canDownload`、漫画书库和文件格式过滤。漫画书库中的 EPUB、MOBI、AZW3 等受支持成员会计入合集；过滤后少于两本的合集不会显示，无权访问或不存在的合集 ID 返回 `404`。
 - **合集关系**：属于合集的普通漫画条目带有标准 `rel=collection` 链接，指向对应合集 Feed。客户端是否据此自动分组取决于客户端实现。
@@ -921,9 +926,9 @@ Content-Type: application/json
 - **逐页图片**：`/api/opds/stream/:id` 固定返回 `image/jpeg`。JPEG 原页在无需缩小时直接返回；其他图片格式和 PDF 渲染结果会保持宽高比转换为 JPEG，不放大、不裁剪。
 - **逐页缓存**：转换结果按作品、源文件版本、页码和宽度缓存在页面缓存目录中，支持 `ETag` 和私有缓存。源文件大小或修改时间变化后不会继续命中旧版本缓存。
 - **阅读位置**：PSE 链接可包含当前用户独立的 `pse:lastRead` 和 `pse:lastReadDate`。`lastRead` 从 1 开始；未开始阅读时省略。OPDS-PSE 没有标准进度回写接口，页面请求本身不会更新阅读进度，以免把客户端预加载误记为已阅读。
-- **Feed 类型**：`/api/opds` 和 `/api/opds/series` 返回 `kind=navigation`；合集详情、列表与搜索返回 `kind=acquisition`。
+- **Feed 类型**：`/api/opds`、`/api/opds/works` 和 `/api/opds/series` 返回 `kind=navigation`；作品详情、合集详情、列表与搜索返回 `kind=acquisition`。
 - **搜索发现**：根目录通过 `rel=search` 指向 `/api/opds/search.xml`，搜索模板使用 `/api/opds/search?q={searchTerms}`。
-- **分页**：`all`、`recent`、`favorites`、`series`、合集详情和 `search` 支持 `page`、`pageSize`。默认每页 100 条，`pageSize` 最大 500；响应包含 OpenSearch 统计及 `first`、`last`、`previous`、`next` 链接。
+- **分页**：`all`、`recent`、`favorites`、`works`、作品详情、`series`、合集详情和 `search` 支持 `page`、`pageSize`。默认每页 100 条，`pageSize` 最大 500；响应包含 OpenSearch 统计及 `first`、`last`、`previous`、`next` 链接。
 - **收藏隔离**：`favorites` 读取当前用户的 `UserComicState`，不会混用其他用户或旧的全局收藏字段。
 - **获取方式**：条目提供受认证保护的标准 acquisition 文件链接，不声明 `open-access`；符合逐页条件的漫画会同时提供 OPDS-PSE 1.2 链接。
 

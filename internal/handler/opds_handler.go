@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/config"
@@ -99,6 +100,102 @@ func (h *OPDSHandler) Favorites(c *gin.Context) {
 		FavoritesOnly: true,
 		Sort:          store.OPDSSortTitle,
 	})
+}
+
+// GET /api/opds/works
+func (h *OPDSHandler) Works(c *gin.Context) {
+	userID := getOPDSUserID(c)
+	libraryIDs, err := store.GetUserDownloadableLibraryIDs(userID)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to resolve library access"))
+		return
+	}
+	if len(libraryIDs) == 0 {
+		baseURL := getBaseURL(c)
+		page, pageSize := parseOPDSPagination(c)
+		xml := service.GenerateWorkNavigationFeed(service.OPDSWorkFeedOptions{
+			BaseURL:    baseURL,
+			Title:      "Works",
+			FeedID:     opdsFeedID(baseURL, c),
+			Works:      nil,
+			Pagination: buildOPDSPagination(c, page, pageSize, 0),
+		})
+		setOPDSPrivateResponseHeaders(c)
+		c.Data(http.StatusOK, service.OPDSNavigationMIME, []byte(xml))
+		return
+	}
+	works, err := store.ListWorks(libraryIDs, userID, strings.TrimSpace(c.Query("q")))
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get works"))
+		return
+	}
+	total := len(works)
+	page, pageSize := parseOPDSPagination(c)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	baseURL := getBaseURL(c)
+	xml := service.GenerateWorkNavigationFeed(service.OPDSWorkFeedOptions{
+		BaseURL:    baseURL,
+		Title:      "Works",
+		FeedID:     opdsFeedID(baseURL, c),
+		Works:      toOPDSWorks(works[start:end]),
+		Pagination: buildOPDSPagination(c, page, pageSize, total),
+	})
+	setOPDSPrivateResponseHeaders(c)
+	c.Data(http.StatusOK, service.OPDSNavigationMIME, []byte(xml))
+}
+
+// GET /api/opds/works/:id
+func (h *OPDSHandler) WorkDetail(c *gin.Context) {
+	work, units, ok := getAccessibleOPDSWork(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	page, pageSize := parseOPDSPagination(c)
+	comics, total, err := toOPDSWorkComics(units, page, pageSize)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get work comics"))
+		return
+	}
+
+	baseURL := getBaseURL(c)
+	xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
+		BaseURL:    baseURL,
+		Title:      work.Title,
+		FeedID:     opdsFeedID(baseURL, c),
+		Comics:     comics,
+		Pagination: buildOPDSPagination(c, page, pageSize, total),
+	})
+	setOPDSPrivateResponseHeaders(c)
+	c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
+}
+
+// GET /api/opds/works/:id/cover
+func (h *OPDSHandler) WorkCover(c *gin.Context) {
+	work, units, ok := getAccessibleOPDSWork(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	coverComicID := ""
+	if work.CoverUnitID != "" {
+		for _, unit := range units {
+			if unit.ID == work.CoverUnitID {
+				coverComicID = unit.ComicID
+				break
+			}
+		}
+	}
+	if coverComicID == "" && len(units) > 0 {
+		coverComicID = units[0].ComicID
+	}
+	h.renderCover(c, coverComicID)
 }
 
 // GET /api/opds/series
@@ -464,6 +561,34 @@ func getAccessibleOPDSSeries(c *gin.Context, seriesID string) (*store.OPDSSeries
 	return &rows[0], libraryIDs, true
 }
 
+func getAccessibleOPDSWork(c *gin.Context, workID string) (*model.Work, []model.WorkUnit, bool) {
+	userID := getOPDSUserID(c)
+	libraryIDs, err := store.GetUserDownloadableLibraryIDs(userID)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to resolve library access"))
+		return nil, nil, false
+	}
+	work, units, err := store.GetWorkDetail(workID, userID)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get work"))
+		return nil, nil, false
+	}
+	if work == nil || !stringSliceContains(libraryIDs, work.LibraryID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Work not found"})
+		return nil, nil, false
+	}
+	return work, units, true
+}
+
+func stringSliceContains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func toOPDSComics(rows []store.OPDSComicRow) []service.OPDSComic {
 	comics := make([]service.OPDSComic, 0, len(rows))
 	for _, row := range rows {
@@ -492,6 +617,63 @@ func toOPDSComics(rows []store.OPDSComicRow) []service.OPDSComic {
 	return comics
 }
 
+func toOPDSWorkComics(units []model.WorkUnit, page, pageSize int) ([]service.OPDSComic, int, error) {
+	total := len(units)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	comics := make([]service.OPDSComic, 0, end-start)
+	for _, unit := range units[start:end] {
+		comic, err := store.GetComicByID(unit.ComicID)
+		if err != nil {
+			return nil, total, err
+		}
+		if comic == nil {
+			continue
+		}
+		if _, supported := service.OPDSAcquisitionMIMEForFilename(comic.Filename); !supported {
+			continue
+		}
+		title := strings.TrimSpace(unit.DisplayLabel)
+		if title == "" {
+			title = strings.TrimSpace(unit.Title)
+		}
+		if title == "" {
+			title = strings.TrimSpace(comic.Title)
+		}
+		if title == "" {
+			title = strings.TrimSuffix(filepath.Base(comic.Filename), filepath.Ext(comic.Filename))
+		}
+		year := 0
+		if comic.Year != nil {
+			year = *comic.Year
+		}
+		comics = append(comics, service.OPDSComic{
+			ID:          comic.ID,
+			Title:       title,
+			Author:      comic.Author,
+			Description: comic.Description,
+			Language:    comic.Language,
+			Genre:       comic.Genre,
+			Publisher:   comic.Publisher,
+			Year:        year,
+			PageCount:   comic.PageCount,
+			FileSize:    comic.FileSize,
+			AddedAt:     comic.AddedAt,
+			UpdatedAt:   comic.UpdatedAt,
+			Filename:    comic.Filename,
+			ComicType:   "comic",
+		})
+	}
+	return comics, total, nil
+}
+
 func toOPDSSeriesComics(rows []store.OPDSComicRow) []service.OPDSComic {
 	comics := toOPDSComics(rows)
 	for i, row := range rows {
@@ -508,6 +690,19 @@ func toOPDSSeriesComics(rows []store.OPDSComicRow) []service.OPDSComic {
 		comics[i].Title = title
 	}
 	return comics
+}
+
+func toOPDSWorks(rows []model.Work) []service.OPDSWork {
+	works := make([]service.OPDSWork, 0, len(rows))
+	for _, row := range rows {
+		works = append(works, service.OPDSWork{
+			ID:        row.ID,
+			Title:     row.Title,
+			ItemCount: row.ItemCount,
+			UpdatedAt: row.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return works
 }
 
 func toOPDSSeries(rows []store.OPDSSeriesRow) []service.OPDSSeries {

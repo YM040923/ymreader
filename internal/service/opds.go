@@ -53,6 +53,13 @@ type OPDSSeries struct {
 	UpdatedAt string
 }
 
+type OPDSWork struct {
+	ID        string
+	Title     string
+	ItemCount int
+	UpdatedAt string
+}
+
 type OPDSPagination struct {
 	SelfHref     string
 	FirstHref    string
@@ -77,6 +84,14 @@ type OPDSSeriesFeedOptions struct {
 	Title      string
 	FeedID     string
 	Series     []OPDSSeries
+	Pagination OPDSPagination
+}
+
+type OPDSWorkFeedOptions struct {
+	BaseURL    string
+	Title      string
+	FeedID     string
+	Works      []OPDSWork
 	Pagination OPDSPagination
 }
 
@@ -172,6 +187,7 @@ func GenerateRootCatalog(baseURL string) string {
 		},
 		Entries: []atomEntry{
 			newNavigationEntry(baseURL, now, "All Comics", "/api/opds/all", "Browse all downloadable comics", "subsection", OPDSAcquisitionMIME),
+			newNavigationEntry(baseURL, now, "Works", "/api/opds/works", "Browse comics grouped by work", "subsection", OPDSNavigationMIME),
 			newNavigationEntry(baseURL, now, "Series", "/api/opds/series", "Browse comics grouped by series", "subsection", OPDSNavigationMIME),
 			newNavigationEntry(baseURL, now, "Recently Added", "/api/opds/recent", "Recently added comics", "http://opds-spec.org/sort/new", OPDSAcquisitionMIME),
 			newNavigationEntry(baseURL, now, "Favorites", "/api/opds/favorites", "Your favorite comics", "http://opds-spec.org/shelf", OPDSAcquisitionMIME),
@@ -210,6 +226,55 @@ func GenerateSeriesNavigationFeed(opts OPDSSeriesFeedOptions) string {
 			Links: []atomLink{
 				{Rel: "http://opds-spec.org/image", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/series/"+series.ID+"/cover")},
 				{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/series/"+series.ID+"/cover")},
+				{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME},
+			},
+		}
+		entries = append(entries, entry)
+	}
+
+	total := opts.Pagination.TotalResults
+	itemsPerPage := opts.Pagination.ItemsPerPage
+	startIndex := opts.Pagination.StartIndex
+	feed := atomFeed{
+		XMLNS:        opdsNS,
+		OPDS:         opdsCatalogNS,
+		OpenSearch:   openSearchNS,
+		ID:           opts.FeedID,
+		Title:        opts.Title,
+		Updated:      now,
+		Author:       &atomAuthor{Name: "NowenReader", URI: opts.BaseURL},
+		TotalResults: &total,
+		ItemsPerPage: &itemsPerPage,
+		StartIndex:   &startIndex,
+		Links: []atomLink{
+			{Rel: "self", Href: absoluteOPDSURL(opts.BaseURL, opts.Pagination.SelfHref), Type: OPDSNavigationMIME},
+			{Rel: "start", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds"), Type: OPDSNavigationMIME},
+			{Rel: "search", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/search.xml"), Type: OpenSearchMIME},
+		},
+		Entries: entries,
+	}
+	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, OPDSNavigationMIME)
+	return marshalOPDSXML(feed)
+}
+
+// GenerateWorkNavigationFeed creates the work branch of the catalog.
+func GenerateWorkNavigationFeed(opts OPDSWorkFeedOptions) string {
+	now := time.Now().UTC().Format(time.RFC3339)
+	entries := make([]atomEntry, 0, len(opts.Works))
+	for _, work := range opts.Works {
+		title := strings.TrimSpace(work.Title)
+		if title == "" {
+			title = "Untitled Work"
+		}
+		href := absoluteOPDSURL(opts.BaseURL, "/api/opds/works/"+work.ID)
+		entry := atomEntry{
+			Title:   title,
+			ID:      "urn:nowen:work:" + work.ID,
+			Updated: validAtomDate(work.UpdatedAt, now),
+			Summary: &atomContent{Type: "text", Text: fmt.Sprintf("%d items", work.ItemCount)},
+			Links: []atomLink{
+				{Rel: "http://opds-spec.org/image", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/works/"+work.ID+"/cover")},
+				{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/works/"+work.ID+"/cover")},
 				{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME},
 			},
 		}
