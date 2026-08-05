@@ -37,6 +37,13 @@ func ReplaceWorksForLibrary(libraryID string, detected []workmodel.DetectedWork)
 		if strings.TrimSpace(work.SortTitle) == "" {
 			work.SortTitle = BuildTitleSortKey(work.Title)
 		}
+		manualLocked, err := detectedWorkIsManualLocked(tx, libraryID, work)
+		if err != nil {
+			return err
+		}
+		if manualLocked {
+			continue
+		}
 		if err := upsertDetectedWork(tx, libraryID, work); err != nil {
 			return err
 		}
@@ -62,6 +69,23 @@ func ReplaceWorksForLibrary(libraryID string, detected []workmodel.DetectedWork)
 		return err
 	}
 	return tx.Commit()
+}
+
+func detectedWorkIsManualLocked(tx *sql.Tx, libraryID string, work workmodel.DetectedWork) (bool, error) {
+	var count int
+	err := tx.QueryRow(`
+		SELECT COUNT(*)
+		FROM "Work"
+		WHERE "manualLocked" = 1
+		  AND (
+			"id" = ?
+			OR ("libraryId" = ? AND "rootRelativePath" = ?)
+		  )
+	`, work.ID, libraryID, work.RootRelativePath).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func placeholdersFromDetected(detected []workmodel.DetectedWork) string {

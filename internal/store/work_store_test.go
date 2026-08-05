@@ -156,6 +156,113 @@ func TestWorkReplacePreservesManualAndLockedMetadata(t *testing.T) {
 	}
 }
 
+func TestWorkReplaceSkipsDetectedManualLockedWorkUnitsAndMetadata(t *testing.T) {
+	setupTestDB(t)
+	seedWorkLibraryAndComics(t)
+	if err := ReplaceWorksForLibrary("work-lib", detectedWorkFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE "Work" SET "title" = 'Manual Title', "sortTitle" = 'manual title', "metadataLocked" = 0, "manualLocked" = 1 WHERE "id" = 'work-1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	detected := []workmodel.DetectedWork{{
+		ID: "work-1", LibraryID: "work-lib", RootRelativePath: "Series", Title: "Detected Title", SortTitle: "detected title",
+		Units: []workmodel.DetectedUnit{
+			{ID: "unit-1-new", ComicID: "comic-1", RelativePath: "Series/01.cbz", Kind: workmodel.UnitKindChapter, Title: "Detected Chapter 1", SortIndex: 0, PageCount: 10, FileSize: 100},
+		},
+	}}
+	if err := ReplaceWorksForLibrary("work-lib", detected); err != nil {
+		t.Fatal(err)
+	}
+
+	manual, units, err := GetWorkDetail("work-1", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual == nil || manual.Title != "Manual Title" || manual.SortTitle != "manual title" || !manual.ManualLocked {
+		t.Fatalf("manual locked metadata overwritten: work=%#v", manual)
+	}
+	if len(units) != 3 || units[0].ID != "unit-1" || units[0].Title != "Chapter 1" {
+		t.Fatalf("manual locked units were changed: %#v", units)
+	}
+}
+
+func TestWorkMigrationRepairsLegacyMigration40Schema(t *testing.T) {
+	setupTestDB(t)
+	seedWorkLibraryAndComics(t)
+
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS "UserWorkProgress"`,
+		`DROP TABLE IF EXISTS "WorkUnit"`,
+		`DROP TABLE IF EXISTS "Work"`,
+		`CREATE TABLE "Work" (
+			"id" TEXT NOT NULL PRIMARY KEY,
+			"libraryId" TEXT NOT NULL,
+			"rootRelativePath" TEXT NOT NULL DEFAULT '',
+			"title" TEXT NOT NULL,
+			"sortTitle" TEXT NOT NULL DEFAULT '',
+			"metadataLocked" BOOLEAN NOT NULL DEFAULT 0,
+			"createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			"updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE "WorkUnit" (
+			"id" TEXT NOT NULL PRIMARY KEY,
+			"workId" TEXT NOT NULL,
+			"comicId" TEXT NOT NULL,
+			"relativePath" TEXT NOT NULL DEFAULT '',
+			"title" TEXT NOT NULL,
+			"sortIndex" INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE "UserWorkProgress" (
+			"userId" TEXT NOT NULL,
+			"workId" TEXT NOT NULL,
+			"pageIndex" INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY ("userId", "workId")
+		)`,
+		`INSERT INTO "Work" ("id", "libraryId", "rootRelativePath", "title", "sortTitle") VALUES ('legacy-work', 'work-lib', 'Legacy', 'Legacy Title', 'legacy title')`,
+		`INSERT INTO "WorkUnit" ("id", "workId", "comicId", "relativePath", "title", "sortIndex") VALUES ('legacy-unit', 'legacy-work', 'comic-1', 'Legacy/01.cbz', 'Legacy Chapter', 0)`,
+		`INSERT INTO "UserWorkProgress" ("userId", "workId", "pageIndex") VALUES ('user-legacy', 'legacy-work', 4)`,
+		`DELETE FROM "_migrations" WHERE "version" = 41`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("legacy schema setup failed for %s: %v", stmt, err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations failed repairing legacy work schema: %v", err)
+	}
+	if err := RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations second pass failed: %v", err)
+	}
+
+	for table, columns := range map[string][]string{
+		"Work":             {"coverUrl", "coverUnitId", "author", "publisher", "year", "description", "language", "genre", "metadataSource", "contentType", "manualLocked"},
+		"WorkUnit":         {"displayLabel", "unitKind", "volumeNumber", "chapterNumber", "pageCount", "fileSize", "coverUrl"},
+		"UserWorkProgress": {"unitId", "updatedAt"},
+	} {
+		for _, column := range columns {
+			var count int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("missing repaired column %s.%s", table, column)
+			}
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO "WorkUnit" ("id", "workId", "comicId", "relativePath", "title") VALUES ('legacy-dupe', 'legacy-work', 'comic-1', 'Legacy/01.cbz', 'dupe')`); err == nil {
+		t.Fatal("expected repaired WorkUnit unique(workId, relativePath) to reject duplicate")
+	}
+}
+
 func TestWorkUnitByComicAndSourceItems(t *testing.T) {
 	setupTestDB(t)
 	seedWorkLibraryAndComics(t)
