@@ -59,6 +59,46 @@ func TestQuickSyncIndexesNestedFileOnce(t *testing.T) {
 	}
 }
 
+func TestQuickSyncRebuildsWorksForChangedComicLibraries(t *testing.T) {
+	setupScannerTestDB(t)
+	root := t.TempDir()
+	workDir := filepath.Join(root, "DaWang")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Ch.001.cbz", "Ch.002.cbz"} {
+		if err := os.WriteFile(filepath.Join(workDir, name), []byte("comic"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib := &model.Library{
+		ID:          "quick-work",
+		Name:        "Quick Work",
+		Type:        "comic",
+		RootPath:    root,
+		Enabled:     true,
+		ScanEnabled: true,
+	}
+	if err := store.CreateLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+
+	added, removed := quickSync()
+	if added != 2 || removed != 0 {
+		t.Fatalf("quickSync added=%d removed=%d", added, removed)
+	}
+	works, err := store.ListWorks([]string{lib.ID}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 {
+		t.Fatalf("quickSync did not rebuild works: got %d works", len(works))
+	}
+	if works[0].Title != "DaWang" || works[0].ItemCount != 2 {
+		t.Fatalf("unexpected work summary: %#v", works[0])
+	}
+}
+
 func TestQuickSyncSkipsExactRootConflict(t *testing.T) {
 	setupScannerTestDB(t)
 	root := t.TempDir()

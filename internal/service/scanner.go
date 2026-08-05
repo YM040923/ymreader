@@ -544,6 +544,7 @@ func quickSync() (added, removed int) {
 		return 0, 0
 	}
 	var toRemove []string
+	changedWorkLibraries := make(map[string]struct{})
 	for rows2.Next() {
 		var id, libraryID, relativePath string
 		if rows2.Scan(&id, &libraryID, &relativePath) == nil {
@@ -554,6 +555,7 @@ func quickSync() (added, removed int) {
 				continue
 			}
 			toRemove = append(toRemove, id)
+			changedWorkLibraries[libraryID] = struct{}{}
 		}
 	}
 	rows2.Close()
@@ -571,6 +573,11 @@ func quickSync() (added, removed int) {
 		for _, f := range filesOnDisk {
 			fileSourceMap[f.ID] = f.Source
 			fileLibraryMap[f.ID] = f.LibraryID
+		}
+		for _, item := range toAdd {
+			if libraryID := fileLibraryMap[item.ID]; libraryID != "" {
+				changedWorkLibraries[libraryID] = struct{}{}
+			}
 		}
 
 		for i := 0; i < len(toAdd); i += dbBatchSize {
@@ -599,6 +606,9 @@ func quickSync() (added, removed int) {
 		moved, typeFixed := store.FixComicLibraryAssignments(fileLibraryMap, fileSourceMap, fileRelPathMap)
 		if moved > 0 || typeFixed > 0 {
 			log.Printf("[quick-sync] Library assignment fixed: moved=%d, typeFixed=%d", moved, typeFixed)
+			if err := RebuildAllWorks(); err != nil {
+				log.Printf("[work-sync] Failed to rebuild works after assignment fix: %v", err)
+			}
 		}
 	}
 
@@ -618,8 +628,20 @@ func quickSync() (added, removed int) {
 	if len(toAdd) > 0 || len(toRemove) > 0 {
 		log.Printf("[quick-sync] Added %d, removed %d", len(toAdd), len(toRemove))
 	}
+	rebuildChangedWorkLibraries(changedWorkLibraries)
 
 	return len(toAdd), len(toRemove)
+}
+
+func rebuildChangedWorkLibraries(libraryIDs map[string]struct{}) {
+	for libraryID := range libraryIDs {
+		if libraryID == "" {
+			continue
+		}
+		if err := RebuildWorksForLibrary(libraryID); err != nil {
+			log.Printf("[work-sync] Failed to rebuild works for library %s: %v", libraryID, err)
+		}
+	}
 }
 
 func recordDelegatedToAnotherLibrary(lib model.Library, relativePath string, ownership *LibraryOwnership) bool {
@@ -1636,6 +1658,9 @@ func SyncLibraryByID(libraryID string) (added, removed int, err error) {
 	// 单书库扫描完成后清理缓存
 	if totalAdded > 0 || len(toRemove) > 0 {
 		InvalidateAllCaches()
+		if err := RebuildWorksForLibrary(libraryID); err != nil {
+			log.Printf("[work-sync] Failed to rebuild works for library %s after library scan: %v", libraryID, err)
+		}
 	}
 
 	return totalAdded, len(toRemove), nil
