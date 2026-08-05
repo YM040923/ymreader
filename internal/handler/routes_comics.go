@@ -86,7 +86,7 @@ func registerComicRoutes(api *gin.RouterGroup) {
 	syncTrigger := api.Group("")
 	syncTrigger.Use(middleware.AdminRequired())
 	{
-		syncTrigger.POST("/sync", reconcileOwnershipAfterScan(), rebuildSeriesAfterScan(), comic.TriggerSync)
+		syncTrigger.POST("/sync", reconcileOwnershipAfterScan(), rebuildSeriesAfterScan(), rebuildWorksAfterScan(), comic.TriggerSync)
 	}
 
 	// Image serving (Phase 3) — all require auth
