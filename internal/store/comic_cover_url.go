@@ -37,3 +37,12 @@ func BuildSeriesCoverURL(seriesID string) string {
 	}
 	return base
 }
+
+func BuildLogicalWorkCoverURL(workID string) string {
+	base := config.JoinBasePath(fmt.Sprintf("/api/opds/work-cover/%s", workID))
+	cachePath := filepath.Join(config.GetThumbnailsDir(), archive.WorkCoverCacheName(workID))
+	if info, err := os.Stat(cachePath); err == nil {
+		return fmt.Sprintf("%s?v=%d", base, info.ModTime().Unix())
+	}
+	return base
+}

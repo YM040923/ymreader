@@ -193,6 +193,9 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 	if err := service.EnsureComicSeriesFresh(); err != nil {
 		log.Printf("[works] series metadata unavailable: %v", err)
 	}
+	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
+		log.Printf("[works] series-to-work metadata migration unavailable: %v", err)
+	}
 	fingerprint, err := store.GetWorkSourceFingerprint(userID, libraryIDs, filterLibraries)
 	if err != nil {
 		return nil, err
@@ -240,8 +243,53 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 		} else {
 			service.ApplySeriesMetadata(works, summaries)
 		}
+		if persistErr := persistAndApplyLogicalWorks(works); persistErr != nil {
+			return nil, persistErr
+		}
 		return works, nil
 	})
+}
+
+func persistAndApplyLogicalWorks(works []service.Work) error {
+	if !store.LogicalWorkPersistenceAvailable() {
+		return nil
+	}
+	seeds := make([]store.LogicalWorkSeed, 0, len(works))
+	workIDs := make([]string, 0, len(works))
+	for _, work := range works {
+		seeds = append(seeds, store.LogicalWorkSeed{
+			ID:               work.ID,
+			LibraryID:        work.LibraryID,
+			RootPath:         work.RootPath,
+			ContentType:      "comic",
+			Title:            work.Title,
+			CoverComicID:     work.CoverComicID,
+			CoverAspectRatio: work.CoverAspectRatio,
+		})
+		workIDs = append(workIDs, work.ID)
+	}
+	if err := store.UpsertDetectedLogicalWorks(seeds); err != nil {
+		return err
+	}
+	for _, work := range works {
+		if err := store.SeedLogicalWorkRelations(work.ID, work.Tags, work.Categories); err != nil {
+			return err
+		}
+	}
+	persisted, err := store.GetLogicalWorksByIDs(workIDs)
+	if err != nil {
+		return err
+	}
+	tags, err := store.GetLogicalWorkTagsByWorkIDs(workIDs)
+	if err != nil {
+		return err
+	}
+	categories, err := store.GetLogicalWorkCategoriesByWorkIDs(workIDs)
+	if err != nil {
+		return err
+	}
+	service.ApplyLogicalWorkMetadata(works, persisted, tags, categories)
+	return nil
 }
 
 func workCatalogCacheKey(userID string, libraryIDs []string, filterLibraries bool) string {

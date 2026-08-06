@@ -249,13 +249,71 @@ func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryI
 		}
 	}
 
+	logicalCount, logicalShape, logicalUpdated := int64(0), int64(0), ""
+	logicalTagsHash, logicalCategoriesHash := "", ""
+	if workTableExists("LogicalWork") {
+		logicalConditions := []string{"1=1"}
+		logicalArgs := []interface{}{}
+		if filterLibraryIDs {
+			if len(libraryIDs) == 0 {
+				logicalConditions = append(logicalConditions, "1=0")
+			} else {
+				placeholders := make([]string, len(libraryIDs))
+				for index, id := range libraryIDs {
+					placeholders[index] = "?"
+					logicalArgs = append(logicalArgs, id)
+				}
+				logicalConditions = append(logicalConditions, fmt.Sprintf(`w."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+			}
+		}
+		logicalWhere := "WHERE " + strings.Join(logicalConditions, " AND ")
+		if err := db.QueryRow(`
+			SELECT COUNT(*), COALESCE(MAX(CAST(w."updatedAt" AS TEXT)), ''),
+			       COALESCE(SUM(
+			         LENGTH(w."rootPath") + LENGTH(w."title") + LENGTH(w."author") +
+			         LENGTH(w."publisher") + LENGTH(w."description") + LENGTH(w."genre") +
+			         LENGTH(w."coverUrl") + LENGTH(w."metadataSource") +
+			         CAST(COALESCE(w."coverAspectRatio", 0) * 1000 AS INTEGER) + COALESCE(w."metadataLocked", 0) +
+			         COALESCE(w."coverLocked", 0)
+			       ), 0)
+			FROM "LogicalWork" w `+logicalWhere, logicalArgs...).Scan(
+			&logicalCount, &logicalUpdated, &logicalShape,
+		); err != nil {
+			return "", err
+		}
+		logicalTagsHash, err = orderedWorkContentHash(`
+			SELECT wt."workId", CAST(t."id" AS TEXT), t."name", t."color"
+			FROM "LogicalWorkTag" wt
+			JOIN "LogicalWork" w ON w."id" = wt."workId"
+			JOIN "Tag" t ON t."id" = wt."tagId"
+			`+logicalWhere+`
+			ORDER BY wt."workId", t."id"
+		`, logicalArgs, 4)
+		if err != nil {
+			return "", err
+		}
+		logicalCategoriesHash, err = orderedWorkContentHash(`
+			SELECT wc."workId", CAST(c."id" AS TEXT), c."name", c."slug", c."icon"
+			FROM "LogicalWorkCategory" wc
+			JOIN "LogicalWork" w ON w."id" = wc."workId"
+			JOIN "Category" c ON c."id" = wc."categoryId"
+			`+logicalWhere+`
+			ORDER BY wc."workId", c."id"
+		`, logicalArgs, 5)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	return fmt.Sprintf(
-		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s",
+		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s|w:%d:%s:%d|wt:%s|wc:%s",
 		comicCount, comicUpdated, comicShape,
 		tagHash, categoryHash,
 		stateCount, stateUpdated, stateShape,
 		seriesCount, seriesUpdated, seriesShape,
 		seriesTagsHash,
+		logicalCount, logicalUpdated, logicalShape,
+		logicalTagsHash, logicalCategoriesHash,
 	), nil
 }
 

@@ -225,18 +225,20 @@ func TestAcquisitionFeedOnlyAdvertisesPageStreamingForPageBasedComics(t *testing
 	}
 }
 
-func TestAcquisitionFeedKeepsPSEOnlyFolderPublication(t *testing.T) {
+func TestAcquisitionFeedKeepsFolderPublicationWithVirtualAcquisition(t *testing.T) {
 	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
 		BaseURL: "http://example.test",
 		Title:   "Folder Work",
 		FeedID:  "urn:test:folder-work",
 		Comics: []OPDSComic{{
-			ID:        "folder-unit",
-			EntryID:   "unit-folder",
-			Title:     "Chapter 001",
-			Filename:  "Folder Work/Chapter 001/",
-			ComicType: "comic",
-			PageCount: 12,
+			ID:              "folder-unit",
+			EntryID:         "unit-folder",
+			Title:           "Chapter 001",
+			Filename:        "Folder Work/Chapter 001/",
+			ComicType:       "comic",
+			PageCount:       12,
+			AcquisitionHref: "/api/opds/units/unit-folder/download",
+			AcquisitionType: "application/vnd.comicbook+zip",
 		}},
 		Pagination: OPDSPagination{
 			SelfHref:     "/api/opds/works/work-folder",
@@ -248,8 +250,9 @@ func TestAcquisitionFeedKeepsPSEOnlyFolderPublication(t *testing.T) {
 	assertValidXML(t, feed)
 
 	if !strings.Contains(feed, `<id>urn:nowen:unit:unit-folder</id>`) ||
-		!strings.Contains(feed, `/api/opds/stream/folder-unit?`) {
-		t.Fatalf("folder Unit was not retained as a PSE publication: %s", feed)
+		!strings.Contains(feed, `/api/opds/stream/folder-unit?`) ||
+		!strings.Contains(feed, `/api/opds/units/unit-folder/download`) {
+		t.Fatalf("folder Unit was not retained with PSE and acquisition links: %s", feed)
 	}
 	if strings.Contains(feed, `/api/opds/download/folder-unit`) {
 		t.Fatalf("folder Unit advertised an unavailable raw-file download: %s", feed)

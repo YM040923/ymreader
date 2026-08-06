@@ -20,7 +20,10 @@ import (
 
 const maxCoverDownloadBytes = 20 << 20
 
-var seriesCoverDownload sync.Map // seriesID -> chan struct{}
+var (
+	seriesCoverDownload sync.Map // seriesID -> chan struct{}
+	workCoverDownload   sync.Map // workID -> chan struct{}
+)
 
 // ============================================================
 // Apply metadata to comic
@@ -250,6 +253,70 @@ func DownloadSeriesCover(seriesID, coverURL string) {
 		return
 	}
 	log.Printf("[metadata] Series cover cached locally for %s", seriesID)
+}
+
+func DownloadWorkCover(workID, coverURL string) {
+	if workID == "" || coverURL == "" {
+		return
+	}
+	coverURL = strings.Replace(coverURL, "http://", "https://", 1)
+	if err := store.UpdateLogicalWorkCover(workID, store.LogicalWorkCoverUpdate{CoverURL: &coverURL}); err != nil {
+		log.Printf("[metadata] Work cover URL save failed for %s: %v", workID, err)
+		return
+	}
+
+	thumbDir := config.GetThumbnailsDir()
+	if err := os.MkdirAll(thumbDir, 0o755); err != nil {
+		return
+	}
+	cachePath := filepath.Join(thumbDir, archive.WorkCoverCacheName(workID))
+	channel, loaded := workCoverDownload.LoadOrStore(workID, make(chan struct{}))
+	done := channel.(chan struct{})
+	if loaded {
+		<-done
+		return
+	}
+	defer func() {
+		close(done)
+		workCoverDownload.Delete(workID)
+	}()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	request, err := http.NewRequest(http.MethodGet, coverURL, nil)
+	if err != nil {
+		return
+	}
+	request.Header.Set("User-Agent", "NowenReader/1.0")
+	response, err := client.Do(request)
+	if err != nil || response.StatusCode != http.StatusOK {
+		if response != nil {
+			response.Body.Close()
+		}
+		return
+	}
+	defer response.Body.Close()
+	imageData, err := io.ReadAll(io.LimitReader(response.Body, maxCoverDownloadBytes+1))
+	if err != nil || len(imageData) == 0 || len(imageData) > maxCoverDownloadBytes {
+		return
+	}
+	if imageConfig, _, decodeErr := image.DecodeConfig(bytes.NewReader(imageData)); decodeErr == nil && imageConfig.Height > 0 {
+		aspectRatio := float64(imageConfig.Width) / float64(imageConfig.Height)
+		_ = store.UpdateLogicalWorkCover(workID, store.LogicalWorkCoverUpdate{CoverAspectRatio: &aspectRatio})
+	}
+	webpData, _, err := archive.ResizeImageToWebP(
+		imageData,
+		config.GetThumbnailWidth(),
+		config.GetThumbnailHeight(),
+		85,
+	)
+	if err != nil {
+		return
+	}
+	archive.ClearWorkCoverCache(workID)
+	if err := os.WriteFile(cachePath, webpData, 0o644); err != nil {
+		return
+	}
+	log.Printf("[metadata] Work cover cached locally for %s", workID)
 }
 
 // ============================================================

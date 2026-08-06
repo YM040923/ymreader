@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/model"
+	"github.com/nowen-reader/nowen-reader/internal/workmodel"
 )
 
 func TestGetAllComicsReturnsWorkRequiredIdentityMetadata(t *testing.T) {
@@ -136,6 +137,62 @@ func TestGetWorkSourceFingerprintChangesWithSeriesTags(t *testing.T) {
 	}
 	if before == after {
 		t.Fatalf("series tag update did not change Work fingerprint: %q", before)
+	}
+}
+
+func TestGetWorkSourceFingerprintChangesWithLogicalWorkMetadataAndRelations(t *testing.T) {
+	setupTestDB(t)
+	library := &model.Library{
+		ID: "logical-fingerprint-library", Name: "Logical Fingerprint", Type: "comic",
+		RootPath: t.TempDir(), Enabled: true, ScanEnabled: true, DefaultAccess: "private",
+	}
+	if err := CreateLibrary(library); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DB().Exec(`
+		INSERT INTO "Comic" ("id", "filename", "title", "type", "libraryId", "relativePath")
+		VALUES ('logical-fingerprint-comic', '作品.cbz', '作品', 'comic', ?, '作品.cbz')
+	`, library.ID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := GetWorkSourceFingerprint("", []string{library.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workID := workmodel.StableWorkID(library.ID, "作品")
+	if err := UpsertDetectedLogicalWorks([]LogicalWorkSeed{{
+		ID: workID, LibraryID: library.ID, RootPath: "作品", Title: "作品",
+		CoverComicID: "logical-fingerprint-comic",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := GetWorkSourceFingerprint("", []string{library.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatal("LogicalWork creation did not invalidate Work fingerprint")
+	}
+	author := "持久化作者"
+	if err := UpdateLogicalWorkMetadata(workID, LogicalWorkMetadataUpdate{Author: &author}); err != nil {
+		t.Fatal(err)
+	}
+	third, err := GetWorkSourceFingerprint("", []string{library.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == second {
+		t.Fatal("LogicalWork metadata update did not invalidate Work fingerprint")
+	}
+	if err := ReplaceLogicalWorkTags(workID, []string{"作品标签"}); err != nil {
+		t.Fatal(err)
+	}
+	fourth, err := GetWorkSourceFingerprint("", []string{library.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth == third {
+		t.Fatal("LogicalWork tag update did not invalidate Work fingerprint")
 	}
 }
 

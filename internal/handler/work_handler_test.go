@@ -239,7 +239,8 @@ func TestComicsSeriesViewReturnsUnifiedWorkDTO(t *testing.T) {
 		t.Fatal(err)
 	}
 	if payload.Total != 1 || len(payload.Comics) != 1 || len(payload.Comics[0].Units) != 2 ||
-		payload.Comics[0].MetadataHostType != "series" ||
+		payload.Comics[0].MetadataHostType != "work" ||
+		payload.Comics[0].MetadataHostID != payload.Comics[0].ID ||
 		!strings.HasPrefix(payload.Comics[0].ID, "work_") {
 		t.Fatalf("seriesView did not return unified Work DTO: %s", response.Body.String())
 	}
@@ -317,8 +318,12 @@ func TestWorkAPIUsesPersistedSeriesMetadataFromDatabase(t *testing.T) {
 	}
 	work := list.Works[0]
 	if work.Title != title || work.Author != author || work.ExternalRating == nil || *work.ExternalRating != rating ||
-		work.MetadataHostType != "series" || work.MetadataHostID != summaries[0].ID {
+		work.MetadataHostType != "work" || work.MetadataHostID != work.ID || work.SeriesID != "" {
 		t.Fatalf("persisted series metadata was not integrated: %#v", work)
+	}
+	persisted, err := store.GetLogicalWork(work.ID)
+	if err != nil || persisted == nil || persisted.Title != title || persisted.Author != author {
+		t.Fatalf("ComicSeries metadata was not migrated to LogicalWork: work=%#v err=%v", persisted, err)
 	}
 }
 

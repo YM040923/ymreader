@@ -67,11 +67,7 @@ func (h *WorkHandler) SetTags(c *gin.Context) {
 		return
 	}
 	target := targets[0]
-	seriesID := ""
-	if len(target.SeriesIDs) > 0 {
-		seriesID = target.SeriesIDs[0]
-	}
-	if err := store.ReplaceWorkTags(seriesID, target.ComicIDs, body.Tags); err != nil {
+	if err := store.ReplaceLogicalWorkAndComicTags(target.Work.ID, target.ComicIDs, body.Tags); err != nil {
 		writeWorkMutationError(c, err)
 		return
 	}
@@ -90,7 +86,7 @@ func (h *WorkHandler) SetCategories(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	if err := store.ReplaceWorkCategories(targets[0].ComicIDs, body.CategorySlugs); err != nil {
+	if err := store.ReplaceLogicalWorkAndComicCategories(targets[0].Work.ID, targets[0].ComicIDs, body.CategorySlugs); err != nil {
 		writeWorkMutationError(c, err)
 		return
 	}
@@ -190,7 +186,11 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	comicIDs, seriesIDs := flattenWorkWriteTargets(targets)
+	comicIDs, _ := flattenWorkWriteTargets(targets)
+	targetWorkIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		targetWorkIDs = append(targetWorkIDs, target.Work.ID)
+	}
 	var err error
 	switch body.Action {
 	case "favorite":
@@ -200,11 +200,15 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 	case "setReadingStatus":
 		err = store.SetWorkReadingStatus(getUserID(c), comicIDs, body.ReadingStatus)
 	case "addTags":
-		err = store.AddWorkTags(seriesIDs, comicIDs, body.Tags)
+		err = store.AddLogicalWorkAndComicTags(targetWorkIDs, comicIDs, body.Tags)
 	case "removeTags":
-		err = store.RemoveWorkTags(seriesIDs, comicIDs, body.Tags)
+		err = store.RemoveLogicalWorkAndComicTags(targetWorkIDs, comicIDs, body.Tags)
 	case "setCategory":
-		err = store.ReplaceWorkCategories(comicIDs, body.CategorySlugs)
+		for _, target := range targets {
+			if err = store.ReplaceLogicalWorkAndComicCategories(target.Work.ID, target.ComicIDs, body.CategorySlugs); err != nil {
+				break
+			}
+		}
 	case "delete":
 		_, err = store.DeleteWorkComics(comicIDs)
 	default:

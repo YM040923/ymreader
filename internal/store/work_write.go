@@ -160,6 +160,15 @@ func SetWorkReadingStatus(userID string, comicIDs []string, status string) error
 }
 
 func UpdateWorkMetadata(hostType, hostID string, update WorkMetadataUpdate) error {
+	if hostType == "work" {
+		locked := true
+		source := "manual"
+		return UpdateLogicalWorkMetadata(hostID, LogicalWorkMetadataUpdate{
+			Title: update.Title, Author: update.Author, Publisher: update.Publisher,
+			Year: update.Year, Description: update.Description, Language: update.Language,
+			Genre: update.Genre, Status: update.Status, MetadataSource: &source, MetadataLocked: &locked,
+		})
+	}
 	if hostType == "series" {
 		locked := true
 		source := "manual"
@@ -220,6 +229,27 @@ func workColumnExists(table, column string) bool {
 }
 
 func UpdateWorkCover(hostType, hostID, coverComicID, coverURL string, aspectRatio float64) error {
+	if hostType == "work" {
+		locked := true
+		source := "comic"
+		if coverURL != "" {
+			source = "remote"
+		}
+		update := LogicalWorkCoverUpdate{
+			CoverSource: &source,
+			CoverLocked: &locked,
+		}
+		if coverComicID != "" {
+			update.CoverComicID = &coverComicID
+		}
+		if coverURL != "" {
+			update.CoverURL = &coverURL
+		}
+		if aspectRatio > 0 {
+			update.CoverAspectRatio = &aspectRatio
+		}
+		return UpdateLogicalWorkCover(hostID, update)
+	}
 	if hostType == "series" {
 		tx, err := db.Begin()
 		if err != nil {

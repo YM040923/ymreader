@@ -15,6 +15,7 @@ import (
 	"github.com/nowen-reader/nowen-reader/internal/archive"
 	"github.com/nowen-reader/nowen-reader/internal/config"
 	"github.com/nowen-reader/nowen-reader/internal/store"
+	"github.com/nowen-reader/nowen-reader/internal/workmodel"
 )
 
 // Work is the logical manga/book shown to clients. Physical Comic rows are
@@ -345,6 +346,87 @@ func ApplySeriesMetadata(works []Work, summaries []store.SeriesSummary) {
 		}
 		work.Tags = mergeTags(work.Tags, seriesTags)
 		sort.SliceStable(work.Tags, func(i, j int) bool { return naturalLess(work.Tags[i].Name, work.Tags[j].Name) })
+	}
+}
+
+func ApplyLogicalWorkMetadata(
+	works []Work,
+	persisted map[string]store.LogicalWork,
+	tags map[string][]store.Tag,
+	categories map[string][]store.ComicCategoryInfo,
+) {
+	for index := range works {
+		work := &works[index]
+		metadata, ok := persisted[work.ID]
+		if !ok {
+			continue
+		}
+		work.SeriesID = ""
+		work.MetadataHostType = "work"
+		work.MetadataHostID = work.ID
+		if strings.TrimSpace(metadata.Title) != "" {
+			work.Title = metadata.Title
+		}
+		if metadata.Author != "" {
+			work.Author = metadata.Author
+		}
+		if metadata.Publisher != "" {
+			work.Publisher = metadata.Publisher
+		}
+		if metadata.Year != nil {
+			work.Year = cloneInt(metadata.Year)
+		}
+		if metadata.Description != "" {
+			work.Description = metadata.Description
+		}
+		if metadata.Language != "" {
+			work.Language = metadata.Language
+		}
+		if metadata.Genre != "" {
+			work.Genre = metadata.Genre
+		}
+		if metadata.Status != "" {
+			work.Status = metadata.Status
+		}
+		if metadata.MetadataSource != "" {
+			work.MetadataSource = metadata.MetadataSource
+		}
+		if metadata.ExternalRating != nil {
+			work.ExternalRating = cloneFloat64(metadata.ExternalRating)
+			work.ExternalRatingMax = cloneFloat64(metadata.ExternalRatingMax)
+			work.ExternalRatingSource = metadata.ExternalRatingSource
+		}
+		if metadata.CoverComicID != "" {
+			work.CoverComicID = metadata.CoverComicID
+		}
+		work.StoredCoverURL = metadata.CoverURL
+		work.CoverLocked = metadata.CoverLocked
+		if metadata.CoverURL != "" {
+			work.CoverURL = store.BuildLogicalWorkCoverURL(work.ID)
+			if metadata.CoverAspectRatio > 0 {
+				work.CoverAspectRatio = metadata.CoverAspectRatio
+			}
+		} else if metadata.CoverComicID != "" {
+			work.CoverURL = store.BuildComicCoverURL(metadata.CoverComicID)
+			if metadata.CoverAspectRatio > 0 {
+				work.CoverAspectRatio = metadata.CoverAspectRatio
+			}
+		}
+		if !metadata.UpdatedAt.IsZero() {
+			updatedAt := metadata.UpdatedAt.Format(time.RFC3339Nano)
+			if updatedAt > work.UpdatedAt {
+				work.UpdatedAt = updatedAt
+			}
+		}
+		if workTags, exists := tags[work.ID]; exists {
+			work.Tags = make([]store.ComicTagInfo, 0, len(workTags))
+			for _, tag := range workTags {
+				work.Tags = append(work.Tags, store.ComicTagInfo{Name: tag.Name, Color: tag.Color})
+			}
+		}
+		if workCategories, exists := categories[work.ID]; exists {
+			work.Categories = append([]store.ComicCategoryInfo(nil), workCategories...)
+		}
 	}
 }
 
@@ -1042,8 +1124,7 @@ func workTitle(root, fallback string) string {
 }
 
 func stableWorkID(libraryID, root string) string {
-	sum := sha1.Sum([]byte("work\x00" + libraryID + "\x00" + normalizeWorkPath(root)))
-	return fmt.Sprintf("work_%x", sum[:10])
+	return workmodel.StableWorkID(libraryID, root)
 }
 
 func stableUnitID(workID, comicID, internalPath, label string) string {
@@ -1052,13 +1133,7 @@ func stableUnitID(workID, comicID, internalPath, label string) string {
 }
 
 func normalizeWorkPath(value string) string {
-	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
-	value = strings.Trim(value, "/")
-	cleaned := path.Clean(value)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return ""
-	}
-	return cleaned
+	return workmodel.NormalizePath(value)
 }
 
 func firstNonEmpty(values ...string) string {

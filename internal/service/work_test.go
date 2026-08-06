@@ -333,6 +333,54 @@ func TestApplySeriesMetadataPreservesComicRatingAndMergesSeriesCoverAndUpdatedAt
 	}
 }
 
+func TestApplyLogicalWorkMetadataMakesWorkTheOnlyMetadataHost(t *testing.T) {
+	year := 2026
+	rating := 9.1
+	ratingMax := 10.0
+	works := []Work{{
+		ID: "work-persistent", LibraryID: "lib", RootPath: "作品", Title: "扫描标题",
+		SeriesID: "ser_old", MetadataHostType: "series", MetadataHostID: "ser_old",
+		CoverComicID: "comic-cover", CoverURL: "/api/comics/comic-cover/thumbnail",
+		Tags:       []store.ComicTagInfo{{Name: "物理标签"}},
+		Categories: []store.ComicCategoryInfo{{ID: 1, Name: "旧分类", Slug: "old"}},
+	}}
+	persisted := map[string]store.LogicalWork{
+		"work-persistent": {
+			ID: "work-persistent", LibraryID: "lib", RootPath: "作品",
+			Title: "持久化标题", Author: "作者", Publisher: "出版社", Year: &year,
+			Description: "简介", Language: "zh-CN", Genre: "剧情", Status: "ongoing",
+			MetadataSource: "bangumi", MetadataLocked: true,
+			ExternalRating: &rating, ExternalRatingMax: &ratingMax, ExternalRatingSource: "bangumi",
+			CoverSource: "remote", CoverComicID: "comic-cover",
+			CoverURL: "https://example.test/cover.jpg", CoverAspectRatio: 0.68, CoverLocked: true,
+		},
+	}
+	tags := map[string][]store.Tag{
+		"work-persistent": {{Name: "作品标签", Color: "#abc"}},
+	}
+	categories := map[string][]store.ComicCategoryInfo{
+		"work-persistent": {{ID: 2, Name: "国漫", Slug: "mainland"}},
+	}
+
+	ApplyLogicalWorkMetadata(works, persisted, tags, categories)
+	work := works[0]
+	if work.SeriesID != "" || work.MetadataHostType != "work" || work.MetadataHostID != work.ID {
+		t.Fatalf("LogicalWork did not become the sole metadata host: %+v", work)
+	}
+	if work.Title != "持久化标题" || work.Author != "作者" || work.Year == nil || *work.Year != year {
+		t.Fatalf("LogicalWork metadata not applied: %+v", work)
+	}
+	if work.CoverURL != store.BuildLogicalWorkCoverURL(work.ID) || work.CoverAspectRatio != 0.68 || !work.CoverLocked {
+		t.Fatalf("LogicalWork cover not applied: %+v", work)
+	}
+	if len(work.Tags) != 1 || work.Tags[0].Name != "作品标签" {
+		t.Fatalf("LogicalWork tags not authoritative: %+v", work.Tags)
+	}
+	if len(work.Categories) != 1 || work.Categories[0].Slug != "mainland" {
+		t.Fatalf("LogicalWork categories not authoritative: %+v", work.Categories)
+	}
+}
+
 func TestNaturalLessSortsChineseNumberedWorkTitles(t *testing.T) {
 	titles := []string{"作品十", "作品二", "作品十一", "作品一"}
 	sort.Slice(titles, func(i, j int) bool { return NaturalLess(titles[i], titles[j]) })

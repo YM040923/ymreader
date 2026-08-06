@@ -467,6 +467,26 @@ func SeriesCoverCacheName(seriesID string) string {
 	return fmt.Sprintf("series_%s_%dx%d.webp", seriesID, tw, th)
 }
 
+func WorkCoverCacheName(workID string) string {
+	tw := config.GetThumbnailWidth()
+	th := config.GetThumbnailHeight()
+	return fmt.Sprintf("work_%s_%dx%d.webp", workID, tw, th)
+}
+
+func ClearWorkCoverCache(workID string) {
+	thumbDir := config.GetThumbnailsDir()
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		return
+	}
+	prefix := "work_" + workID + "_"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			_ = os.Remove(filepath.Join(thumbDir, entry.Name()))
+		}
+	}
+}
+
 func ClearSeriesCoverCache(seriesID string) {
 	thumbDir := config.GetThumbnailsDir()
 	entries, err := os.ReadDir(thumbDir)

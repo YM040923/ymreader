@@ -66,12 +66,18 @@ func TestOPDSHeadMatchesGetWithoutResponseBody(t *testing.T) {
 		"/api/opds/favorites",
 		"/api/opds/works",
 		"/api/opds/works/" + works[0].ID,
+		"/api/opds/series",
+		"/api/opds/series/" + works[0].ID,
+		"/api/opds/series/" + works[0].ID + "/cover",
 		"/api/opds/search.xml",
 		"/api/opds/search?q=OPDS",
 		"/api/opds/cover/" + comicID,
 		"/api/opds/work-cover/" + works[0].ID,
 		"/api/opds/unit-cover/" + comicID + "?page=0",
 		"/api/opds/stream/" + comicID + "?page=0",
+		"/api/opds/units/" + works[0].Units[0].ID + "/download",
+		"/api/opds/works/" + works[0].ID + "/continuous/download",
+		"/api/opds/works/" + works[0].ID + "/continuous/stream?page=0",
 	}
 
 	for _, path := range paths {
@@ -89,5 +95,31 @@ func TestOPDSHeadMatchesGetWithoutResponseBody(t *testing.T) {
 				t.Fatalf("HEAD returned %d body bytes: %q", headResponse.Body.Len(), headResponse.Body.String())
 			}
 		})
+	}
+}
+
+func TestOPDSHeadSuppressesAuthenticationAndNotFoundBodies(t *testing.T) {
+	router := setupTestRouter(t)
+
+	response := performOPDSRequest(router, http.MethodHead, "/api/opds", "", "", nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated HEAD status = %d, want 401", response.Code)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("unauthenticated HEAD returned body %q", response.Body.String())
+	}
+
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	user, token := createOPDSTestUserAndKey(t, "opds-head-not-found", "opds-head-not-found")
+	for _, path := range []string{"/api/opds/works/not-found", "/api/opds/units/not-found/download"} {
+		response := performOPDSRequest(router, http.MethodHead, path, user.Username, token, nil)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("HEAD %s status = %d, want 404", path, response.Code)
+		}
+		if response.Body.Len() != 0 {
+			t.Fatalf("HEAD %s returned not-found body %q", path, response.Body.String())
+		}
 	}
 }

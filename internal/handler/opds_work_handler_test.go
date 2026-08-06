@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nowen-reader/nowen-reader/internal/archive"
+	"github.com/nowen-reader/nowen-reader/internal/config"
 	"github.com/nowen-reader/nowen-reader/internal/model"
 	"github.com/nowen-reader/nowen-reader/internal/service"
 	"github.com/nowen-reader/nowen-reader/internal/store"
@@ -197,6 +199,11 @@ func TestOPDSWorkUnitFeedUsesPhysicalAcquisitionAndInternalPageOffsets(t *testin
 	}
 	if len(zipReader.File) != works[0].Units[0].PageCount {
 		t.Fatalf("virtual Unit contains %d pages, want %d", len(zipReader.File), works[0].Units[0].PageCount)
+	}
+	for _, page := range zipReader.File {
+		if page.Method != zip.Store {
+			t.Fatalf("virtual Unit page %s uses ZIP method %d, want Store for JPEG", page.Name, page.Method)
+		}
 	}
 	continuous := performOPDSBasicRequest(
 		router,
@@ -427,6 +434,53 @@ func TestOPDSPDFWorkKeepsPhysicalAcquisition(t *testing.T) {
 	}
 }
 
+func TestOPDSWorkCoverUsesPersistentLogicalWorkCache(t *testing.T) {
+	router := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	user, token := createOPDSTestUserAndKey(t, "opds-logical-cover-user", "opds-logical-cover-user")
+	createOPDSHandlerLibrary(t, "opds-logical-cover-lib", "comic", true)
+	createOPDSHandlerComic(t, "opds-logical-cover-comic", "作品.cbz", "comic", "opds-logical-cover-lib")
+	if err := store.SetUserLibraryAccess(user.ID, []store.LibraryAccessReq{{
+		LibraryID: "opds-logical-cover-lib", CanDownload: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := loadOPDSWorksFromResponseFixture(user.ID, "opds-logical-cover-lib")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("load Work: count=%d err=%v", len(items), err)
+	}
+	work := items[0]
+	if err := store.UpsertDetectedLogicalWorks([]store.LogicalWorkSeed{{
+		ID: work.ID, LibraryID: work.LibraryID, RootPath: work.RootPath,
+		Title: work.Title, CoverComicID: work.CoverComicID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	coverURL := "https://example.test/persistent-cover.jpg"
+	locked := true
+	if err := store.UpdateLogicalWorkCover(work.ID, store.LogicalWorkCoverUpdate{
+		CoverURL: &coverURL, CoverLocked: &locked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(config.GetThumbnailsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(config.GetThumbnailsDir(), archive.WorkCoverCacheName(work.ID))
+	coverData := []byte("persistent-work-cover")
+	if err := os.WriteFile(cachePath, coverData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(cachePath) })
+
+	response := performOPDSBasicRequest(router, "/api/opds/work-cover/"+work.ID, user.Username, token)
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), coverData) {
+		t.Fatalf("logical Work cover status=%d body=%q", response.Code, response.Body.Bytes())
+	}
+}
+
 func TestOPDSWorkCatalogAppliesSeriesMetadataAndActualUpdatedAt(t *testing.T) {
 	router := setupTestRouter(t)
 	if err := store.RunMigrations(); err != nil {
@@ -555,6 +609,45 @@ func TestOPDSWorkUnitFeedKeepsFolderUnitsAsPhysicalPageStreams(t *testing.T) {
 		}
 		if strings.Contains(body, "/api/opds/download/"+comicID) {
 			t.Fatalf("folder Unit %s must not advertise an unavailable raw-file download: %s", comicID, body)
+		}
+	}
+	for _, unit := range works[0].Units {
+		virtualDownload := "/api/opds/units/" + unit.ID + "/download"
+		if !strings.Contains(body, virtualDownload) {
+			t.Fatalf("folder Unit %s is missing standard virtual CBZ acquisition %s: %s", unit.ID, virtualDownload, body)
+		}
+	}
+}
+
+func TestVirtualCBZGenerationFailureReturnsServerErrorInsteadOfBrokenSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	router.Use(suppressOPDSHeadResponseBody())
+	handler := NewOPDSHandler()
+	brokenHandler := func(c *gin.Context) {
+		handler.renderVirtualCBZ(c, "Broken", []service.WorkUnit{{
+			ID: "broken-unit", ComicID: "missing-comic", PageCount: 1,
+		}})
+	}
+	router.GET("/broken.cbz", brokenHandler)
+	router.HEAD("/broken.cbz", brokenHandler)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(method, "/broken.cbz", nil)
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("%s broken virtual CBZ status = %d, want 500; body=%q", method, response.Code, response.Body.String())
+		}
+		if strings.Contains(response.Header().Get("Content-Type"), "comicbook") {
+			t.Fatalf("%s broken virtual CBZ was advertised as a valid archive: headers=%v", method, response.Header())
+		}
+		if method == http.MethodHead && response.Body.Len() != 0 {
+			t.Fatalf("broken virtual CBZ HEAD returned body %q", response.Body.String())
 		}
 	}
 }

@@ -30,6 +30,11 @@ const (
 	opdsWorkIndexTTL    = 30 * time.Second
 )
 
+var (
+	opdsVirtualCBZSlots       = make(chan struct{}, 2)
+	opdsVirtualCBZCleanupOnce sync.Once
+)
+
 type opdsWorkIndexCacheEntry struct {
 	permissionScope string
 	expiresAt       time.Time
@@ -252,7 +257,8 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 				CoverHref:           opdsUnitCoverHref(unit),
 				SuppressAcquisition: unit.InternalPath != "",
 			}
-			if unit.InternalPath != "" {
+			_, hasPhysicalAcquisition := service.OPDSAcquisitionMIMEForFilename(comic.Filename)
+			if unit.InternalPath != "" || !hasPhysicalAcquisition {
 				row.SuppressAcquisition = false
 				row.AcquisitionHref = "/api/opds/units/" + url.PathEscape(unit.ID) + "/download"
 				row.AcquisitionType = "application/vnd.comicbook+zip"
@@ -340,39 +346,114 @@ func (h *OPDSHandler) WorkContinuousDownload(c *gin.Context) {
 
 func (h *OPDSHandler) renderVirtualCBZ(c *gin.Context, title string, units []service.WorkUnit) {
 	filename := sanitizeOPDSFilename(title) + ".cbz"
-	c.Header("Content-Type", "application/vnd.comicbook+zip")
-	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("X-Accel-Buffering", "no")
-	setOPDSPrivateResponseHeaders(c)
-	if c.Request.Method == http.MethodHead {
-		c.Status(http.StatusOK)
+	select {
+	case opdsVirtualCBZSlots <- struct{}{}:
+		defer func() { <-opdsVirtualCBZSlots }()
+	case <-c.Request.Context().Done():
 		return
 	}
 
-	c.Status(http.StatusOK)
-	writer := stdzip.NewWriter(c.Writer)
+	tempDir := filepath.Join(config.DataDir(), "opds-virtual")
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare virtual publication"})
+		return
+	}
+	opdsVirtualCBZCleanupOnce.Do(func() { cleanupStaleVirtualCBZs(tempDir, 24*time.Hour) })
+	tempFile, err := os.CreateTemp(tempDir, "publication-*.cbz")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare virtual publication"})
+		return
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := writeVirtualCBZ(c, tempFile, units); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate virtual publication"})
+		return
+	}
+	info, err := tempFile.Stat()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize virtual publication"})
+		return
+	}
+	if _, err := tempFile.Seek(0, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize virtual publication"})
+		return
+	}
+	setVirtualCBZResponseHeaders(c, filename, info.Size())
+	http.ServeContent(c.Writer, c.Request, filename, time.Time{}, tempFile)
+}
+
+func cleanupStaleVirtualCBZs(directory string, maxAge time.Duration) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "publication-") || !strings.HasSuffix(entry.Name(), ".cbz") {
+			continue
+		}
+		info, err := entry.Info()
+		if err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(directory, entry.Name()))
+		}
+	}
+}
+
+func writeVirtualCBZ(c *gin.Context, output *os.File, units []service.WorkUnit) error {
+	writer := stdzip.NewWriter(output)
 	pageNumber := 1
 	for _, unit := range units {
 		for offset := 0; offset < unit.PageCount; offset++ {
+			select {
+			case <-c.Request.Context().Done():
+				_ = writer.Close()
+				return c.Request.Context().Err()
+			default:
+			}
 			result, err := service.GetOPDSPSEPageImage(unit.ComicID, unit.StartPage+offset, 0)
 			if err != nil || result == nil || len(result.Data) == 0 {
 				_ = writer.Close()
-				return
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("page %d of comic %s is unavailable", unit.StartPage+offset, unit.ComicID)
 			}
-			entry, err := writer.Create(fmt.Sprintf("%06d.jpg", pageNumber))
+			header := &stdzip.FileHeader{
+				Name:   fmt.Sprintf("%06d.jpg", pageNumber),
+				Method: stdzip.Store,
+			}
+			entry, err := writer.CreateHeader(header)
 			if err != nil {
 				_ = writer.Close()
-				return
+				return err
 			}
 			if _, err := entry.Write(result.Data); err != nil {
 				_ = writer.Close()
-				return
+				return err
 			}
 			pageNumber++
 		}
 	}
-	_ = writer.Close()
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return output.Sync()
+}
+
+func setVirtualCBZResponseHeaders(c *gin.Context, filename string, fileSize int64) {
+	c.Header("Content-Type", "application/vnd.comicbook+zip")
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Accept-Ranges", "bytes")
+	if fileSize > 0 {
+		c.Header("Content-Length", strconv.FormatInt(fileSize, 10))
+	}
+	setOPDSPrivateResponseHeaders(c)
 }
 
 func sanitizeOPDSFilename(value string) string {
@@ -522,6 +603,7 @@ func loadOPDSWorks(c *gin.Context) ([]opdsWorkCatalogItem, error) {
 			item.AddedAt = maxAtomTime(item.AddedAt, values[0])
 			item.UpdatedAt = maxAtomTime(item.UpdatedAt, values[1])
 		}
+		item.UpdatedAt = maxAtomTime(item.UpdatedAt, work.UpdatedAt)
 		if work.SeriesID != "" {
 			item.UpdatedAt = maxAtomTime(item.UpdatedAt, seriesUpdated[work.SeriesID])
 		}
@@ -734,11 +816,36 @@ func (h *OPDSHandler) WorkCover(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Work not found"})
 		return
 	}
+	if logicalWork, logicalErr := store.GetLogicalWork(item.Work.ID); logicalErr == nil && logicalWork != nil {
+		h.renderLogicalWorkCover(c, logicalWork, item.Work.CoverComicID)
+		return
+	}
 	if item.Work.SeriesID != "" {
 		h.renderSeriesWorkCover(c, item.Work.SeriesID, item.Work.CoverComicID)
 		return
 	}
 	h.renderCover(c, item.Work.CoverComicID)
+}
+
+func (h *OPDSHandler) renderLogicalWorkCover(c *gin.Context, work *store.LogicalWork, fallbackComicID string) {
+	cachePath := filepath.Join(config.GetThumbnailsDir(), archive.WorkCoverCacheName(work.ID))
+	if data, err := os.ReadFile(cachePath); err == nil && len(data) > 0 {
+		h.renderOPDSImage(c, data, http.DetectContentType(data), 300)
+		return
+	}
+	if work.CoverURL != "" && (strings.HasPrefix(work.CoverURL, "http://") || strings.HasPrefix(work.CoverURL, "https://")) {
+		go service.DownloadWorkCover(work.ID, work.CoverURL)
+		c.Redirect(http.StatusTemporaryRedirect, work.CoverURL)
+		return
+	}
+	if work.CoverComicID != "" {
+		fallbackComicID = work.CoverComicID
+	}
+	if fallbackComicID != "" {
+		h.renderCover(c, fallbackComicID)
+		return
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "Work cover unavailable"})
 }
 
 func (h *OPDSHandler) findIndexedDownloadableWork(c *gin.Context, workID string) (opdsWorkCatalogItem, bool, error) {
