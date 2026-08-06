@@ -261,7 +261,7 @@ const ComicCard = memo(function ComicCard({
               </div>
             )}
             <Link
-              href={getReaderUrl(comic)}
+              href={getDetailUrl(comic)}
               className="flex flex-1 min-w-0 items-center gap-3 sm:gap-4 rounded-xl bg-card/70 backdrop-blur-sm border border-white/[0.04] p-2.5 sm:p-3 transition-all duration-200 group-hover:bg-card-hover group-hover:border-white/[0.08] group-hover:shadow-lg group-hover:shadow-accent/5"
             >
               {/* Thumbnail */}
@@ -424,7 +424,7 @@ const ComicCard = memo(function ComicCard({
           <div className={`motion-cover relative overflow-hidden rounded-xl bg-card/70 backdrop-blur-sm border border-white/[0.04] group-hover:shadow-accent/10 group-hover:border-white/[0.08] ${compact ? "shadow-sm" : ""}`}>
             {/* Cover Image — 点击进入阅读 */}
             <Link
-              href={getReaderUrl(comic)}
+              href={getDetailUrl(comic)}
               className="block"
               onClick={() => onClick?.(comic)}
             >

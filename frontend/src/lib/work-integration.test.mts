@@ -97,6 +97,17 @@ for (const recommendationFile of ["app/recommendations/page.tsx", "components/Re
 }
 
 assert.match(read("components/Navbar.tsx"), /\{onUpload && \(/);
+const comicCard = read("components/ComicCard.tsx");
+assert.match(
+  comicCard,
+  /href=\{getDetailUrl\(comic\)\}\s+className="flex flex-1 min-w-0 items-center/,
+  "list card primary click must open the detail page",
+);
+assert.match(
+  comicCard,
+  /href=\{getDetailUrl\(comic\)\}\s+className="block"/,
+  "grid cover primary click must open the detail page",
+);
 const continueReading = read("components/ContinueReading.tsx");
 assert.match(continueReading, /fetchAllWorks/);
 assert.match(continueReading, /comic\.readHref \|\| comic\.detailHref/);
