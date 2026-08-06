@@ -44,7 +44,7 @@ export interface Comic {
   externalRatingSource?: string; // 评分来源（"anilist", "bangumi"）
   externalRatingUpdatedAt?: string; // 评分更新时间
   workId?: string;
-  metadataHostType?: "series" | "comic";
+  metadataHostType?: "work";
   metadataHostId?: string;
   representativeComicId?: string;
   detailHref?: string;

@@ -24,7 +24,7 @@ export interface Work {
   title: string;
   rootPath: string;
   seriesId?: string;
-  metadataHostType?: "series" | "comic";
+  metadataHostType?: "work";
   metadataHostId?: string;
   representativeComicId?: string;
   coverComicId: string;

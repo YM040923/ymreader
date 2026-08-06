@@ -92,15 +92,9 @@ export function mergeNovelAndWorkItems<
 }
 
 export function getWorkMetadataTarget(
-  work: Pick<Work, "metadataHostType" | "metadataHostId" | "representativeComicId" | "coverComicId">,
-): { type: "series" | "comic"; id: string } {
-  if (work.metadataHostType === "series" && work.metadataHostId) {
-    return { type: "series", id: work.metadataHostId };
-  }
-  return {
-    type: "comic",
-    id: work.metadataHostId || work.representativeComicId || work.coverComicId,
-  };
+  work: Pick<Work, "id">,
+): { type: "work"; id: string } {
+  return { type: "work", id: work.id };
 }
 
 export function workToComic(work: Work): Comic {

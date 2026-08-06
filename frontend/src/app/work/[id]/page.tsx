@@ -33,8 +33,7 @@ import { formatDuration, formatFileSize } from "@/lib/comic-utils";
 import type { ApiComic } from "@/hooks/useComicTypes";
 import type { Work, WorkComicState, WorkUnit } from "@/types/work";
 import { useAuth } from "@/lib/auth-context";
-import { MetadataSearch } from "@/components/MetadataSearch";
-import { SeriesMetadataSearch } from "@/components/SeriesMetadataSearch";
+import { WorkMetadataSearch } from "@/components/WorkMetadataSearch";
 import { fetchAccessibleLibraries, type Library } from "@/api/libraries";
 import {
   setWorkCategories,
@@ -488,7 +487,7 @@ export default function WorkDetailPage() {
               <button onClick={saveMetadata} disabled={savingMetadata} className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{savingMetadata ? "保存中…" : "保存元数据"}</button>
               <label className="cursor-pointer rounded-xl border border-border/60 px-4 py-2 text-sm text-muted hover:text-foreground">上传作品封面<input type="file" accept="image/*" className="hidden" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; await uploadWorkCover(work, file); await load(); }} /></label>
             </div>
-            {metadataTarget.type === "series" ? <SeriesMetadataSearch seriesId={metadataTarget.id} groupName={work.title} contentType="comic" onApplied={load} /> : <MetadataSearch comicId={metadataTarget.id} comicTitle={work.title} comicType="comic" onApplied={load} />}
+            <WorkMetadataSearch workId={metadataTarget.id} groupName={work.title} contentType="comic" onApplied={load} />
           </section>
         )}
 

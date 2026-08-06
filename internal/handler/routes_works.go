@@ -22,6 +22,9 @@ func registerWorkRoutes(api *gin.RouterGroup) {
 		works.PUT("/:id/categories", handler.SetCategories)
 		works.PUT("/:id/cover", handler.UpdateCover)
 		works.PUT("/:id/metadata", handler.UpdateMetadata)
+		works.POST("/:id/scrape-metadata", middleware.ScraperRequired(), handler.ScrapeMetadata)
+		works.POST("/:id/apply-metadata", middleware.ScraperRequired(), handler.ApplyScrapedMetadata)
+		works.POST("/:id/ai-recognize", middleware.ScraperRequired(), handler.AIRecognize)
 		works.DELETE("/:id", handler.Delete)
 		works.GET("/:id", handler.Get)
 	}
