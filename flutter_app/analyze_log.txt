@@ -1,0 +1,27 @@
+Analyzing flutter_app...                                        
+
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:536:59 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:557:44 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:664:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:743:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:897:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:1067:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:1069:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\metadata\metadata_screen.dart:1293:41 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\features\reader\comic_reader_screen.dart:331:26 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\features\settings\settings_screen.dart:61:11 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\features\settings\settings_screen.dart:67:11 - prefer_const_constructors
+warning - The declaration '_TabItem' isn't referenced - lib\features\shell\app_shell.dart:66:7 - unused_element
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\stats\stats_screen.dart:129:47 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\features\stats\stats_screen.dart:244:31 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\features\stats\stats_screen.dart:248:13 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\features\stats\stats_screen.dart:248:19 - unnecessary_brace_in_string_interps
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:174:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:178:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:193:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:207:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:228:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\widgets\reader_settings_panel.dart:241:21 - prefer_const_constructors
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\widgets\reader_settings_panel.dart:422:13 - deprecated_member_use
+
+23 issues found. (ran in 3.9s)

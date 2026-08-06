@@ -1,0 +1,70 @@
+# ============================================================
+# NowenReader - 一键部署
+#
+# 使用方法（只需一条命令）:
+#   docker compose up -d
+#
+# 然后打开浏览器访问: http://localhost:6680
+# 默认端口映射: 宿主机6680 -> 容器3000
+#
+# 多平台支持:
+#   镜像同时支持 linux/amd64 和 linux/arm64
+#   方式1: 使用预构建镜像（推荐）→ 注释 build 块，取消注释 image 行
+#   方式2: 本地构建 → 保持 build 块（Docker 自动匹配当前平台）
+#   方式3: 多平台构建推送 → 运行 ./build-multiplatform.sh
+# ============================================================
+
+services:
+  nowen-reader:
+    # --- 方式1: 使用预构建的多平台镜像（自动匹配 amd64/arm64）---
+    image: cropflre/nowen-reader:latest
+    # 如果自动检测架构不正确，取消注释下面一行并指定你的平台：
+    # platform: linux/amd64    # 或 linux/arm64
+    # --- 方式2: 本地构建（自动匹配当前平台）---
+    build:
+      context: .
+      # 多平台支持: buildx 构建时自动设置，本地构建时使用当前平台
+      platforms:
+        - "linux/amd64"
+        - "linux/arm64"
+      args:
+        VERSION: "0.2.0"
+    container_name: nowen-reader
+    restart: unless-stopped
+    ports:
+      - "6680:3000"
+    privileged: true
+    volumes:
+      # 数据库持久化（不要删除，否则丢失所有数据）
+      - ./data:/data
+      # 漫画文件目录 - 把你的漫画放这里（默认挂载到当前目录下的 comics 文件夹）
+      - ./comics:/app/comics
+      # 电子书文件目录 - 把你的电子书放这里（默认挂载到当前目录下的 novels 文件夹）
+      - ./novels:/app/novels
+
+      # NAS 额外目录（可选，取消注释并修改路径）
+      # - /mnt/nas/manga:/mnt/nas/manga
+      # - /volume1/comics:/volume1/comics
+
+      # 缩略图缓存持久化（加速启动）
+      - ./cache:/app/.cache
+    environment:
+      - GIN_MODE=release
+      - DATABASE_URL=/data/nowen-reader.db
+      - COMICS_DIR=/app/comics
+      - NOVELS_DIR=/app/novels
+      - DATA_DIR=/app/.cache
+      - PORT=3000
+      - TZ=Asia/Shanghai
+      # 子路径部署前缀（可选，例如：/reader 或 /reader/，默认为空即根目录挂载）
+      # - BASE_PATH=/reader
+      # 仅在可信反向代理后启用，用于 OPDS 生成正确的外部地址
+      # - TRUST_PROXY_HEADERS=true
+      # 文件权限映射（设置为你 NAS/宿主机文件的 UID:GID，解决 permission denied 问题）
+      # 可通过 ls -ln 查看文件的 UID/GID，然后填入下方
+      # - PUID=1000
+      # - PGID=1000
+      # 新建文件权限掩码。0002 表示同组用户也可写，适合 NAS/共享目录
+      # - UMASK=0002
+      # 如果 NAS/SMB/NFS 无法 chown，且 PUID/PGID 仍无法写入，可开启宽松回退
+      # - PERMISSION_FIX_MODE=relaxed

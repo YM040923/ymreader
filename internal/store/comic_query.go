@@ -1,0 +1,1678 @@
+package store
+
+import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+)
+
+// ============================================================
+// FTS5 全文搜索辅助函数
+// ============================================================
+
+// ftsEscapeQuery 将用户输入转换为安全的 FTS5 查询字符串。
+// 对每个词加双引号转义，多个词用 OR 连接，支持中文、英文混合搜索。
+func ftsEscapeQuery(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return `""`
+	}
+	// 将特殊字符替换为空格以拆分词
+	replacer := strings.NewReplacer(
+		`"`, " ", `*`, " ", `(`, " ", `)`, " ",
+		`{`, " ", `}`, " ", `:`, " ", `^`, " ",
+	)
+	input = replacer.Replace(input)
+
+	words := strings.Fields(input)
+	if len(words) == 0 {
+		return `""`
+	}
+	// 每个词用双引号包裹（防止 FTS5 语法错误），用 OR 连接实现模糊匹配
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = `"` + w + `"` + `*`
+	}
+	return strings.Join(quoted, " OR ")
+}
+
+// ============================================================
+// 列表查询类型定义
+// ============================================================
+
+// ComicListOptions 保存列表查询参数。
+type ComicListOptions struct {
+	Search           string
+	Tags             []string
+	FavoritesOnly    bool
+	SortBy           string // "title" | "addedAt" | "lastReadAt" | "rating" | "custom"
+	SortOrder        string // "asc" | "desc"
+	Page             int
+	PageSize         int
+	Category         string
+	ContentType      string   // "comic" | "novel" | "" (全部)
+	ReadingStatus    string   // "want" | "reading" | "finished" | "shelved" | "" (全部)
+	MetaFilter       string   // "all" | "with" | "missing" — 按元数据状态过滤
+	UserID           string   // 当前用户ID — 用于按用户取 lastReadAt/lastReadPage/isFavorite
+	LibraryIDs       []string // 书库过滤 — 只返回这些书库下的漫画（空=不过滤）
+	FilterLibraryIDs bool     // 如果启用，即使 LibraryIDs 为空也强制过滤（此时返回空）
+	Uncategorized    bool     // 筛选没有分类关联的作品
+	Untagged         bool     // 筛选没有标签关联的作品
+	SeriesView       bool     // 是否开启目录折叠混合视图
+}
+
+// ComicListItem 是漫画在列表结果中的序列化表示。
+type ComicListItem struct {
+	ID                      string              `json:"id"`
+	Filename                string              `json:"filename"`
+	Title                   string              `json:"title"`
+	TitleSortKey            string              `json:"titleSortKey,omitempty"`
+	PageCount               int                 `json:"pageCount"`
+	FileSize                int64               `json:"fileSize"`
+	AddedAt                 string              `json:"addedAt"`
+	UpdatedAt               string              `json:"updatedAt"`
+	LastReadPage            int                 `json:"lastReadPage"`
+	LastReadAt              *string             `json:"lastReadAt"`
+	IsFavorite              bool                `json:"isFavorite"`
+	Rating                  *int                `json:"rating"`
+	SortOrder               int                 `json:"sortOrder"`
+	TotalReadTime           int                 `json:"totalReadTime"`
+	CoverURL                string              `json:"coverUrl"`
+	CoverAspectRatio        float64             `json:"coverAspectRatio"`
+	Author                  string              `json:"author"`
+	Publisher               string              `json:"publisher"`
+	Year                    *int                `json:"year"`
+	Description             string              `json:"description"`
+	Language                string              `json:"language"`
+	Genre                   string              `json:"genre"`
+	MetadataSource          string              `json:"metadataSource"`
+	CoverImageURL           string              `json:"coverImageUrl,omitempty"`
+	ReadingStatus           string              `json:"readingStatus"`
+	ComicType               string              `json:"type"`
+	LibraryID               string              `json:"libraryId"`
+	RelativePath            string              `json:"relativePath,omitempty"`
+	ExternalRating          *float64            `json:"externalRating"`
+	ExternalRatingMax       float64             `json:"externalRatingMax"`
+	ExternalRatingSource    string              `json:"externalRatingSource"`
+	ExternalRatingUpdatedAt string              `json:"externalRatingUpdatedAt"`
+	Tags                    []ComicTagInfo      `json:"tags"`
+	Categories              []ComicCategoryInfo `json:"categories"`
+	CanManage               bool                `json:"canManage,omitempty"`
+	ComicCount              int                 `json:"comicCount,omitempty"`
+}
+
+type ComicTagInfo struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+type ComicCategoryInfo struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	Icon string `json:"icon"`
+}
+
+// ComicListResult 是分页查询的返回结果。
+type ComicListResult struct {
+	Comics     []ComicListItem `json:"comics"`
+	Total      int             `json:"total"`
+	Page       int             `json:"page"`
+	PageSize   int             `json:"pageSize"`
+	TotalPages int             `json:"totalPages"`
+}
+
+// GetWorkSourceFingerprint returns a cheap change token for the data used to
+// build a user's Work catalog. It covers physical Comic metadata, user state,
+// tags/categories and persisted ComicSeries metadata.
+func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryIDs bool) (string, error) {
+	conditions := []string{`c."type" = 'comic'`}
+	args := []interface{}{}
+	if filterLibraryIDs {
+		if len(libraryIDs) == 0 {
+			conditions = append(conditions, "1=0")
+		} else {
+			placeholders := make([]string, len(libraryIDs))
+			for index, id := range libraryIDs {
+				placeholders[index] = "?"
+				args = append(args, id)
+			}
+			conditions = append(conditions, fmt.Sprintf(`c."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+		}
+	}
+	where := "WHERE " + strings.Join(conditions, " AND ")
+
+	var comicCount, comicShape int64
+	var comicUpdated string
+	if err := db.QueryRow(`
+		SELECT COUNT(*), COALESCE(MAX(CAST(c."updatedAt" AS TEXT)), ''),
+		       COALESCE(SUM(
+		         LENGTH(COALESCE(c."relativePath", c."filename")) +
+		         LENGTH(COALESCE(c."title", '')) +
+		         LENGTH(COALESCE(c."author", '')) +
+		         LENGTH(COALESCE(c."publisher", '')) +
+		         LENGTH(COALESCE(c."description", '')) +
+		         LENGTH(COALESCE(c."genre", '')) +
+		         LENGTH(COALESCE(c."metadataSource", '')) +
+		         COALESCE(c."pageCount", 0) + COALESCE(c."sortOrder", 0)
+		       ), 0)
+		FROM "Comic" c `+where, args...).Scan(&comicCount, &comicUpdated, &comicShape); err != nil {
+		return "", err
+	}
+
+	tagHash, err := orderedWorkContentHash(`
+		SELECT CAST(c."id" AS TEXT), CAST(t."id" AS TEXT), t."name", t."color"
+		FROM "ComicTag" relation
+		JOIN "Comic" c ON c."id" = relation."comicId"
+		JOIN "Tag" t ON t."id" = relation."tagId"
+		`+where+` ORDER BY c."id", t."id"
+	`, args, 4)
+	if err != nil {
+		return "", err
+	}
+	categoryHash, err := orderedWorkContentHash(`
+		SELECT CAST(c."id" AS TEXT), CAST(category."id" AS TEXT),
+		       category."name", category."slug", category."icon"
+		FROM "ComicCategory" relation
+		JOIN "Comic" c ON c."id" = relation."comicId"
+		JOIN "Category" category ON category."id" = relation."categoryId"
+		`+where+` ORDER BY c."id", category."id"
+	`, args, 5)
+	if err != nil {
+		return "", err
+	}
+
+	var stateCount, stateShape int64
+	var stateUpdated string
+	if userID != "" {
+		stateArgs := append([]interface{}{userID}, args...)
+		if err := db.QueryRow(`
+			SELECT COUNT(ucs."comicId"), COALESCE(MAX(CAST(ucs."lastReadAt" AS TEXT)), ''),
+			       COALESCE(SUM(
+			         COALESCE(ucs."lastReadPage", 0) + COALESCE(ucs."isFavorite", 0) +
+			         COALESCE(ucs."rating", 0) + COALESCE(ucs."totalReadTime", 0) +
+			         LENGTH(COALESCE(ucs."readingStatus", ''))
+			       ), 0)
+			FROM "Comic" c
+			LEFT JOIN "UserComicState" ucs ON ucs."comicId" = c."id" AND ucs."userId" = ?
+			`+where, stateArgs...).Scan(&stateCount, &stateUpdated, &stateShape); err != nil {
+			return "", err
+		}
+	}
+
+	seriesCount, seriesShape, seriesUpdated := int64(0), int64(0), ""
+	seriesTagsHash := ""
+	if workTableExists("ComicSeries") {
+		seriesConditions := []string{"1=1"}
+		seriesArgs := []interface{}{}
+		if filterLibraryIDs {
+			if len(libraryIDs) == 0 {
+				seriesConditions = append(seriesConditions, "1=0")
+			} else {
+				placeholders := make([]string, len(libraryIDs))
+				for index, id := range libraryIDs {
+					placeholders[index] = "?"
+					seriesArgs = append(seriesArgs, id)
+				}
+				seriesConditions = append(seriesConditions, fmt.Sprintf(`s."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+			}
+		}
+		if err := db.QueryRow(`
+			SELECT COUNT(*), COALESCE(MAX(CAST(s."updatedAt" AS TEXT)), ''),
+			       COALESCE(SUM(
+			         LENGTH(s."rootRelativePath") + LENGTH(s."title") + LENGTH(s."author") +
+			         LENGTH(s."publisher") + LENGTH(s."description") + LENGTH(s."genre") +
+			         LENGTH(s."coverUrl")
+			       ), 0)
+			FROM "ComicSeries" s
+			WHERE `+strings.Join(seriesConditions, " AND "), seriesArgs...).Scan(
+			&seriesCount, &seriesUpdated, &seriesShape,
+		); err != nil {
+			return "", err
+		}
+		if workTableExists("ComicSeriesTag") {
+			seriesTagsHash, err = orderedWorkContentHash(`
+				SELECT CAST(s."id" AS TEXT), CAST(t."id" AS TEXT), t."name", t."color"
+				FROM "ComicSeriesTag" relation
+				JOIN "ComicSeries" s ON s."id" = relation."seriesId"
+				JOIN "Tag" t ON t."id" = relation."tagId"
+				WHERE `+strings.Join(seriesConditions, " AND ")+`
+				ORDER BY s."id", t."id"
+			`, seriesArgs, 4)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+
+	return fmt.Sprintf(
+		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s",
+		comicCount, comicUpdated, comicShape,
+		tagHash, categoryHash,
+		stateCount, stateUpdated, stateShape,
+		seriesCount, seriesUpdated, seriesShape,
+		seriesTagsHash,
+	), nil
+}
+
+func orderedWorkContentHash(query string, args []interface{}, columnCount int) (string, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	digest := sha256.New()
+	for rows.Next() {
+		values := make([]sql.NullString, columnCount)
+		destinations := make([]interface{}, columnCount)
+		for index := range values {
+			destinations[index] = &values[index]
+		}
+		if err := rows.Scan(destinations...); err != nil {
+			return "", err
+		}
+		for _, value := range values {
+			text := ""
+			if value.Valid {
+				text = value.String
+			}
+			_, _ = fmt.Fprintf(digest, "%d:", len(text))
+			_, _ = digest.Write([]byte(text))
+		}
+		_, _ = digest.Write([]byte{0})
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func workTableExists(name string) bool {
+	var found string
+	return db.QueryRow(`SELECT "name" FROM "sqlite_master" WHERE "type" = 'table' AND "name" = ?`, name).Scan(&found) == nil
+}
+
+// ============================================================
+// 列表查询
+// ============================================================
+
+// GetAllComics 根据筛选条件、排序和分页获取漫画列表。
+func GetAllComics(opts ComicListOptions) (*ComicListResult, error) {
+	if opts.SeriesView {
+		return getAllComicsSeriesView(opts)
+	}
+	// Build WHERE clause
+	var conditions []string
+	var args []interface{}
+
+	if opts.Search != "" {
+		// 使用 FTS5 全文搜索（10000 条记录下比 LIKE 快 10-50 倍）
+		// 对搜索词进行转义，防止 FTS5 语法注入
+		ftsQuery := ftsEscapeQuery(opts.Search)
+		conditions = append(conditions, `c.rowid IN (SELECT rowid FROM "ComicFTS" WHERE "ComicFTS" MATCH ?)`)
+		args = append(args, ftsQuery)
+	}
+
+	if opts.FavoritesOnly {
+		// 多用户收藏完全按 UserComicState 隔离。
+		if opts.UserID != "" {
+			conditions = append(conditions, `COALESCE(ucs."isFavorite", 0) = 1`)
+		} else {
+			conditions = append(conditions, `c."isFavorite" = 1`)
+		}
+	}
+
+	// Tag filtering: find comics that have ANY of the specified tags
+	if len(opts.Tags) > 0 {
+		placeholders := make([]string, len(opts.Tags))
+		for i, t := range opts.Tags {
+			placeholders[i] = "?"
+			args = append(args, t)
+		}
+		conditions = append(conditions, fmt.Sprintf(
+			`c."id" IN (SELECT ct."comicId" FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id" WHERE t."name" IN (%s))`,
+			strings.Join(placeholders, ","),
+		))
+	}
+
+	// Category filtering
+	if opts.Category != "" {
+		if opts.Category == "uncategorized" {
+			conditions = append(conditions, `c."id" NOT IN (SELECT "comicId" FROM "ComicCategory")`)
+		} else {
+			conditions = append(conditions, `c."id" IN (SELECT cc."comicId" FROM "ComicCategory" cc JOIN "Category" cat ON cc."categoryId" = cat."id" WHERE cat."slug" = ?)`)
+			args = append(args, opts.Category)
+		}
+	}
+
+	// ContentType filtering: 使用 type 字段高效筛选
+	if opts.ContentType == "novel" {
+		conditions = append(conditions, `c."type" = 'novel'`)
+	} else if opts.ContentType == "comic" {
+		conditions = append(conditions, `c."type" = 'comic'`)
+	}
+
+	// ReadingStatus filtering: 阅读状态筛选
+	// 当 UserID 非空时，按用户级 UserComicState.readingStatus 过滤
+	if opts.ReadingStatus != "" {
+		if opts.UserID != "" {
+			conditions = append(conditions, `ucs."readingStatus" = ?`)
+		} else {
+			conditions = append(conditions, `c."readingStatus" = ?`)
+		}
+		args = append(args, opts.ReadingStatus)
+	}
+
+	// Uncategorized: 筛选没有分类关联的作品
+	if opts.Uncategorized {
+		conditions = append(conditions, `c."id" NOT IN (SELECT "comicId" FROM "ComicCategory")`)
+	}
+
+	// Untagged: 筛选没有标签关联的作品
+	if opts.Untagged {
+		conditions = append(conditions, `c."id" NOT IN (SELECT "comicId" FROM "ComicTag")`)
+	}
+
+	// MetaFilter: 按元数据状态过滤
+	if opts.MetaFilter == "with" {
+		conditions = append(conditions, `c."metadataSource" != '' AND c."metadataSource" IS NOT NULL`)
+	} else if opts.MetaFilter == "missing" {
+		conditions = append(conditions, `(c."metadataSource" = '' OR c."metadataSource" IS NULL)`)
+	}
+
+	// Library filtering: 只返回用户有权访问的书库下的漫画
+	if opts.FilterLibraryIDs {
+		if len(opts.LibraryIDs) > 0 {
+			placeholders := make([]string, len(opts.LibraryIDs))
+			for i, id := range opts.LibraryIDs {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			conditions = append(conditions, fmt.Sprintf(`c."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+		} else {
+			// 如果启用了过滤但 libraryIds 为空，说明没有任何书库权限，强制返回空结果
+			conditions = append(conditions, "1=0")
+		}
+	} else if len(opts.LibraryIDs) > 0 {
+		// 向后兼容（理论上外部调用应该都带 FilterLibraryIDs）
+		placeholders := make([]string, len(opts.LibraryIDs))
+		for i, id := range opts.LibraryIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		conditions = append(conditions, fmt.Sprintf(`c."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// 当传入 UserID 时，LEFT JOIN UserComicState 以便取该用户的最近阅读/收藏/评分
+	joinClause := ""
+	joinArgs := []interface{}{}
+	if opts.UserID != "" {
+		joinClause = `LEFT JOIN "UserComicState" ucs ON ucs."comicId" = c."id" AND ucs."userId" = ?`
+		joinArgs = append(joinArgs, opts.UserID)
+	}
+
+	// Sort
+	sortField := `c."titleSortKey"`
+	switch opts.SortBy {
+	case "", "title":
+		sortField = `c."titleSortKey"`
+	case "addedAt":
+		sortField = "c.\"addedAt\""
+	case "updatedAt":
+		sortField = "c.\"updatedAt\""
+	case "lastReadAt":
+		if opts.UserID != "" {
+			sortField = `ucs."lastReadAt"`
+		} else {
+			sortField = "c.\"lastReadAt\""
+		}
+	case "rating":
+		if opts.UserID != "" {
+			sortField = `ucs."rating"`
+		} else {
+			sortField = "c.\"rating\""
+		}
+	case "custom":
+		sortField = "c.\"sortOrder\""
+	case "fileSize":
+		sortField = "c.\"fileSize\""
+	case "metadataSource":
+		sortField = "c.\"metadataSource\""
+	}
+	sortDir := "ASC"
+	if strings.ToLower(opts.SortOrder) == "desc" {
+		sortDir = "DESC"
+	}
+	orderClause := fmt.Sprintf(`ORDER BY %s %s, c."title" %s, c."id" ASC`, sortField, sortDir, sortDir)
+	if opts.SortBy == "" || opts.SortBy == "title" {
+		orderClause = TitleSortOrderSQL("c", sortDir)
+	}
+
+	// Count total
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "Comic" c %s %s`, joinClause, whereClause)
+	countArgs := append(append([]interface{}{}, joinArgs...), args...)
+	var total int
+	if err := db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count comics: %w", err)
+	}
+
+	// Pagination
+	page := opts.Page
+	pageSize := opts.PageSize
+	if page < 1 {
+		page = 1
+	}
+
+	limitClause := ""
+	// 主查询参数顺序：joinArgs(UserID) + args(WHERE) + LIMIT/OFFSET
+	paginationArgs := append(append([]interface{}{}, joinArgs...), args...)
+	if pageSize > 0 {
+		offset := (page - 1) * pageSize
+		limitClause = "LIMIT ? OFFSET ?"
+		paginationArgs = append(paginationArgs, pageSize, offset)
+	}
+
+	totalPages := 1
+	if pageSize > 0 && total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	if pageSize <= 0 {
+		pageSize = total
+	}
+
+	// Main query — 带 UserID 时个人状态完全来自 UserComicState。
+	var query string
+	if opts.UserID != "" {
+		query = fmt.Sprintf(`
+		SELECT c."id", c."filename", c."title", c."titleSortKey", c."pageCount", c."fileSize",
+		       c."addedAt", c."updatedAt",
+		       COALESCE(ucs."lastReadPage", 0) AS lrp,
+		       ucs."lastReadAt" AS lra,
+		       COALESCE(ucs."isFavorite", 0) AS isfav,
+		       ucs."rating" AS rt,
+		       c."sortOrder",
+		       COALESCE(ucs."totalReadTime", 0) AS trt,
+		       c."author", c."publisher", c."year", c."description",
+		       c."language", c."genre", c."metadataSource",
+		       COALESCE(ucs."readingStatus", '') AS readingStatus, c."type",
+		       COALESCE(c."libraryId", ''), c."coverImageUrl", c."coverAspectRatio",
+		       c."externalRating", c."externalRatingMax", c."externalRatingSource", c."externalRatingUpdatedAt",
+		       COALESCE(NULLIF(c."relativePath", ''), c."filename")
+		FROM "Comic" c
+		%s %s %s %s
+	`, joinClause, whereClause, orderClause, limitClause)
+	} else {
+		query = fmt.Sprintf(`
+		SELECT c."id", c."filename", c."title", c."titleSortKey", c."pageCount", c."fileSize",
+		       c."addedAt", c."updatedAt", c."lastReadPage", c."lastReadAt",
+		       c."isFavorite", c."rating", c."sortOrder", c."totalReadTime",
+		       c."author", c."publisher", c."year", c."description",
+		       c."language", c."genre", c."metadataSource",
+		       c."readingStatus", c."type",
+		       COALESCE(c."libraryId", ''), c."coverImageUrl", c."coverAspectRatio",
+		       c."externalRating", c."externalRatingMax", c."externalRatingSource", c."externalRatingUpdatedAt",
+		       COALESCE(NULLIF(c."relativePath", ''), c."filename")
+		FROM "Comic" c
+		%s %s %s
+	`, whereClause, orderClause, limitClause)
+	}
+
+	rows, err := db.Query(query, paginationArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("query comics: %w", err)
+	}
+	defer rows.Close()
+
+	var comics []ComicListItem
+	for rows.Next() {
+		var c ComicListItem
+		var addedAt, updatedAt time.Time
+		// 注意：当带 UserID 时，lastReadAt/lastReadPage/isFavorite/rating/totalReadTime
+		// 经过 COALESCE 后 SQLite 驱动会返回 TEXT/INT，与原列的 *time.Time 不兼容，
+		// 因此这里统一用 NullString/NullInt64 接收，再做转换。
+		var lastReadAtStr sql.NullString
+		var lastReadPage sql.NullInt64
+		var isFavRaw sql.NullInt64
+		var rating sql.NullInt64
+		var totalReadTime sql.NullInt64
+		var year sql.NullInt64
+		var extRating sql.NullFloat64
+		var extRatingMax sql.NullFloat64
+		var extRatingSource sql.NullString
+		var extRatingUpdatedAtStr sql.NullString
+
+		if err := rows.Scan(
+			&c.ID, &c.Filename, &c.Title, &c.TitleSortKey, &c.PageCount, &c.FileSize,
+			&addedAt, &updatedAt, &lastReadPage, &lastReadAtStr,
+			&isFavRaw, &rating, &c.SortOrder, &totalReadTime,
+			&c.Author, &c.Publisher, &year, &c.Description,
+			&c.Language, &c.Genre, &c.MetadataSource,
+			&c.ReadingStatus, &c.ComicType, &c.LibraryID, &c.CoverImageURL, &c.CoverAspectRatio,
+			&extRating, &extRatingMax, &extRatingSource, &extRatingUpdatedAtStr, &c.RelativePath,
+		); err != nil {
+			return nil, fmt.Errorf("scan comic: %w", err)
+		}
+
+		c.AddedAt = addedAt.UTC().Format(time.RFC3339Nano)
+		c.UpdatedAt = updatedAt.UTC().Format(time.RFC3339Nano)
+		c.LastReadPage = int(lastReadPage.Int64)
+		c.IsFavorite = isFavRaw.Valid && isFavRaw.Int64 != 0
+		c.TotalReadTime = int(totalReadTime.Int64)
+		if lastReadAtStr.Valid && lastReadAtStr.String != "" {
+			// SQLite 时间格式不固定（可能是 RFC3339、不带时区，或 'YYYY-MM-DD HH:MM:SS'）
+			s := strings.TrimSpace(lastReadAtStr.String)
+			parsed := parseSQLiteTime(s)
+			if !parsed.IsZero() {
+				v := parsed.UTC().Format(time.RFC3339Nano)
+				c.LastReadAt = &v
+			} else {
+				// 解析失败时退化为原字符串，避免丢失数据
+				c.LastReadAt = &s
+			}
+		}
+		if rating.Valid {
+			v := int(rating.Int64)
+			c.Rating = &v
+		}
+		if year.Valid {
+			v := int(year.Int64)
+			c.Year = &v
+		}
+		if extRating.Valid {
+			v := extRating.Float64
+			c.ExternalRating = &v
+		}
+		if extRatingMax.Valid {
+			c.ExternalRatingMax = extRatingMax.Float64
+		}
+		if extRatingSource.Valid {
+			c.ExternalRatingSource = extRatingSource.String
+		}
+		if extRatingUpdatedAtStr.Valid && extRatingUpdatedAtStr.String != "" {
+			s := strings.TrimSpace(extRatingUpdatedAtStr.String)
+			parsed := parseSQLiteTime(s)
+			if !parsed.IsZero() {
+				c.ExternalRatingUpdatedAt = parsed.UTC().Format(time.RFC3339Nano)
+			} else {
+				c.ExternalRatingUpdatedAt = s
+			}
+		}
+		c.CoverURL = BuildComicCoverURL(c.ID)
+
+		// Initialize empty slices (not null in JSON)
+		c.Tags = []ComicTagInfo{}
+		c.Categories = []ComicCategoryInfo{}
+
+		comics = append(comics, c)
+	}
+
+	if comics == nil {
+		comics = []ComicListItem{}
+	}
+
+	// Batch load tags and categories for all comics
+	if len(comics) > 0 {
+		comicIDs := make([]string, len(comics))
+		comicIdx := make(map[string]int, len(comics))
+		for i, c := range comics {
+			comicIDs[i] = c.ID
+			comicIdx[c.ID] = i
+		}
+
+		// Load tags
+		if err := loadComicTags(comics, comicIDs, comicIdx); err != nil {
+			log.Printf("[Store] Warning: failed to load tags: %v", err)
+		}
+
+		// Load categories
+		if err := loadComicCategories(comics, comicIDs, comicIdx); err != nil {
+			log.Printf("[Store] Warning: failed to load categories: %v", err)
+		}
+	}
+
+	return &ComicListResult{
+		Comics:     comics,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// batchSize 是 IN 查询的最大参数数量，避免超出 SQLite SQLITE_MAX_VARIABLE_NUMBER 限制。
+const batchSize = 500
+
+// loadComicTags 批量加载一组漫画的标签（自动分批，避免 IN 参数超限）。
+func loadComicTags(comics []ComicListItem, ids []string, idx map[string]int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		query := fmt.Sprintf(`
+			SELECT ct."comicId", t."name", t."color"
+			FROM "ComicTag" ct
+			JOIN "Tag" t ON ct."tagId" = t."id"
+			WHERE ct."comicId" IN (%s)
+		`, strings.Join(placeholders, ","))
+
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var comicID, name, color string
+			if err := rows.Scan(&comicID, &name, &color); err != nil {
+				continue
+			}
+			if i, ok := idx[comicID]; ok {
+				comics[i].Tags = append(comics[i].Tags, ComicTagInfo{Name: name, Color: color})
+			}
+		}
+		rows.Close()
+	}
+	return nil
+}
+
+// loadComicCategories 批量加载一组漫画的分类（自动分批）。
+func loadComicCategories(comics []ComicListItem, ids []string, idx map[string]int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		query := fmt.Sprintf(`
+			SELECT cc."comicId", cat."id", cat."name", cat."slug", cat."icon"
+			FROM "ComicCategory" cc
+			JOIN "Category" cat ON cc."categoryId" = cat."id"
+			WHERE cc."comicId" IN (%s)
+		`, strings.Join(placeholders, ","))
+
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var comicID string
+			var ci ComicCategoryInfo
+			if err := rows.Scan(&comicID, &ci.ID, &ci.Name, &ci.Slug, &ci.Icon); err != nil {
+				continue
+			}
+			if i, ok := idx[comicID]; ok {
+				comics[i].Categories = append(comics[i].Categories, ci)
+			}
+		}
+		rows.Close()
+	}
+	return nil
+}
+
+// GetComicByID 根据ID获取单个漫画（含标签和分类）。
+func GetComicByID(id string) (*ComicListItem, error) {
+	query := `
+		SELECT c."id", c."filename", c."title", c."pageCount", c."fileSize",
+		       c."addedAt", c."updatedAt", c."lastReadPage", c."lastReadAt",
+		       c."isFavorite", c."rating", c."sortOrder", c."totalReadTime",
+		       c."author", c."publisher", c."year", c."description",
+		       c."language", c."genre", c."metadataSource",
+		       c."readingStatus", c."type", COALESCE(c."libraryId", ''), c."coverImageUrl", c."coverAspectRatio",
+		       c."externalRating", c."externalRatingMax", c."externalRatingSource", c."externalRatingUpdatedAt",
+		       COALESCE(NULLIF(c."relativePath", ''), c."filename")
+		FROM "Comic" c WHERE c."id" = ?
+	`
+	var c ComicListItem
+	var addedAt, updatedAt time.Time
+	var lastReadAt sql.NullTime
+	var rating sql.NullInt64
+	var year sql.NullInt64
+	var isFav int
+	var extRating sql.NullFloat64
+	var extRatingMax sql.NullFloat64
+	var extRatingSource sql.NullString
+	var extRatingUpdatedAtStr sql.NullString
+
+	err := db.QueryRow(query, id).Scan(
+		&c.ID, &c.Filename, &c.Title, &c.PageCount, &c.FileSize,
+		&addedAt, &updatedAt, &c.LastReadPage, &lastReadAt,
+		&isFav, &rating, &c.SortOrder, &c.TotalReadTime,
+		&c.Author, &c.Publisher, &year, &c.Description,
+		&c.Language, &c.Genre, &c.MetadataSource,
+		&c.ReadingStatus, &c.ComicType, &c.LibraryID, &c.CoverImageURL, &c.CoverAspectRatio,
+		&extRating, &extRatingMax, &extRatingSource, &extRatingUpdatedAtStr, &c.RelativePath,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	c.AddedAt = addedAt.UTC().Format(time.RFC3339Nano)
+	c.UpdatedAt = updatedAt.UTC().Format(time.RFC3339Nano)
+	c.IsFavorite = isFav != 0
+	if lastReadAt.Valid {
+		s := lastReadAt.Time.UTC().Format(time.RFC3339Nano)
+		c.LastReadAt = &s
+	}
+	if rating.Valid {
+		v := int(rating.Int64)
+		c.Rating = &v
+	}
+	if year.Valid {
+		v := int(year.Int64)
+		c.Year = &v
+	}
+	if extRating.Valid {
+		v := extRating.Float64
+		c.ExternalRating = &v
+	}
+	if extRatingMax.Valid {
+		c.ExternalRatingMax = extRatingMax.Float64
+	}
+	if extRatingSource.Valid {
+		c.ExternalRatingSource = extRatingSource.String
+	}
+	if extRatingUpdatedAtStr.Valid && extRatingUpdatedAtStr.String != "" {
+		s := strings.TrimSpace(extRatingUpdatedAtStr.String)
+		parsed := parseSQLiteTime(s)
+		if !parsed.IsZero() {
+			c.ExternalRatingUpdatedAt = parsed.UTC().Format(time.RFC3339Nano)
+		} else {
+			c.ExternalRatingUpdatedAt = s
+		}
+	}
+	c.CoverURL = BuildComicCoverURL(c.ID)
+
+	// Tags
+	c.Tags = []ComicTagInfo{}
+	tagRows, err := db.Query(`
+		SELECT t."name", t."color"
+		FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+		WHERE ct."comicId" = ?
+	`, id)
+	if err == nil {
+		defer tagRows.Close()
+		for tagRows.Next() {
+			var ti ComicTagInfo
+			if tagRows.Scan(&ti.Name, &ti.Color) == nil {
+				c.Tags = append(c.Tags, ti)
+			}
+		}
+	}
+
+	// Categories
+	c.Categories = []ComicCategoryInfo{}
+	catRows, err := db.Query(`
+		SELECT cat."id", cat."name", cat."slug", cat."icon"
+		FROM "ComicCategory" cc JOIN "Category" cat ON cc."categoryId" = cat."id"
+		WHERE cc."comicId" = ?
+	`, id)
+	if err == nil {
+		defer catRows.Close()
+		for catRows.Next() {
+			var ci ComicCategoryInfo
+			if catRows.Scan(&ci.ID, &ci.Name, &ci.Slug, &ci.Icon) == nil {
+				c.Categories = append(c.Categories, ci)
+			}
+		}
+	}
+
+	return &c, nil
+}
+
+// GetComicByIDForUser 根据ID获取单个漫画及当前用户的独立状态。
+func GetComicByIDForUser(comicID string, userID string) (*ComicListItem, error) {
+	query := `
+		SELECT c."id", c."filename", c."title", c."pageCount", c."fileSize",
+		       c."addedAt", c."updatedAt",
+		       COALESCE(ucs."lastReadPage", 0) AS lrp,
+		       ucs."lastReadAt" AS lra,
+		       COALESCE(ucs."isFavorite", 0) AS isfav,
+		       ucs."rating" AS rt,
+		       c."sortOrder",
+		       COALESCE(ucs."totalReadTime", 0) AS trt,
+		       c."author", c."publisher", c."year", c."description",
+		       c."language", c."genre", c."metadataSource",
+		       COALESCE(ucs."readingStatus", '') AS readingStatus,
+		       c."type", COALESCE(c."libraryId", ''), c."coverAspectRatio",
+		       c."externalRating", c."externalRatingMax", c."externalRatingSource", c."externalRatingUpdatedAt",
+		       COALESCE(NULLIF(c."relativePath", ''), c."filename")
+		FROM "Comic" c
+		LEFT JOIN "UserComicState" ucs ON ucs."comicId" = c."id" AND ucs."userId" = ?
+		WHERE c."id" = ?
+	`
+	var ci ComicListItem
+	var addedAt, updatedAt time.Time
+	var lastReadAtStr sql.NullString
+	var lastReadPage sql.NullInt64
+	var isFavRaw sql.NullInt64
+	var rating sql.NullInt64
+	var totalReadTime sql.NullInt64
+	var year sql.NullInt64
+	var extRating sql.NullFloat64
+	var extRatingMax sql.NullFloat64
+	var extRatingSource sql.NullString
+	var extRatingUpdatedAtStr sql.NullString
+
+	err := db.QueryRow(query, userID, comicID).Scan(
+		&ci.ID, &ci.Filename, &ci.Title, &ci.PageCount, &ci.FileSize,
+		&addedAt, &updatedAt, &lastReadPage, &lastReadAtStr,
+		&isFavRaw, &rating, &ci.SortOrder, &totalReadTime,
+		&ci.Author, &ci.Publisher, &year, &ci.Description,
+		&ci.Language, &ci.Genre, &ci.MetadataSource,
+		&ci.ReadingStatus, &ci.ComicType, &ci.LibraryID, &ci.CoverAspectRatio,
+		&extRating, &extRatingMax, &extRatingSource, &extRatingUpdatedAtStr, &ci.RelativePath,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	ci.AddedAt = addedAt.UTC().Format(time.RFC3339Nano)
+	ci.UpdatedAt = updatedAt.UTC().Format(time.RFC3339Nano)
+	ci.IsFavorite = isFavRaw.Int64 != 0
+	if lastReadAtStr.Valid {
+		ci.LastReadAt = &lastReadAtStr.String
+	}
+	if lastReadPage.Valid {
+		ci.LastReadPage = int(lastReadPage.Int64)
+	}
+	if rating.Valid {
+		v := int(rating.Int64)
+		ci.Rating = &v
+	}
+	if year.Valid {
+		v := int(year.Int64)
+		ci.Year = &v
+	}
+	if extRating.Valid {
+		v := extRating.Float64
+		ci.ExternalRating = &v
+	}
+	if extRatingMax.Valid {
+		ci.ExternalRatingMax = extRatingMax.Float64
+	}
+	if extRatingSource.Valid {
+		ci.ExternalRatingSource = extRatingSource.String
+	}
+	if extRatingUpdatedAtStr.Valid && extRatingUpdatedAtStr.String != "" {
+		s := strings.TrimSpace(extRatingUpdatedAtStr.String)
+		parsed := parseSQLiteTime(s)
+		if !parsed.IsZero() {
+			ci.ExternalRatingUpdatedAt = parsed.UTC().Format(time.RFC3339Nano)
+		} else {
+			ci.ExternalRatingUpdatedAt = s
+		}
+	}
+	if totalReadTime.Valid {
+		ci.TotalReadTime = int(totalReadTime.Int64)
+	}
+	ci.CoverURL = BuildComicCoverURL(ci.ID)
+
+	// Tags
+	ci.Tags = []ComicTagInfo{}
+	tagRows, err := db.Query(`
+		SELECT t."name", t."color"
+		FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+		WHERE ct."comicId" = ?
+	`, comicID)
+	if err == nil {
+		defer tagRows.Close()
+		for tagRows.Next() {
+			var ti ComicTagInfo
+			if tagRows.Scan(&ti.Name, &ti.Color) == nil {
+				ci.Tags = append(ci.Tags, ti)
+			}
+		}
+	}
+
+	// Categories
+	ci.Categories = []ComicCategoryInfo{}
+	catRows, err := db.Query(`
+		SELECT cat."id", cat."name", cat."slug", cat."icon"
+		FROM "ComicCategory" cc JOIN "Category" cat ON cc."categoryId" = cat."id"
+		WHERE cc."comicId" = ?
+	`, comicID)
+	if err == nil {
+		defer catRows.Close()
+		for catRows.Next() {
+			var ci2 ComicCategoryInfo
+			if catRows.Scan(&ci2.ID, &ci2.Name, &ci2.Slug, &ci2.Icon) == nil {
+				ci.Categories = append(ci.Categories, ci2)
+			}
+		}
+	}
+
+	return &ci, nil
+}
+
+// ============================================================
+// 推荐系统查询
+// ============================================================
+
+// RecommendationComic 保存推荐所需的漫画数据。
+type RecommendationComic struct {
+	ID            string
+	Title         string
+	Author        string
+	Genre         string
+	Filename      string
+	Type          string
+	PageCount     int
+	LastReadPage  int
+	LastReadAt    *time.Time
+	IsFavorite    bool
+	Rating        *int
+	TotalReadTime int
+	Tags          []ComicTagInfo
+	Categories    []ComicCategoryInfo
+}
+
+// GetAllComicsForRecommendation 返回所有漫画的推荐所需数据（分批加载标签/分类，避免 IN 参数超限）。
+func GetAllComicsForRecommendation(filterLibraryIDs bool, libraryIDs ...string) ([]RecommendationComic, error) {
+	if filterLibraryIDs && len(libraryIDs) == 0 {
+		return []RecommendationComic{}, nil
+	}
+	var args []interface{}
+	for _, id := range libraryIDs {
+		args = append(args, id)
+	}
+	rows, err := db.Query(`
+		SELECT "id", "title", "author", "genre",
+		       "filename", "type", "pageCount", "lastReadPage", "lastReadAt", "isFavorite",
+		       "rating", "totalReadTime"
+		FROM "Comic"
+	`+func() string {
+		if len(libraryIDs) == 0 {
+			return ""
+		}
+		ph := make([]string, len(libraryIDs))
+		for i := range libraryIDs {
+			ph[i] = "?"
+		}
+		return fmt.Sprintf(` WHERE "libraryId" IN (%s)`, strings.Join(ph, ","))
+	}()+`
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var comics []RecommendationComic
+	for rows.Next() {
+		var c RecommendationComic
+		var lastReadAt sql.NullTime
+		var rating sql.NullInt64
+		var isFav int
+
+		if err := rows.Scan(
+			&c.ID, &c.Title, &c.Author, &c.Genre,
+			&c.Filename, &c.Type, &c.PageCount, &c.LastReadPage, &lastReadAt, &isFav,
+			&rating, &c.TotalReadTime,
+		); err != nil {
+			continue
+		}
+		c.IsFavorite = isFav != 0
+		if lastReadAt.Valid {
+			c.LastReadAt = &lastReadAt.Time
+		}
+		if rating.Valid {
+			v := int(rating.Int64)
+			c.Rating = &v
+		}
+		c.Tags = []ComicTagInfo{}
+		c.Categories = []ComicCategoryInfo{}
+		comics = append(comics, c)
+	}
+
+	if len(comics) == 0 {
+		return comics, nil
+	}
+
+	// 构建 ID 索引
+	ids := make([]string, len(comics))
+	idx := make(map[string]int, len(comics))
+	for i, c := range comics {
+		ids[i] = c.ID
+		idx[c.ID] = i
+	}
+
+	// 分批加载标签
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		ph := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			ph[i] = "?"
+			args[i] = id
+		}
+		tagQuery := fmt.Sprintf(`
+			SELECT ct."comicId", t."name", t."color"
+			FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+			WHERE ct."comicId" IN (%s)
+		`, strings.Join(ph, ","))
+		tagRows, err := db.Query(tagQuery, args...)
+		if err == nil {
+			for tagRows.Next() {
+				var comicID, name, color string
+				if tagRows.Scan(&comicID, &name, &color) == nil {
+					if i, ok := idx[comicID]; ok {
+						comics[i].Tags = append(comics[i].Tags, ComicTagInfo{Name: name, Color: color})
+					}
+				}
+			}
+			tagRows.Close()
+		}
+	}
+
+	// 分批加载分类
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		ph := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			ph[i] = "?"
+			args[i] = id
+		}
+		catQuery := fmt.Sprintf(`
+			SELECT cc."comicId", cat."id", cat."name", cat."slug", cat."icon"
+			FROM "ComicCategory" cc JOIN "Category" cat ON cc."categoryId" = cat."id"
+			WHERE cc."comicId" IN (%s)
+		`, strings.Join(ph, ","))
+		catRows, err := db.Query(catQuery, args...)
+		if err == nil {
+			for catRows.Next() {
+				var comicID string
+				var ci ComicCategoryInfo
+				if catRows.Scan(&comicID, &ci.ID, &ci.Name, &ci.Slug, &ci.Icon) == nil {
+					if i, ok := idx[comicID]; ok {
+						comics[i].Categories = append(comics[i].Categories, ci)
+					}
+				}
+			}
+			catRows.Close()
+		}
+	}
+
+	return comics, nil
+}
+
+// ============================================================
+// OPDS 查询
+// ============================================================
+
+// OPDSComicRow 用于 OPDS 查询。
+type OPDSComicRow struct {
+	ID           string
+	Title        string
+	Author       string
+	Description  string
+	Language     string
+	Genre        string
+	Publisher    string
+	Year         int
+	PageCount    int
+	FileSize     int64
+	AddedAt      string
+	UpdatedAt    string
+	Tags         []string
+	Filename     string
+	ComicType    string
+	SeriesID     string
+	SeriesTitle  string
+	SectionTitle string
+	DisplayLabel string
+	LastReadPage int
+	LastReadAt   string
+}
+
+// OPDSSeriesRow is a series from a comic library exposed by the OPDS catalog.
+type OPDSSeriesRow struct {
+	ID           string
+	Title        string
+	CoverComicID string
+	ItemCount    int
+	UpdatedAt    string
+}
+
+type OPDSSort string
+
+const (
+	OPDSSortTitle  OPDSSort = "title"
+	OPDSSortRecent OPDSSort = "recent"
+)
+
+// OPDSQueryOptions is deliberately narrower than the general comic query.
+// OPDS is an acquisition catalog, so callers must provide the current user's
+// downloadable library IDs.
+type OPDSQueryOptions struct {
+	LibraryIDs    []string
+	UserID        string
+	Search        string
+	SeriesID      string
+	FavoritesOnly bool
+	Sort          OPDSSort
+	Limit         int
+	Offset        int
+}
+
+type OPDSSeriesQueryOptions struct {
+	LibraryIDs []string
+	SeriesID   string
+	Limit      int
+	Offset     int
+}
+
+func opdsPublicationFormatCondition(alias string) string {
+	filename := alias + `."filename"`
+	return fmt.Sprintf(`(
+		LOWER(%[1]s) LIKE '%%.cbz'
+		OR LOWER(%[1]s) LIKE '%%.zip'
+		OR LOWER(%[1]s) LIKE '%%.cbr'
+		OR LOWER(%[1]s) LIKE '%%.rar'
+		OR LOWER(%[1]s) LIKE '%%.cb7'
+		OR LOWER(%[1]s) LIKE '%%.7z'
+		OR LOWER(%[1]s) LIKE '%%.pdf'
+		OR LOWER(%[1]s) LIKE '%%.epub'
+		OR LOWER(%[1]s) LIKE '%%.mobi'
+		OR LOWER(%[1]s) LIKE '%%.azw3'
+		OR LOWER(%[1]s) LIKE '%%.txt'
+		OR LOWER(%[1]s) LIKE '%%.html'
+		OR LOWER(%[1]s) LIKE '%%.htm'
+	)`, filename)
+}
+
+// GetOPDSComics returns supported publications from enabled comic libraries.
+// Library type is the content boundary; novel libraries are excluded even when
+// they contain a file format also used by comic libraries.
+func GetOPDSComics(opts OPDSQueryOptions) ([]OPDSComicRow, int, error) {
+	conditions := []string{
+		`l."type" = 'comic'`,
+		`l."enabled" = 1`,
+		opdsPublicationFormatCondition("c"),
+	}
+	args := make([]interface{}, 0, len(opts.LibraryIDs)+4)
+	args = append(args, opts.UserID)
+
+	if len(opts.LibraryIDs) == 0 {
+		conditions = append(conditions, `1 = 0`)
+	} else {
+		placeholders := make([]string, len(opts.LibraryIDs))
+		for i, id := range opts.LibraryIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		conditions = append(conditions, fmt.Sprintf(`c."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+	}
+
+	if opts.FavoritesOnly {
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM "UserComicState" ucs
+			WHERE ucs."comicId" = c."id" AND ucs."userId" = ? AND ucs."isFavorite" = 1
+		)`)
+		args = append(args, opts.UserID)
+	}
+	if opts.SeriesID != "" {
+		conditions = append(conditions, `csi."seriesId" = ?`, `cs."libraryId" = c."libraryId"`)
+		args = append(args, opts.SeriesID)
+	}
+	if search := strings.TrimSpace(opts.Search); search != "" {
+		conditions = append(conditions, `(c."title" LIKE ? OR c."author" LIKE ?)`)
+		pattern := "%" + search + "%"
+		args = append(args, pattern, pattern)
+	}
+
+	fromWhere := `
+		FROM "Comic" c
+		JOIN "Library" l ON l."id" = c."libraryId"
+		LEFT JOIN "UserComicState" opds_ucs
+			ON opds_ucs."comicId" = c."id" AND opds_ucs."userId" = ?
+		LEFT JOIN "ComicSeriesItem" csi ON csi."comicId" = c."id"
+		LEFT JOIN (
+			SELECT csi2."seriesId"
+			FROM "ComicSeriesItem" csi2
+			JOIN "ComicSeries" cs2 ON cs2."id" = csi2."seriesId"
+			JOIN "Comic" c2 ON c2."id" = csi2."comicId" AND c2."libraryId" = cs2."libraryId"
+			WHERE ` + opdsPublicationFormatCondition("c2") + `
+			GROUP BY csi2."seriesId"
+			HAVING COUNT(DISTINCT c2."id") >= 2
+		) publishable_series ON publishable_series."seriesId" = csi."seriesId"
+		LEFT JOIN "ComicSeries" cs ON cs."id" = publishable_series."seriesId" AND cs."libraryId" = c."libraryId"
+		LEFT JOIN "ComicSeriesSection" css ON css."id" = csi."sectionId" AND css."seriesId" = cs."id"
+		WHERE ` + strings.Join(conditions, " AND ")
+	var total int
+	if err := db.QueryRow(`SELECT COUNT(*) `+fromWhere, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	orderBy := TitleSortOrderSQL("c", "ASC")
+	if opts.Sort == OPDSSortRecent {
+		orderBy = `ORDER BY c."addedAt" DESC, c."id" ASC`
+	} else if opts.SeriesID != "" {
+		orderBy = `ORDER BY COALESCE(css."sortIndex", -1), csi."sortIndex", c."id"`
+	}
+	query := fmt.Sprintf(`
+		SELECT c."id", c."title", c."author", c."description", c."language",
+		       c."genre", c."publisher", c."year", c."pageCount", c."fileSize",
+		       c."addedAt", c."updatedAt", c."filename", c."type",
+		       COALESCE(cs."id", ''), COALESCE(cs."title", ''),
+		       COALESCE(css."title", ''), COALESCE(csi."displayLabel", ''),
+		       COALESCE(opds_ucs."lastReadPage", 0), opds_ucs."lastReadAt"
+		%s %s
+	`, fromWhere, orderBy)
+	if opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+		if opts.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET %d", opts.Offset)
+		}
+	}
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var comics []OPDSComicRow
+	for rows.Next() {
+		var c OPDSComicRow
+		var addedAt, updatedAt time.Time
+		var year sql.NullInt64
+		var lastReadAt sql.NullString
+
+		if err := rows.Scan(
+			&c.ID, &c.Title, &c.Author, &c.Description, &c.Language,
+			&c.Genre, &c.Publisher, &year, &c.PageCount, &c.FileSize,
+			&addedAt, &updatedAt, &c.Filename, &c.ComicType, &c.SeriesID, &c.SeriesTitle,
+			&c.SectionTitle, &c.DisplayLabel, &c.LastReadPage, &lastReadAt,
+		); err != nil {
+			continue
+		}
+		c.AddedAt = addedAt.UTC().Format(time.RFC3339)
+		c.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+		if year.Valid {
+			c.Year = int(year.Int64)
+		}
+		if lastReadAt.Valid {
+			c.LastReadAt = lastReadAt.String
+		}
+		c.Tags = []string{}
+		comics = append(comics, c)
+	}
+
+	// 分批加载标签（避免 IN 参数超限）
+	if len(comics) > 0 {
+		ids := make([]string, len(comics))
+		idx := make(map[string]int, len(comics))
+		for i, c := range comics {
+			ids[i] = c.ID
+			idx[c.ID] = i
+		}
+		for start := 0; start < len(ids); start += batchSize {
+			end := start + batchSize
+			if end > len(ids) {
+				end = len(ids)
+			}
+			batch := ids[start:end]
+			ph := make([]string, len(batch))
+			targs := make([]interface{}, len(batch))
+			for i, id := range batch {
+				ph[i] = "?"
+				targs[i] = id
+			}
+			tagQuery := fmt.Sprintf(`
+				SELECT ct."comicId", t."name"
+				FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+				WHERE ct."comicId" IN (%s)
+			`, strings.Join(ph, ","))
+			tagRows, err := db.Query(tagQuery, targs...)
+			if err == nil {
+				for tagRows.Next() {
+					var comicID, name string
+					if tagRows.Scan(&comicID, &name) == nil {
+						if i, ok := idx[comicID]; ok {
+							comics[i].Tags = append(comics[i].Tags, name)
+						}
+					}
+				}
+				tagRows.Close()
+			}
+		}
+	}
+
+	return comics, total, nil
+}
+
+// GetOPDSSeries returns series from comic libraries that still contain at least
+// two downloadable, supported publications after applying library access.
+func GetOPDSSeries(opts OPDSSeriesQueryOptions) ([]OPDSSeriesRow, int, error) {
+	if len(opts.LibraryIDs) == 0 {
+		return []OPDSSeriesRow{}, 0, nil
+	}
+
+	placeholders := make([]string, len(opts.LibraryIDs))
+	args := make([]interface{}, 0, len(opts.LibraryIDs)+1)
+	for i, id := range opts.LibraryIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	conditions := []string{
+		`s."libraryId" IN (` + strings.Join(placeholders, ",") + `)`,
+		`c."libraryId" = s."libraryId"`,
+		`l."type" = 'comic'`,
+		`l."enabled" = 1`,
+		opdsPublicationFormatCondition("c"),
+	}
+	if opts.SeriesID != "" {
+		conditions = append(conditions, `s."id" = ?`)
+		args = append(args, opts.SeriesID)
+	}
+
+	fromWhere := `
+		FROM "ComicSeries" s
+		JOIN "Library" l ON l."id" = s."libraryId"
+		JOIN "ComicSeriesItem" si ON si."seriesId" = s."id"
+		JOIN "Comic" c ON c."id" = si."comicId"
+		WHERE ` + strings.Join(conditions, " AND ")
+	groupHaving := ` GROUP BY s."id" HAVING COUNT(DISTINCT c."id") >= 2`
+
+	var total int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM (SELECT s."id" `+fromWhere+groupHaving+`)`, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT s."id", s."title",
+		       COALESCE(NULLIF(MAX(CASE WHEN c."id" = s."coverComicId" THEN c."id" ELSE '' END), ''), MIN(c."id")),
+		       COUNT(DISTINCT c."id"), s."updatedAt"
+		` + fromWhere + groupHaving + ` ORDER BY s."sortTitle", s."title", s."id"`
+	if opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+		if opts.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET %d", opts.Offset)
+		}
+	}
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	series := make([]OPDSSeriesRow, 0)
+	for rows.Next() {
+		var item OPDSSeriesRow
+		var updatedAt time.Time
+		if err := rows.Scan(&item.ID, &item.Title, &item.CoverComicID, &item.ItemCount, &updatedAt); err != nil {
+			return nil, 0, err
+		}
+		item.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+		series = append(series, item)
+	}
+	return series, total, rows.Err()
+}
+
+// ============================================================
+// 同步查询
+// ============================================================
+
+// SyncComic 保存同步所需的最小漫画数据。
+type SyncComic struct {
+	ID           string
+	Filename     string
+	LastReadPage int
+	LastReadAt   *time.Time
+	IsFavorite   bool
+	Rating       *int
+	Tags         []string
+}
+
+// GetAllComicsForSync 返回所有漫画的同步所需数据。
+func GetAllComicsForSync() ([]SyncComic, error) {
+	rows, err := db.Query(`
+		SELECT "id", "filename", "lastReadPage", "lastReadAt", "isFavorite", "rating"
+		FROM "Comic"
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var comics []SyncComic
+	for rows.Next() {
+		var c SyncComic
+		var lastReadAt sql.NullTime
+		var rating sql.NullInt64
+		var isFav int
+
+		if err := rows.Scan(&c.ID, &c.Filename, &c.LastReadPage, &lastReadAt, &isFav, &rating); err != nil {
+			continue
+		}
+		c.IsFavorite = isFav != 0
+		if lastReadAt.Valid {
+			c.LastReadAt = &lastReadAt.Time
+		}
+		if rating.Valid {
+			v := int(rating.Int64)
+			c.Rating = &v
+		}
+		c.Tags = []string{}
+		comics = append(comics, c)
+	}
+
+	if len(comics) == 0 {
+		return comics, nil
+	}
+
+	// 分批加载标签（避免 IN 参数超限）
+	ids := make([]string, len(comics))
+	idx := make(map[string]int, len(comics))
+	for i, c := range comics {
+		ids[i] = c.ID
+		idx[c.ID] = i
+	}
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		ph := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for i, id := range batch {
+			ph[i] = "?"
+			args[i] = id
+		}
+		tagQuery := fmt.Sprintf(`
+			SELECT ct."comicId", t."name"
+			FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+			WHERE ct."comicId" IN (%s)
+		`, strings.Join(ph, ","))
+		tagRows, err := db.Query(tagQuery, args...)
+		if err == nil {
+			for tagRows.Next() {
+				var comicID, name string
+				if tagRows.Scan(&comicID, &name) == nil {
+					if i, ok := idx[comicID]; ok {
+						comics[i].Tags = append(comics[i].Tags, name)
+					}
+				}
+			}
+			tagRows.Close()
+		}
+	}
+
+	return comics, nil
+}
+
+// GetSyncComic 获取同步漫画信息。
+func GetSyncComic(comicID string) (*SyncComic, error) {
+	var c SyncComic
+	var lastReadAt sql.NullTime
+	var rating sql.NullInt64
+	var isFav int
+
+	err := db.QueryRow(`
+		SELECT "id", "filename", "lastReadPage", "lastReadAt", "isFavorite", "rating"
+		FROM "Comic" WHERE "id" = ?
+	`, comicID).Scan(&c.ID, &c.Filename, &c.LastReadPage, &lastReadAt, &isFav, &rating)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.IsFavorite = isFav != 0
+	if lastReadAt.Valid {
+		c.LastReadAt = &lastReadAt.Time
+	}
+	if rating.Valid {
+		v := int(rating.Int64)
+		c.Rating = &v
+	}
+
+	// Load tags
+	c.Tags = []string{}
+	tagRows, err := db.Query(`
+		SELECT t."name" FROM "ComicTag" ct JOIN "Tag" t ON ct."tagId" = t."id"
+		WHERE ct."comicId" = ?
+	`, comicID)
+	if err == nil {
+		defer tagRows.Close()
+		for tagRows.Next() {
+			var name string
+			if tagRows.Scan(&name) == nil {
+				c.Tags = append(c.Tags, name)
+			}
+		}
+	}
+
+	return &c, nil
+}
+
+// UpdateComicSync 更新同步状态。
+func UpdateComicSync(comicID string, lastReadPage int, lastReadAt *time.Time, isFavorite bool, rating *int) error {
+	isFav := 0
+	if isFavorite {
+		isFav = 1
+	}
+	_, err := db.Exec(`
+		UPDATE "Comic" SET "lastReadPage" = ?, "lastReadAt" = ?, "isFavorite" = ?, "rating" = ?, "updatedAt" = ?
+		WHERE "id" = ?
+	`, lastReadPage, lastReadAt, isFav, rating, time.Now().UTC(), comicID)
+	return err
+}
+
+// UpdateComicFields 更新漫画的任意字段。
+func UpdateComicFields(comicID string, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	var setClauses []string
+	var args []interface{}
+	if title, ok := fields["title"]; ok {
+		fields["titleSortKey"] = BuildTitleSortKey(fmt.Sprint(title))
+	}
+	for k, v := range fields {
+		setClauses = append(setClauses, fmt.Sprintf(`"%s" = ?`, k))
+		args = append(args, v)
+	}
+	setClauses = append(setClauses, `"updatedAt" = ?`)
+	args = append(args, time.Now().UTC())
+	args = append(args, comicID)
+
+	query := fmt.Sprintf(`UPDATE "Comic" SET %s WHERE "id" = ?`, strings.Join(setClauses, ", "))
+	_, err := db.Exec(query, args...)
+	return err
+}
+
+// GetFavoriteComicTitles 获取用户收藏的漫画标题列表（用于 AI 推荐理由生成上下文）
+func GetFavoriteComicTitles(limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := db.Query(`SELECT "title" FROM "Comic" WHERE "isFavorite" = 1 ORDER BY "updatedAt" DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var titles []string
+	for rows.Next() {
+		var title string
+		if rows.Scan(&title) == nil {
+			titles = append(titles, title)
+		}
+	}
+	return titles, nil
+}
+
+// parseSQLiteTime 尝试用多种格式解析 SQLite 返回的时间字符串。
+// 用于 COALESCE 后驱动会返回 TEXT 而非自动转 time.Time 的场景。
+func parseSQLiteTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05Z",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	// 兜底：把空格替换为 T 再试一次
+	if t, err := time.Parse(time.RFC3339Nano, strings.Replace(s, " ", "T", 1)); err == nil {
+		return t
+	}
+	return time.Time{}
+}

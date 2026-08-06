@@ -1,0 +1,377 @@
+package service
+
+import (
+	"encoding/xml"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/nowen-reader/nowen-reader/internal/store"
+)
+
+func TestRootCatalogIsNavigationFeedWithOpenSearch(t *testing.T) {
+	feed := GenerateRootCatalog("http://example.test")
+	assertValidXML(t, feed)
+
+	for _, expected := range []string{
+		`type="` + OPDSNavigationMIME + `"`,
+		`href="http://example.test/api/opds/search.xml"`,
+		`type="` + OpenSearchMIME + `"`,
+		`href="http://example.test/api/opds/all" type="` + OPDSNavigationMIME + `"`,
+		`href="http://example.test/api/opds/works" type="` + OPDSNavigationMIME + `"`,
+		`href="http://example.test/api/opds/series" type="` + OPDSNavigationMIME + `"`,
+		`href="http://example.test/api/opds/recent"`,
+		`href="http://example.test/api/opds/favorites"`,
+	} {
+		if !strings.Contains(feed, expected) {
+			t.Fatalf("root catalog missing %q: %s", expected, feed)
+		}
+	}
+}
+
+func TestWorkNavigationFeedUsesCanonicalWorkUnitFeedLinks(t *testing.T) {
+	feed := GenerateWorkNavigationFeed(
+		"http://example.test",
+		"Works",
+		"http://example.test/api/opds/works",
+		[]OPDSWork{{
+			Work: Work{
+				ID:          "work-1",
+				Title:       "Work One",
+				Author:      "Author One",
+				Description: "Description One",
+				Language:    "zh-CN",
+				Publisher:   "Publisher One",
+				Genre:       "Action",
+				Tags:        []store.ComicTagInfo{{Name: "Complete"}},
+				Categories:  []store.ComicCategoryInfo{{Name: "Chinese Comics", Slug: "chinese-comics"}},
+				ItemCount:   2,
+			},
+			CoverHref: "/api/opds/work-cover/work-1",
+			AddedAt:   "2025-01-02T03:04:05Z",
+			UpdatedAt: "2025-02-03T04:05:06Z",
+		}},
+		OPDSPagination{
+			SelfHref:     "/api/opds/works?page=1&pageSize=100",
+			FirstHref:    "/api/opds/works?page=1&pageSize=100",
+			LastHref:     "/api/opds/works?page=1&pageSize=100",
+			TotalResults: 1,
+			ItemsPerPage: 100,
+			StartIndex:   1,
+		},
+	)
+	assertValidXML(t, feed)
+
+	for _, expected := range []string{
+		`xmlns:dcterms="` + dctermsNS + `"`,
+		`<id>urn:nowen:work:work-1</id>`,
+		`<summary type="text">Description One</summary>`,
+		`<updated>2025-02-03T04:05:06Z</updated>`,
+		`href="http://example.test/api/opds/work-cover/work-1"`,
+		`<name>Author One</name>`,
+		`<dcterms:language>zh-CN</dcterms:language>`,
+		`term="Complete"`,
+		`term="Chinese Comics"`,
+		`rel="subsection" href="http://example.test/api/opds/works/work-1" type="` + OPDSAcquisitionMIME + `"`,
+	} {
+		if !strings.Contains(feed, expected) {
+			t.Fatalf("work feed missing %q: %s", expected, feed)
+		}
+	}
+}
+
+func TestOpenSearchDescriptionUsesNavigationFeedTemplate(t *testing.T) {
+	description := GenerateOpenSearchDescription("https://reader.example")
+	assertValidXML(t, description)
+
+	for _, expected := range []string{
+		`xmlns="` + openSearchNS + `"`,
+		`type="` + OPDSNavigationMIME + `"`,
+		`template="https://reader.example/api/opds/search?q={searchTerms}"`,
+	} {
+		if !strings.Contains(description, expected) {
+			t.Fatalf("OpenSearch description missing %q: %s", expected, description)
+		}
+	}
+}
+
+func TestAcquisitionFeedSupportsUnitCoverAndPSEOnlyPublication(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Archive Work",
+		FeedID:  "urn:test:archive",
+		Comics: []OPDSComic{{
+			ID:                  "archive",
+			EntryID:             "unit-2",
+			Title:               "Chapter 2",
+			Filename:            "Archive.cbz",
+			ComicType:           "comic",
+			PageCount:           10,
+			CoverHref:           "/api/opds/unit-cover/archive?page=10",
+			SuppressAcquisition: true,
+			StreamStartPage:     10,
+			StreamPageCount:     10,
+		}},
+		Pagination: OPDSPagination{SelfHref: "/api/opds/works/work-1", TotalResults: 1, ItemsPerPage: 100},
+	})
+	assertValidXML(t, feed)
+	if !strings.Contains(feed, `href="http://example.test/api/opds/unit-cover/archive?page=10"`) {
+		t.Fatalf("custom Unit cover missing: %s", feed)
+	}
+	if strings.Contains(feed, "/api/opds/download/archive") {
+		t.Fatalf("PSE-only Unit advertised duplicate physical acquisition: %s", feed)
+	}
+	if !strings.Contains(feed, "/api/opds/stream/archive?") {
+		t.Fatalf("PSE-only Unit missing stream: %s", feed)
+	}
+}
+
+func TestAcquisitionFeedMetadataPaginationAndLinks(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Library",
+		FeedID:  "http://example.test/api/opds/search?q=%E4%B9%A6",
+		Comics: []OPDSComic{{
+			ID:           "comic-1",
+			Title:        "Comic",
+			Author:       "Author",
+			Description:  "Description",
+			Language:     "zh-CN",
+			Genre:        "Action, Drama",
+			Publisher:    "Publisher",
+			Year:         2025,
+			PageCount:    42,
+			FileSize:     123456,
+			AddedAt:      "2025-01-02T03:04:05Z",
+			UpdatedAt:    "2025-02-03T04:05:06Z",
+			Tags:         []string{"Drama", "Complete"},
+			Filename:     "comic.cbz",
+			ComicType:    "comic",
+			SeriesID:     "series-1",
+			SeriesTitle:  "Series One",
+			LastReadPage: 9,
+			LastReadAt:   "2025-02-03T04:05:06Z",
+		}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/search?page=2&pageSize=1&q=%E4%B9%A6",
+			FirstHref:    "/api/opds/search?page=1&pageSize=1&q=%E4%B9%A6",
+			LastHref:     "/api/opds/search?page=3&pageSize=1&q=%E4%B9%A6",
+			NextHref:     "/api/opds/search?page=3&pageSize=1&q=%E4%B9%A6",
+			PreviousHref: "/api/opds/search?page=1&pageSize=1&q=%E4%B9%A6",
+			TotalResults: 3,
+			ItemsPerPage: 1,
+			StartIndex:   2,
+		},
+	})
+	assertValidXML(t, feed)
+
+	for _, expected := range []string{
+		`xmlns:dcterms="` + dctermsNS + `"`,
+		`xmlns:pse="` + opdsPSENS + `"`,
+		`xmlns:opensearch="` + openSearchNS + `"`,
+		`<opensearch:totalResults>3</opensearch:totalResults>`,
+		`<opensearch:itemsPerPage>1</opensearch:itemsPerPage>`,
+		`<opensearch:startIndex>2</opensearch:startIndex>`,
+		`rel="next"`,
+		`rel="previous"`,
+		`href="http://example.test/api/opds/cover/comic-1"`,
+		`href="http://example.test/api/opds/download/comic-1/comic.cbz" type="application/vnd.comicbook+zip" length="123456"`,
+		`rel="` + opdsPSEStream + `" href="http://example.test/api/opds/stream/comic-1?page={pageNumber}&amp;width={maxWidth}" type="image/jpeg" pse:count="42" pse:lastRead="10" pse:lastReadDate="2025-02-03T04:05:06Z"`,
+		`rel="collection" href="http://example.test/api/opds/series/series-1" type="` + OPDSAcquisitionMIME + `" title="Series One"`,
+		`<dcterms:language>zh-CN</dcterms:language>`,
+		`<dcterms:publisher>Publisher</dcterms:publisher>`,
+		`<dcterms:issued>2025</dcterms:issued>`,
+		`<dcterms:extent>42 pages</dcterms:extent>`,
+		`term="Complete"`,
+	} {
+		if !strings.Contains(feed, expected) {
+			t.Fatalf("acquisition feed missing %q: %s", expected, feed)
+		}
+	}
+	if strings.Contains(feed, "acquisition/open-access") {
+		t.Fatalf("authenticated acquisition feed must not claim open access: %s", feed)
+	}
+}
+
+func TestAcquisitionFeedOnlyAdvertisesPageStreamingForPageBasedComics(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Library",
+		FeedID:  "urn:test:library",
+		Comics: []OPDSComic{
+			{ID: "comic", Title: "Comic", Filename: "comic.cbz", ComicType: "comic", PageCount: 12},
+			{ID: "novel", Title: "Novel", Filename: "novel.epub", ComicType: "novel", PageCount: 12},
+			{ID: "unknown-pages", Title: "Unknown", Filename: "unknown.cbz", ComicType: "comic"},
+			{ID: "text", Title: "Text", Filename: "text.txt", ComicType: "comic", PageCount: 12},
+		},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/all?page=1&pageSize=100",
+			TotalResults: 4,
+			ItemsPerPage: 100,
+		},
+	})
+	assertValidXML(t, feed)
+
+	if strings.Count(feed, `rel="`+opdsPSEStream+`"`) != 1 {
+		t.Fatalf("unexpected OPDS-PSE link count: %s", feed)
+	}
+	if !strings.Contains(feed, `/api/opds/stream/comic?`) {
+		t.Fatalf("page-based comic is missing OPDS-PSE link: %s", feed)
+	}
+	for _, id := range []string{"novel", "unknown-pages", "text"} {
+		if strings.Contains(feed, `/api/opds/stream/`+id+`?`) {
+			t.Fatalf("non-page publication %q advertised OPDS-PSE: %s", id, feed)
+		}
+	}
+}
+
+func TestAcquisitionFeedKeepsPSEOnlyFolderPublication(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Folder Work",
+		FeedID:  "urn:test:folder-work",
+		Comics: []OPDSComic{{
+			ID:        "folder-unit",
+			EntryID:   "unit-folder",
+			Title:     "Chapter 001",
+			Filename:  "Folder Work/Chapter 001/",
+			ComicType: "comic",
+			PageCount: 12,
+		}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/works/work-folder",
+			TotalResults: 1,
+			ItemsPerPage: 100,
+			StartIndex:   1,
+		},
+	})
+	assertValidXML(t, feed)
+
+	if !strings.Contains(feed, `<id>urn:nowen:unit:unit-folder</id>`) ||
+		!strings.Contains(feed, `/api/opds/stream/folder-unit?`) {
+		t.Fatalf("folder Unit was not retained as a PSE publication: %s", feed)
+	}
+	if strings.Contains(feed, `/api/opds/download/folder-unit`) {
+		t.Fatalf("folder Unit advertised an unavailable raw-file download: %s", feed)
+	}
+}
+
+func TestSeriesNavigationFeedLinksToSeriesAndCover(t *testing.T) {
+	feed := GenerateSeriesNavigationFeed(OPDSSeriesFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Series",
+		FeedID:  "http://example.test/api/opds/series",
+		Series: []OPDSSeries{{
+			ID:        "series-1",
+			Title:     "Series One",
+			ItemCount: 3,
+			UpdatedAt: "2025-02-03T04:05:06Z",
+		}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/series?page=1&pageSize=100",
+			FirstHref:    "/api/opds/series?page=1&pageSize=100",
+			LastHref:     "/api/opds/series?page=1&pageSize=100",
+			TotalResults: 1,
+			ItemsPerPage: 100,
+			StartIndex:   1,
+		},
+	})
+	assertValidXML(t, feed)
+
+	for _, expected := range []string{
+		`type="` + OPDSNavigationMIME + `"`,
+		`<id>urn:nowen:series:series-1</id>`,
+		`<summary type="text">3 comics</summary>`,
+		`href="http://example.test/api/opds/series/series-1/cover"`,
+		`rel="subsection" href="http://example.test/api/opds/series/series-1" type="` + OPDSAcquisitionMIME + `"`,
+	} {
+		if !strings.Contains(feed, expected) {
+			t.Fatalf("series feed missing %q: %s", expected, feed)
+		}
+	}
+}
+
+func TestAcquisitionFeedDoesNotClaimFixedThumbnailFormat(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Library",
+		FeedID:  "urn:test:library",
+		Comics:  []OPDSComic{{ID: "comic-1", Title: "Comic", Filename: "comic.cbz"}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/all?page=1&pageSize=100",
+			TotalResults: 1,
+			ItemsPerPage: 100,
+		},
+	})
+
+	for _, rel := range []string{
+		"http://opds-spec.org/image",
+		"http://opds-spec.org/image/thumbnail",
+	} {
+		linkStart := `<link rel="` + rel + `" href="http://example.test/api/opds/cover/comic-1"`
+		if !strings.Contains(feed, linkStart+`></link>`) {
+			t.Fatalf("thumbnail link %q should defer to the response Content-Type: %s", rel, feed)
+		}
+	}
+}
+
+func TestUnsupportedPublicationIsNotSerialized(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Library",
+		FeedID:  "urn:test:library",
+		Comics:  []OPDSComic{{ID: "unsupported-1", Title: "Unsupported", Filename: "document.docx"}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/all?page=1&pageSize=100",
+			TotalResults: 0,
+			ItemsPerPage: 100,
+		},
+	})
+	if strings.Contains(feed, "unsupported-1") || strings.Contains(feed, "Unsupported") {
+		t.Fatalf("unsupported publication leaked into OPDS feed: %s", feed)
+	}
+}
+
+func TestOPDSAcquisitionMIMEForFilename(t *testing.T) {
+	tests := map[string]string{
+		"book.cbz":  "application/vnd.comicbook+zip",
+		"book.CBR":  "application/x-cbr",
+		"book.cb7":  "application/x-cb7",
+		"book.pdf":  "application/pdf",
+		"book.epub": "application/epub+zip",
+		"book.mobi": "application/x-mobipocket-ebook",
+		"book.azw3": "application/vnd.amazon.mobi8-ebook",
+		"book.txt":  "text/plain",
+		"book.html": "text/html",
+	}
+	for filename, expected := range tests {
+		actual, ok := OPDSAcquisitionMIMEForFilename(filename)
+		if !ok || actual != expected {
+			t.Fatalf("OPDSAcquisitionMIMEForFilename(%q) = %q, %v; want %q, true", filename, actual, ok, expected)
+		}
+	}
+	if _, ok := OPDSAcquisitionMIMEForFilename("document.docx"); ok {
+		t.Fatal("unsupported document format must not be exposed by OPDS")
+	}
+}
+
+func TestOPDSDownloadPathIncludesEscapedBasename(t *testing.T) {
+	got := opdsDownloadPath("comic-1", "Series/Comic 01 [中文].cbz")
+	want := "/api/opds/download/comic-1/Comic%2001%20%5B%E4%B8%AD%E6%96%87%5D.cbz"
+	if got != want {
+		t.Fatalf("opdsDownloadPath() = %q, want %q", got, want)
+	}
+}
+
+func assertValidXML(t *testing.T, value string) {
+	t.Helper()
+	decoder := xml.NewDecoder(strings.NewReader(value))
+	for {
+		if _, err := decoder.Token(); err != nil {
+			if err == io.EOF {
+				return
+			}
+			t.Fatalf("invalid XML: %v\n%s", err, value)
+		}
+	}
+}

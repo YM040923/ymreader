@@ -1,0 +1,375 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { apiClient } from "@/lib/apiClient";
+import Image from "next/image";
+import Link from "next/link";
+import { Sparkles, ChevronRight, ChevronUp, ChevronDown, RefreshCw } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
+import { fetchAllWorks } from "@/api/works";
+import { indexWorksByComicId } from "@/lib/work-model";
+
+interface RecommendedComic {
+  id: string;
+  title: string;
+  score: number;
+  reasons: string[];
+  coverUrl: string;
+  author: string;
+  genre: string;
+  tags: { name: string; color: string }[];
+  workId?: string;
+  coverAspectRatio?: number;
+  type?: string;
+  filename?: string;
+}
+
+export function RecommendationStrip({ contentType }: { contentType?: string }) {
+  const t = useTranslation();
+  const [recommendations, setRecommendations] = useState<RecommendedComic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
+
+  const fetchRecommendations = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ limit: "8", excludeRead: "false", shuffle: "true" });
+      if (contentType) params.set("contentType", contentType);
+      const data = await apiClient.get(`/api/recommendations?${params.toString()}`) as any;
+      const recs = data?.recommendations;
+      if (Array.isArray(recs)) {
+        const works = await fetchAllWorks();
+        const index = indexWorksByComicId(works);
+        const seen = new Set<string>();
+        setRecommendations(recs.flatMap<RecommendedComic>((comic: RecommendedComic) => {
+          const isNovel = comic.type === "novel" || /\.(txt|epub|mobi|azw3|html|htm)$/i.test(comic.filename || "");
+          if (isNovel) return [{ ...comic, workId: undefined }];
+          const work = index.get(comic.id);
+          if (!work || seen.has(work.id)) return [];
+          seen.add(work.id);
+          return [{ ...comic, id: work.id, workId: work.id, title: work.title, coverUrl: work.coverUrl || comic.coverUrl, author: work.author || comic.author, coverAspectRatio: work.coverAspectRatio }];
+        }));
+      } else {
+        console.warn("[RecommendationStrip] unexpected response shape:", data);
+        setRecommendations([]);
+      }
+    } catch (err) {
+      console.warn("[RecommendationStrip] failed to fetch recommendations:", err);
+      setError(err instanceof Error ? err.message : "Request failed");
+    }
+    finally { setLoading(false); }
+  }, [contentType]);
+
+  useEffect(() => {
+    fetchRecommendations();
+  }, [fetchRecommendations]);
+
+  const displayItems = recommendations.map((comic) => ({
+    key: comic.id,
+    href: comic.workId ? `/work/${comic.workId}` : `/novel/${comic.id}`,
+    title: comic.title,
+    coverUrl: comic.coverUrl,
+    reasons: comic.reasons,
+    coverAspectRatio: comic.coverAspectRatio,
+  }));
+
+  // Measure content height for smooth animation
+  useEffect(() => {
+    if (contentRef.current) {
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContentHeight(entry.contentRect.height);
+        }
+      });
+      observer.observe(contentRef.current);
+      return () => observer.disconnect();
+    }
+  }, [recommendations]);
+
+  // Loading state
+  if (loading && recommendations.length === 0) {
+    return (
+      <section className="mb-8 dashboard-glass rounded-2xl p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t.recommend?.title || "Recommended for You"}
+          </h2>
+        </div>
+        <div className="flex items-center gap-2 py-4 text-sm text-muted">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          <span>{t.common?.loading || "Loading..."}</span>
+        </div>
+      </section>
+    );
+  }
+
+  // Error state
+  if (error && recommendations.length === 0) {
+    return (
+      <section className="mb-8 dashboard-glass rounded-2xl p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t.recommend?.title || "Recommended for You"}
+          </h2>
+        </div>
+        <div className="flex items-center gap-3 py-4">
+          <span className="text-sm text-muted">{t.recommend?.loadFailed || "Failed to load recommendations"}</span>
+          <button
+            onClick={fetchRecommendations}
+            className="rounded-lg bg-accent/20 px-3 py-1 text-xs text-accent hover:bg-accent/30 transition-colors"
+          >
+            {t.recommend?.refresh || "Retry"}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  // Empty state
+  if (recommendations.length === 0) {
+    return (
+      <section className="mb-8 dashboard-glass rounded-2xl p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t.recommend?.title || "Recommended for You"}
+          </h2>
+        </div>
+        <div className="flex items-center gap-3 py-4">
+          <span className="text-sm text-muted">{t.recommend?.noRecommendations || "No recommendations yet"}</span>
+          <button
+            onClick={fetchRecommendations}
+            className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t.recommend?.refresh || "Refresh"}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const reasonLabels: Record<string, string> = {
+    tag_match: t.recommend?.tagMatch || "Similar tags",
+    genre_match: t.recommend?.genreMatch || "Similar genre",
+    same_author: t.recommend?.sameAuthor || "Same author",
+    highly_rated: t.recommend?.highlyRated || "Highly rated",
+    unread: t.recommend?.unread || "Unread",
+    similar_tags: t.recommend?.similarTags || "Similar tags",
+    similar_genre: t.recommend?.similarGenre || "Similar genre",
+    semantic_match: t.recommend?.semanticMatch || "AI semantic match",
+  };
+
+  return (
+    <section className="mb-8 dashboard-glass rounded-2xl p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-2 transition-colors hover:opacity-80"
+        >
+          <Sparkles className="h-5 w-5 text-amber-400" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t.recommend?.title || "Recommended for You"}
+          </h2>
+          {collapsed ? (
+            <ChevronDown className="h-4 w-4 text-muted" />
+          ) : (
+            <ChevronUp className="h-4 w-4 text-muted" />
+          )}
+        </button>
+        <div className="flex items-center gap-2">
+          {!collapsed && (
+            <button
+              onClick={fetchRecommendations}
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              {t.recommend?.refresh || "Refresh"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          height: collapsed ? 0 : contentHeight ?? "auto",
+          overflow: "hidden",
+          transition: "height 0.3s ease, opacity 0.3s ease",
+          opacity: collapsed ? 0 : 1,
+        }}
+      >
+        <div ref={contentRef}>
+          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+            {displayItems.map((item) => (
+              <Link
+                key={item.key}
+                href={item.href}
+                className="group shrink-0"
+              >
+                <div className="w-[130px] space-y-2">
+                  <div
+                    className="relative w-full overflow-hidden rounded-lg bg-card motion-cover"
+                    style={{
+                      aspectRatio: item.coverAspectRatio && item.coverAspectRatio > 0
+                        ? String(item.coverAspectRatio)
+                        : "5 / 7",
+                    }}
+                  >
+                    <Image
+                      src={item.coverUrl}
+                      alt={item.title}
+                      fill
+                      unoptimized
+                      className="object-contain"
+                      sizes="130px"
+                    />
+                    {/* Reason badge */}
+                    {item.reasons.length > 0 && (
+                      <div className="absolute bottom-1 left-1 right-1">
+                        <span className="inline-block rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white/80 backdrop-blur-sm">
+                          {reasonLabels[item.reasons[0]] || item.reasons[0]}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <p className="line-clamp-2 text-xs font-medium text-foreground/80 group-hover:text-foreground">
+                    {item.title}
+                  </p>
+                </div>
+              </Link>
+            ))}
+
+            {/* See more */}
+            <Link
+              href={`/recommendations${contentType ? `?contentType=${contentType}` : ""}`}
+              className="flex w-[130px] shrink-0 items-center justify-center rounded-lg border border-border/40 bg-card/30 transition-colors hover:bg-card interactive-scale"
+            >
+              <div className="flex flex-col items-center gap-1 text-muted">
+                <ChevronRight className="h-5 w-5" />
+                <span className="text-xs">{t.recommend?.seeMore || "See more"}</span>
+              </div>
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Similar comics component for comic detail page
+ */
+export function SimilarComics({ comicId }: { comicId: string }) {
+  const t = useTranslation();
+  const [similar, setSimilar] = useState<RecommendedComic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    setSimilar([]);
+    apiClient.get(`/api/recommendations/similar/${comicId}?limit=5`)
+      .then((data: any) => {
+        if (Array.isArray(data?.similar)) {
+          fetchAllWorks().then((works) => {
+            const index = indexWorksByComicId(works);
+            const seen = new Set<string>();
+            setSimilar((data.similar as RecommendedComic[]).flatMap<RecommendedComic>((comic) => {
+              const isNovel = comic.type === "novel" || /\.(txt|epub|mobi|azw3|html|htm)$/i.test(comic.filename || "");
+              if (isNovel) return [{ ...comic, workId: undefined }];
+              const work = index.get(comic.id);
+              if (!work || seen.has(work.id)) return [];
+              seen.add(work.id);
+              return [{ ...comic, id: work.id, workId: work.id, title: work.title, coverUrl: work.coverUrl || comic.coverUrl, author: work.author || comic.author, coverAspectRatio: work.coverAspectRatio }];
+            }));
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn("[SimilarComics] failed to fetch:", err);
+        setError(err instanceof Error ? err.message : "Request failed");
+      })
+      .finally(() => setLoading(false));
+  }, [comicId]);
+
+  if (loading) {
+    return (
+      <section className="mt-8 surface-card rounded-2xl p-4 sm:p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <div className="skeleton-shimmer h-4 w-32 rounded" />
+        </div>
+        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="w-[130px] shrink-0 space-y-2">
+              <div className="relative w-full overflow-hidden rounded-lg bg-card skeleton-shimmer" />
+              <div className="skeleton-shimmer h-3 w-20 rounded" />
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (error && similar.length === 0) {
+    return (
+      <div className="mt-8">
+        <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
+          {t.recommend?.similar || "Similar Comics"}
+        </h3>
+        <p className="text-sm text-muted">{t.recommend?.loadFailed || "Failed to load"}</p>
+      </div>
+    );
+  }
+
+  if (similar.length === 0) {
+    return (
+      <div className="mt-8">
+        <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
+          {t.recommend?.similar || "Similar Comics"}
+        </h3>
+        <p className="text-sm text-muted">{t.recommend?.noRecommendations || "No recommendations yet"}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted">
+        {t.recommend?.similar || "Similar Comics"}
+      </h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-3">
+        {similar.map((comic) => (
+          <Link key={comic.id} href={comic.workId ? `/work/${comic.workId}` : `/novel/${comic.id}`} className="group">
+            <div
+              className="relative overflow-hidden rounded-lg bg-card motion-cover group-hover:scale-105"
+              style={{
+                aspectRatio: comic.coverAspectRatio && comic.coverAspectRatio > 0
+                  ? String(comic.coverAspectRatio)
+                  : "5 / 7",
+              }}
+            >
+              <Image
+                src={comic.coverUrl}
+                alt={comic.title}
+                fill
+                unoptimized
+                className="object-contain"
+                sizes="120px"
+              />
+            </div>
+            <p className="mt-1 line-clamp-1 text-xs text-foreground/70 group-hover:text-foreground">
+              {comic.title}
+            </p>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}

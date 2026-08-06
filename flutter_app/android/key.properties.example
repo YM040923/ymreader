@@ -1,0 +1,8 @@
+# Release 签名配置
+# 复制此文件为 key.properties 并填入实际值
+# 注意: key.properties 不应提交到 Git
+
+storePassword=your_store_password
+keyPassword=your_key_password
+keyAlias=your_key_alias
+storeFile=/path/to/your/keystore.jks

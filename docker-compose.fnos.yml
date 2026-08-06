@@ -1,0 +1,93 @@
+# ============================================================
+# NowenReader - 飞牛OS (fnOS) 专用部署配置
+#
+# 📦 多平台镜像：同时支持 AMD64 和 ARM64 架构，无需手动选择
+#
+# 🚀 部署方法：
+#
+#   方式一：飞牛OS Docker 管理界面（推荐小白用户）
+#     1. 打开飞牛OS的 Docker 管理 → Compose → 新建项目
+#     2. 将本文件内容粘贴到编辑器中
+#     3. 修改下方的漫画目录路径为你NAS上的实际路径
+#     4. 点击"部署"即可
+#
+#   方式二：SSH 命令行
+#     cd /vol1/1000/docker/nowen-reader
+#     docker compose -f docker-compose.fnos.yml up -d
+#
+# 🌐 访问地址：http://你的飞牛IP:6680
+#
+# 📋 更新方法：
+#     docker compose -f docker-compose.fnos.yml pull
+#     docker compose -f docker-compose.fnos.yml up -d
+# ============================================================
+
+services:
+  nowen-reader:
+    image: cropflre/nowen-reader:latest
+    # 飞牛OS 常见架构：RK3568/RK3566 为 ARM64，x86 机型为 AMD64
+    # 如果你的飞牛设备是 ARM 处理器（如 RK3566），保持 linux/arm64
+    # 如果是 x86/x64 处理器，改为 linux/amd64
+    platform: linux/arm64
+    container_name: nowen-reader
+    restart: unless-stopped
+
+    # --- 端口映射 ---
+    # 格式: "宿主机端口:容器端口"
+    # 如果 6680 被占用，改成其他端口，如 "8680:3000"
+    ports:
+      - "6680:3000"
+
+    # --- 数据目录挂载 ---
+    # ⚠️ 重要：请将下方路径修改为你飞牛OS上的实际路径
+    #
+    # 飞牛OS 常见的存储路径格式:
+    #   /vol1/1000/...    （第一个存储卷）
+    #   /vol2/1000/...    （第二个存储卷，如有）
+    volumes:
+      # 数据库和配置（⚠️ 不要删除，否则丢失所有数据）
+      - /vol1/1000/docker/nowen-reader/data:/data
+
+      # 缩略图缓存（加速页面加载，删除后会自动重建）
+      - /vol1/1000/docker/nowen-reader/cache:/app/.cache
+
+      # === 🎯 漫画目录 - 必须修改为你的实际路径 ===
+      #
+      # 示例1: 漫画存放在共享文件夹 "comics" 中
+      - /vol1/1000/comics:/app/comics
+      #
+      # === 📚 电子书目录 - 修改为你的实际路径 ===
+      # - /vol1/1000/novels:/app/novels
+      #
+      # 示例2: 如果有多个漫画目录，全部挂载进来
+      # - /vol1/1000/manga:/mnt/manga
+      # - /vol2/1000/comics:/mnt/comics2
+      # 然后在 Web 界面的"设置 → 额外漫画目录"中添加 /mnt/manga 和 /mnt/comics2
+
+    environment:
+      - GIN_MODE=release
+      - DATABASE_URL=/data/nowen-reader.db
+      - COMICS_DIR=/app/comics
+      - NOVELS_DIR=/app/novels
+      - DATA_DIR=/app/.cache
+      - PORT=3000
+      # 子路径部署前缀（可选，例如：/reader）
+      # - BASE_PATH=/reader
+      # 仅在可信反向代理后启用
+      # - TRUST_PROXY_HEADERS=true
+      # 时区设置（中国用户无需修改）
+      - TZ=Asia/Shanghai
+      # 文件权限映射（设置为你飞牛 NAS 文件的 UID:GID，解决 permission denied 问题）
+      # 飞牛OS 默认用户通常是 1000:1000，可通过 SSH 执行 ls -ln 确认
+      # - PUID=1000
+      # - PGID=1000
+      # 新建文件权限掩码。0002 表示同组用户也可写，适合 NAS/共享目录
+      # - UMASK=0002
+      # 如果 NAS/SMB/NFS 无法 chown，且 PUID/PGID 仍无法写入，可开启宽松回退
+      # - PERMISSION_FIX_MODE=relaxed
+
+    # 内存限制（飞牛OS设备内存通常有限，可根据需要调整）
+    deploy:
+      resources:
+        limits:
+          memory: 512M

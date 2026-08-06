@@ -1,0 +1,80 @@
+# Binary
+nowen-reader
+nowen-reader.exe
+nowen-reader-linux-*
+*.exe
+# 只忽略根目录下的 Go 二进制 server / server.exe，
+# 而不是任何路径下叫 server 的目录（否则会误伤 flutter_app/lib/features/server/ 这类源码目录）
+/server
+/server.exe
+
+nowen-reader-api-doc.md
+
+# Local implementation plans
+/BASE_URL_IMPLEMENTATION_PLAN.md
+
+# Data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+# 例外：Flutter App 的数据层（providers/api/models）必须入库
+!flutter_app/lib/data/
+!flutter_app/lib/data/**
+
+# Local config and history (may contain paths, API keys)
+site-config.json
+storage-history.json
+
+# Cache
+.cache/
+
+#claude
+.claude/
+dbcheck
+migrate
+# Comics (user data)
+comics/
+
+# Frontend build output (embedded via go:embed)
+# Keep web/dist/.gitkeep, ignore everything else in dist
+web/dist/*
+!web/dist/.gitkeep
+frontend/dist/
+
+# Node modules
+node_modules/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Next.js (legacy)
+.next/
+
+# Build output
+build-output.txt
+err*.txt
+
+# Release artifacts (APK / SHA256SUMS / 镜像 tar 等都通过 gh release upload 发布,
+# 不进入 git 仓库)
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+
+# Temp
+*.tmp
+*.log
+git-tmp*.txt
+run-log.txt

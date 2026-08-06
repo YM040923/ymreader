@@ -1,0 +1,66 @@
+# ============================================================
+# NowenReader - NAS 专用部署配置
+#
+# 适用于群晖(Synology)、威联通(QNAP)、铁威马(TerraMaster)等
+#
+# 使用方法:
+#   docker compose -f docker-compose.nas.yml up -d
+#
+# 请修改下面的路径为你 NAS 上的实际路径
+# ============================================================
+
+services:
+  nowen-reader:
+    image: cropflre/nowen-reader:latest
+    # 平台架构说明：
+    # - ARM 设备（树莓派、部分 NAS）: linux/arm64
+    # - x86/x64 设备（群晖 x86、威联通 x86）: linux/amd64
+    # 请根据你的 NAS 实际架构取消注释对应行：
+    # platform: linux/amd64
+    # platform: linux/arm64
+    container_name: nowen-reader
+    restart: unless-stopped
+    ports:
+      - "6680:3000"
+    volumes:
+      # 数据库和配置（持久化，不要删除）
+      - /volume1/docker/nowen-reader/data:/data
+      - /volume1/docker/nowen-reader/cache:/app/.cache
+
+      # === 漫画目录 - 修改为你的实际路径 ===
+      # 群晖 Synology 示例:
+      - /volume1/comics:/app/comics
+
+      # === 电子书目录 - 修改为你的实际路径 ===
+      # - /volume1/novels:/app/novels
+
+      # 如果有多个漫画目录，全部挂载进来:
+      # - /volume1/manga:/mnt/manga
+      # - /volume2/comics:/mnt/comics2
+      # 然后在 Web 界面的"设置 → 额外漫画目录"中添加 /mnt/manga 和 /mnt/comics2
+    environment:
+      - GIN_MODE=release
+      - DATABASE_URL=/data/nowen-reader.db
+      - COMICS_DIR=/app/comics
+      - NOVELS_DIR=/app/novels
+      - DATA_DIR=/app/.cache
+      - PORT=3000
+      # 子路径部署前缀（可选，例如：/reader）
+      # - BASE_PATH=/reader
+      # 仅在可信反向代理后启用
+      # - TRUST_PROXY_HEADERS=true
+      # 时区（改为你的时区）
+      - TZ=Asia/Shanghai
+      # 文件权限映射（设置为你 NAS 文件的 UID:GID，解决 permission denied 问题）
+      # 可通过 SSH 执行 ls -ln 查看文件的 UID/GID
+      # - PUID=1000
+      # - PGID=1000
+      # 新建文件权限掩码。0002 表示同组用户也可写，适合 NAS/共享目录
+      # - UMASK=0002
+      # 如果 NAS/SMB/NFS 无法 chown，且 PUID/PGID 仍无法写入，可开启宽松回退
+      # - PERMISSION_FIX_MODE=relaxed
+    # 内存限制（NAS 通常内存有限）
+    deploy:
+      resources:
+        limits:
+          memory: 512M

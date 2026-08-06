@@ -1,0 +1,868 @@
+package handler
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/nowen-reader/nowen-reader/internal/config"
+	"github.com/nowen-reader/nowen-reader/internal/middleware"
+	"github.com/nowen-reader/nowen-reader/internal/model"
+	"github.com/nowen-reader/nowen-reader/internal/service"
+	"github.com/nowen-reader/nowen-reader/internal/store"
+)
+
+// ComicHandler handles all comic-related API endpoints.
+type ComicHandler struct{}
+
+// NewComicHandler creates a new ComicHandler.
+func NewComicHandler() *ComicHandler {
+	return &ComicHandler{}
+}
+
+// ============================================================
+// GET /api/comics — List comics with filters
+// ============================================================
+
+func (h *ComicHandler) ListComics(c *gin.Context) {
+	if c.Query("seriesView") == "true" {
+		NewWorkHandler().ListAsComics(c)
+		return
+	}
+	search := c.Query("search")
+	tagsParam := c.Query("tags")
+	var tags []string
+	if tagsParam != "" {
+		tags = strings.Split(tagsParam, ",")
+		// Filter empty strings
+		filtered := tags[:0]
+		for _, t := range tags {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				filtered = append(filtered, t)
+			}
+		}
+		tags = filtered
+	}
+
+	favoritesOnly := c.Query("favorites") == "true"
+	sortBy := c.DefaultQuery("sortBy", "title")
+	sortOrder := c.DefaultQuery("sortOrder", "asc")
+	category := c.Query("category")
+	contentType := c.Query("contentType") // "comic" | "novel" | ""
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "0"))
+
+	// 书库权限过滤：先获取用户可访问书库，再支持前端子集筛选
+	var libraryIDs []string
+	filterLibraryIDs := false
+	if uid := getUserID(c); uid != "" {
+		user := middleware.GetCurrentUser(c)
+		isAdmin := user != nil && user.Role == "admin"
+		requestedParam := c.Query("libraryIds")
+
+		if isAdmin {
+			if requestedParam != "" {
+				requested := strings.Split(requestedParam, ",")
+				for _, id := range requested {
+					id = strings.TrimSpace(id)
+					if id != "" {
+						libraryIDs = append(libraryIDs, id)
+					}
+				}
+				filterLibraryIDs = true
+			}
+		} else {
+			filterLibraryIDs = true
+			if accessibleIDs, err := store.GetUserAccessibleLibraryIDs(uid); err == nil {
+				// 前端传了 libraryIds 时，与可访问书库取交集（缩小范围，不越权）
+				if requestedParam != "" {
+					requested := strings.Split(requestedParam, ",")
+					allowed := make(map[string]struct{}, len(accessibleIDs))
+					for _, id := range accessibleIDs {
+						allowed[id] = struct{}{}
+					}
+					for _, id := range requested {
+						id = strings.TrimSpace(id)
+						if _, ok := allowed[id]; ok {
+							libraryIDs = append(libraryIDs, id)
+						}
+					}
+				} else {
+					libraryIDs = accessibleIDs
+				}
+			}
+		}
+	}
+
+	result, err := store.GetAllComics(store.ComicListOptions{
+		Search:           search,
+		Tags:             tags,
+		FavoritesOnly:    favoritesOnly,
+		SortBy:           sortBy,
+		SortOrder:        sortOrder,
+		Page:             page,
+		PageSize:         pageSize,
+		Category:         category,
+		ContentType:      contentType,
+		ReadingStatus:    c.Query("readingStatus"),
+		UserID:           getUserID(c),
+		FilterLibraryIDs: filterLibraryIDs, LibraryIDs: libraryIDs,
+		Uncategorized: c.Query("uncategorized") == "true",
+		Untagged:      c.Query("untagged") == "true",
+		SeriesView:    false,
+	})
+	if err != nil {
+		log.Printf("[API] ListComics error: %v (sortBy=%s, contentType=%s, readingStatus=%s)",
+			err, sortBy, contentType, c.Query("readingStatus"))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch comics"})
+		return
+	}
+
+	c.Header("Cache-Control", "private, max-age=15, stale-while-revalidate=60")
+	c.JSON(http.StatusOK, result)
+}
+
+// ============================================================
+// GET /api/comics/:id — Get single comic
+// ============================================================
+
+func (h *ComicHandler) GetComic(c *gin.Context) {
+	id := c.Param("id")
+	// 书库权限校验
+	if err := checkComicAccess(c, id); err != nil {
+		return
+	}
+	uid := getUserID(c)
+	var comic *store.ComicListItem
+	var err error
+	if uid != "" {
+		comic, err = store.GetComicByIDForUser(id, uid)
+	} else {
+		comic, err = store.GetComicByID(id)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get comic"})
+		return
+	}
+	if comic == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comic not found"})
+		return
+	}
+
+	if uid != "" {
+		canManage, _ := store.UserCanManageLibrary(uid, comic.LibraryID)
+		comic.CanManage = canManage
+	}
+
+	c.JSON(http.StatusOK, comic)
+}
+
+// ============================================================
+// PUT /api/comics/:id/favorite — Toggle favorite
+// ============================================================
+
+func (h *ComicHandler) ToggleFavorite(c *gin.Context) {
+	id := c.Param("id")
+	if err := checkComicAccess(c, id); err != nil {
+		return
+	}
+	uid := getUserID(c)
+	newState, err := store.ToggleFavorite(id, uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to toggle favorite"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "isFavorite": newState})
+}
+
+// ============================================================
+// PUT /api/comics/:id/rating — Update rating
+// ============================================================
+
+func (h *ComicHandler) UpdateRating(c *gin.Context) {
+	id := c.Param("id")
+	if err := checkComicAccess(c, id); err != nil {
+		return
+	}
+	var body struct {
+		Rating *int `json:"rating"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Validate rating range
+	if body.Rating != nil && (*body.Rating < 1 || *body.Rating > 5) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Rating must be 1-5 or null"})
+		return
+	}
+
+	if err := store.UpdateRating(id, body.Rating, getUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rating"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// PUT /api/comics/:id/progress — Update reading progress
+// ============================================================
+
+func (h *ComicHandler) UpdateProgress(c *gin.Context) {
+	id := c.Param("id")
+	if err := checkComicAccess(c, id); err != nil {
+		return
+	}
+	var body struct {
+		Page       int `json:"page"`
+		TotalPages int `json:"totalPages,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if err := store.UpdateReadingProgress(id, body.Page, body.TotalPages, getUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update progress"})
+		return
+	}
+	// Backfill pageCount from reader if DB value is stale
+	if body.TotalPages > 0 {
+		_ = store.UpdateComicPageCountIfStale(id, body.TotalPages)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// DELETE /api/comics/:id/delete — Delete comic
+// ============================================================
+
+func (h *ComicHandler) DeleteComic(c *gin.Context) {
+	id := c.Param("id")
+	deleteFiles := c.Query("deleteFiles") == "true"
+	log.Printf("[API] DeleteComic: id=%s, deleteFiles=%v", id, deleteFiles)
+
+	user := middleware.GetCurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	comicData, err := store.GetComicByID(id)
+	if err != nil || comicData == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comic not found"})
+		return
+	}
+
+	canManage, _ := store.UserCanManageLibrary(user.ID, comicData.LibraryID)
+	if !canManage {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: No manage permission for this library"})
+		return
+	}
+
+	var pathToDelete string
+	if deleteFiles {
+		if resolved, err := service.GlobalFileResolver.ResolveContentPath(id); err == nil && resolved.AbsolutePath != "" {
+			pathToDelete = resolved.AbsolutePath
+		}
+	}
+
+	if err := store.DeleteComic(id); err != nil {
+		log.Printf("[API] DeleteComic failed: id=%s, err=%v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete comic: " + err.Error()})
+		return
+	}
+
+	if deleteFiles && pathToDelete != "" {
+		if err := os.RemoveAll(pathToDelete); err != nil {
+			log.Printf("[API] DeleteComic: failed to delete physical file %s: %v", pathToDelete, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database record deleted, but failed to delete physical file: " + err.Error()})
+			return
+		}
+		log.Printf("[API] DeleteComic: deleted physical file %s", pathToDelete)
+	}
+
+	log.Printf("[API] DeleteComic success: id=%s", id)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// POST /api/comics/:id/tags — Add tags
+// ============================================================
+
+func (h *ComicHandler) AddTags(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Tags []string `json:"tags"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Tags) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tags array required"})
+		return
+	}
+
+	if err := store.AddTagsToComic(id, body.Tags); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add tags"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// DELETE /api/comics/:id/tags — Remove tag
+// ============================================================
+
+func (h *ComicHandler) RemoveTag(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Tag string `json:"tag"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Tag == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tag required"})
+		return
+	}
+
+	if err := store.RemoveTagFromComic(id, body.Tag); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove tag"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// DELETE /api/comics/:id/tags/clear-all — Clear all tags
+// ============================================================
+
+func (h *ComicHandler) ClearAllTags(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := store.ClearAllTagsFromComic(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear all tags"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// POST /api/comics/:id/categories — Add categories
+// ============================================================
+
+func (h *ComicHandler) AddCategories(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		CategorySlugs []string `json:"categorySlugs"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.CategorySlugs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "categorySlugs array required"})
+		return
+	}
+
+	if err := store.AddCategoriesToComic(id, body.CategorySlugs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add categories"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// PUT /api/comics/:id/categories — Set (replace) categories
+// ============================================================
+
+func (h *ComicHandler) SetCategories(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		CategorySlugs []string `json:"categorySlugs"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "categorySlugs array required"})
+		return
+	}
+
+	if err := store.SetComicCategories(id, body.CategorySlugs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set categories"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// DELETE /api/comics/:id/categories — Remove category
+// ============================================================
+
+func (h *ComicHandler) RemoveCategory(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		CategorySlug string `json:"categorySlug"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.CategorySlug == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "categorySlug required"})
+		return
+	}
+
+	if err := store.RemoveCategoryFromComic(id, body.CategorySlug); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove category"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// POST /api/comics/batch — Batch operations
+// ============================================================
+
+func (h *ComicHandler) BatchOperation(c *gin.Context) {
+	var body struct {
+		Action        string   `json:"action"`
+		ComicIDs      []string `json:"comicIds"`
+		IsFavorite    *bool    `json:"isFavorite"`
+		Tags          []string `json:"tags"`
+		CategorySlugs []string `json:"categorySlugs"`
+		DeleteFiles   bool     `json:"deleteFiles"`
+		ReadingStatus string   `json:"readingStatus"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	if len(body.ComicIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "comicIds array required"})
+		return
+	}
+
+	user := middleware.GetCurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	switch body.Action {
+	case "delete":
+		if err := checkBatchManagePermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		var pathsToDelete []string
+		if body.DeleteFiles {
+			for _, cid := range body.ComicIDs {
+				if resolved, err := service.GlobalFileResolver.ResolveContentPath(cid); err == nil && resolved.AbsolutePath != "" {
+					pathsToDelete = append(pathsToDelete, resolved.AbsolutePath)
+				}
+			}
+		}
+
+		n, err := store.BatchDeleteComics(body.ComicIDs)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch delete failed"})
+			return
+		}
+
+		if body.DeleteFiles {
+			var errs []string
+			for _, p := range pathsToDelete {
+				if err := os.RemoveAll(p); err != nil {
+					errs = append(errs, p)
+					log.Printf("[API] BatchDelete: failed to delete physical file %s: %v", p, err)
+				} else {
+					log.Printf("[API] BatchDelete: deleted physical file %s", p)
+				}
+			}
+			if len(errs) > 0 {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("Database records deleted, but failed to delete %d physical files (e.g. %s)", len(errs), errs[0]),
+				})
+				return
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除 " + strconv.FormatInt(n, 10) + " 本漫画"})
+
+	case "favorite":
+		if err := checkBatchViewPermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		fav := true
+		if body.IsFavorite != nil {
+			fav = *body.IsFavorite
+		}
+		_, err := store.BatchSetFavorite(user.ID, body.ComicIDs, fav)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch favorite failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	case "unfavorite":
+		if err := checkBatchViewPermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		_, err := store.BatchSetFavorite(user.ID, body.ComicIDs, false)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch unfavorite failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	case "addTags":
+		if err := checkBatchManagePermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if len(body.Tags) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tags array required"})
+			return
+		}
+		if err := store.BatchAddTags(body.ComicIDs, body.Tags); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch add tags failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	case "setCategory":
+		if err := checkBatchManagePermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if len(body.CategorySlugs) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "categorySlugs array required"})
+			return
+		}
+		if err := store.BatchSetCategory(body.ComicIDs, body.CategorySlugs); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch set category failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	case "removeTags":
+		if err := checkBatchManagePermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if len(body.Tags) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tags array required"})
+			return
+		}
+		if err := store.BatchRemoveTags(body.ComicIDs, body.Tags); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch remove tags failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	case "setReadingStatus":
+		uid := getUserID(c)
+		if uid == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID required for reading status"})
+			return
+		}
+		if err := checkBatchViewPermission(user, body.ComicIDs); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		validStatuses := map[string]bool{"": true, "want": true, "reading": true, "finished": true, "shelved": true}
+		if !validStatuses[body.ReadingStatus] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid reading status"})
+			return
+		}
+		if err := store.BatchSetReadingStatus(user.ID, body.ComicIDs, body.ReadingStatus); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch set reading status failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown action"})
+	}
+}
+
+func checkBatchManagePermission(user *model.AuthUser, comicIDs []string) error {
+	if user.Role == "admin" {
+		return nil
+	}
+	var comics []*store.ComicListItem
+	for _, id := range comicIDs {
+		comic, err := store.GetComicByID(id)
+		if err != nil || comic == nil {
+			return fmt.Errorf("failed to check comics")
+		}
+		comics = append(comics, comic)
+	}
+	for _, comic := range comics {
+		canManage, _ := store.UserCanManageLibrary(user.ID, comic.LibraryID)
+		if !canManage {
+			return fmt.Errorf("forbidden: no manage permission for library containing %s", comic.Title)
+		}
+	}
+	return nil
+}
+
+func checkBatchViewPermission(user *model.AuthUser, comicIDs []string) error {
+	if user.Role == "admin" {
+		return nil
+	}
+	for _, id := range comicIDs {
+		comic, err := store.GetComicByID(id)
+		if err != nil || comic == nil {
+			return fmt.Errorf("failed to check comics")
+		}
+		canView, _ := store.UserCanViewLibrary(user.ID, comic.LibraryID)
+		if !canView {
+			return fmt.Errorf("forbidden: no view permission for library containing %s", comic.Title)
+		}
+	}
+	return nil
+}
+
+// ============================================================
+// PUT /api/comics/reorder — Reorder comics
+// ============================================================
+
+func (h *ComicHandler) Reorder(c *gin.Context) {
+	var body struct {
+		Orders []struct {
+			ID        string `json:"id"`
+			SortOrder int    `json:"sortOrder"`
+		} `json:"orders"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Orders) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "orders array required"})
+		return
+	}
+
+	if err := store.UpdateSortOrders(body.Orders); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reorder"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ============================================================
+// GET /api/comics/duplicates — Detect duplicates
+// ============================================================
+
+func (h *ComicHandler) DetectDuplicates(c *gin.Context) {
+	// 权限过滤：普通用户只能查看自己可访问书库范围内的重复项
+	var libraryIDs []string
+	filterLibraryIDs := false
+	if uid := getUserID(c); uid != "" {
+		filterLibraryIDs = true
+		if ids, err := store.GetUserAccessibleLibraryIDs(uid); err == nil {
+			libraryIDs = ids
+		}
+	}
+
+	groups, err := store.DetectDuplicates(config.GetComicsDir(), libraryIDs, filterLibraryIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to detect duplicates"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"groups": groups,
+		"total":  len(groups),
+	})
+}
+
+// ============================================================
+// POST /api/sync — Trigger manual sync (强制执行，跳过 cooldown)
+// ============================================================
+
+func (h *ComicHandler) TriggerSync(c *gin.Context) {
+	result := service.ForceSyncComicsToDatabase()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Force sync completed",
+		"result":  result,
+	})
+}
+
+// ============================================================
+// POST /api/comics/cleanup — 清理无效漫画（文件不存在的记录）
+// ============================================================
+
+func (h *ComicHandler) CleanupInvalid(c *gin.Context) {
+	removed, err := service.CleanupInvalidComics()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cleanup invalid comics"})
+		return
+	}
+	// 清理服务端缓存
+	service.InvalidateAllCaches()
+	c.JSON(http.StatusOK, gin.H{"success": true, "removed": removed})
+}
+
+// ============================================================
+// POST /api/comics/redetect-types — 重新检测 mobi/azw3 文件的内容类型
+// ============================================================
+
+func (h *ComicHandler) RedetectTypes(c *gin.Context) {
+	reclassified := service.RedetectEbookTypes()
+	// 清理服务端缓存
+	service.InvalidateAllCaches()
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"reclassified": reclassified,
+		"message":      fmt.Sprintf("Reclassified %d files from novel to comic", reclassified),
+	})
+}
+
+// ============================================================
+// PUT /api/comics/:id/metadata — 手动编辑元数据
+// ============================================================
+
+func (h *ComicHandler) UpdateMetadata(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Title       *string `json:"title"`
+		Author      *string `json:"author"`
+		Publisher   *string `json:"publisher"`
+		Year        *int    `json:"year"`
+		Description *string `json:"description"`
+		Language    *string `json:"language"`
+		Genre       *string `json:"genre"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// 检查漫画是否存在
+	existing, err := store.GetComicByID(id)
+	if err != nil || existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comic not found"})
+		return
+	}
+
+	updates := map[string]interface{}{}
+
+	if body.Title != nil {
+		updates["title"] = *body.Title
+	}
+	if body.Author != nil {
+		updates["author"] = *body.Author
+	}
+	if body.Publisher != nil {
+		updates["publisher"] = *body.Publisher
+	}
+	if body.Year != nil {
+		updates["year"] = *body.Year
+	}
+	if body.Description != nil {
+		updates["description"] = *body.Description
+	}
+	if body.Language != nil {
+		updates["language"] = *body.Language
+	}
+	if body.Genre != nil {
+		updates["genre"] = *body.Genre
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	// 标记为手动编辑来源
+	updates["metadataSource"] = "manual"
+
+	// 记录同步日志（保存修改前的旧值用于回滚）
+	prevValues := map[string]interface{}{}
+	if body.Title != nil {
+		prevValues["title"] = existing.Title
+	}
+	if body.Author != nil {
+		prevValues["author"] = existing.Author
+	}
+	if body.Publisher != nil {
+		prevValues["publisher"] = existing.Publisher
+	}
+	if body.Year != nil {
+		if existing.Year != nil {
+			prevValues["year"] = *existing.Year
+		} else {
+			prevValues["year"] = nil
+		}
+	}
+	if body.Description != nil {
+		prevValues["description"] = existing.Description
+	}
+	if body.Language != nil {
+		prevValues["language"] = existing.Language
+	}
+	if body.Genre != nil {
+		prevValues["genre"] = existing.Genre
+	}
+	prevValues["metadataSource"] = existing.MetadataSource
+
+	// 确定操作来源（通过 header 或默认为 detail）
+	syncSource := c.GetHeader("X-Sync-Source")
+	if syncSource == "" {
+		syncSource = "detail"
+	}
+	userID, _ := c.Get("userId")
+	userIDStr, _ := userID.(string)
+	_ = store.InsertSyncLog(id, "manual_edit", syncSource, userIDStr, updates, prevValues)
+
+	if err := store.UpdateComicFields(id, updates); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update metadata"})
+		return
+	}
+
+	// 如果 genre 被修改，同步更新 tags
+	if body.Genre != nil && *body.Genre != "" {
+		genres := strings.Split(*body.Genre, ",")
+		var tagNames []string
+		for _, g := range genres {
+			g = strings.TrimSpace(g)
+			if g != "" {
+				tagNames = append(tagNames, g)
+			}
+		}
+		if len(tagNames) > 0 {
+			_ = store.AddTagsToComic(id, tagNames)
+		}
+	}
+
+	updated, _ := store.GetComicByID(id)
+	c.JSON(http.StatusOK, gin.H{"success": true, "comic": updated})
+}
+
+// ============================================================
+// PUT /api/comics/:id/reading-status — 设置阅读状态
+// ============================================================
+
+func (h *ComicHandler) SetReadingStatus(c *gin.Context) {
+	id := c.Param("id")
+	if err := checkComicAccess(c, id); err != nil {
+		return
+	}
+	var body struct {
+		Status string `json:"status"` // "want" | "reading" | "finished" | "shelved" | ""
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// 验证状态值
+	validStatuses := map[string]bool{"": true, "want": true, "reading": true, "finished": true, "shelved": true}
+	if !validStatuses[body.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status. Must be one of: want, reading, finished, shelved, or empty"})
+		return
+	}
+
+	uid := getUserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Login required to set reading status"})
+		return
+	}
+	if err := store.SetUserReadingStatus(uid, id, body.Status); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update reading status"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "readingStatus": body.Status})
+}

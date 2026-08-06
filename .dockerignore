@@ -1,0 +1,41 @@
+# Binaries
+nowen-reader
+nowen-reader.exe
+nowen-reader-linux-*
+
+# Data & Cache
+data/
+.cache/
+comics/
+*.db
+*.db-journal
+*.db-wal
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker (avoid recursive include)
+docker-compose*.yml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test & build artifacts
+coverage.out
+build-output.txt
+err*.txt
+git-tmp*.txt
+
+# Documentation (not needed in image)
+README.md
+LICENSE
+
+# Node modules (frontend handled in Dockerfile)
+frontend/node_modules/

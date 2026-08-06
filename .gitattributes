@@ -1,0 +1,38 @@
+# 默认按文本处理，行尾交给 git 自动归一
+* text=auto
+
+# Shell 脚本必须是 LF，否则在 Linux 容器里 shebang 会被 CRLF 破坏
+*.sh           text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Dockerfile / compose / Makefile 同样固定 LF
+Dockerfile     text eol=lf
+Makefile       text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+
+# Windows 专属脚本固定 CRLF
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+*.ps1          text eol=crlf
+
+# 二进制文件不做行尾转换
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.webp         binary
+*.ico          binary
+*.pdf          binary
+*.zip          binary
+*.cbz          binary
+*.cbr          binary
+*.rar          binary
+*.7z           binary
+*.epub         binary
+*.mobi         binary
+*.azw3         binary
+*.ttf          binary
+*.otf          binary
+*.woff         binary
+*.woff2        binary

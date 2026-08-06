@@ -1,0 +1,708 @@
+package archive
+
+import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	// Register decoders for common image formats
+	_ "image/gif"
+
+	"github.com/nowen-reader/nowen-reader/internal/config"
+)
+
+// CalcThumbnailDPI 根据 PDF 页面物理宽度（pt）和目标缩略图像素宽度计算最优 DPI。
+// 返回值限制在 [72, 120] 范围内：大页面用低 DPI 避免超大位图，小页面用高 DPI 保证清晰度。
+func CalcThumbnailDPI(pageWidthPt float64, targetWidthPx int) int {
+	if pageWidthPt <= 0 || targetWidthPx <= 0 {
+		return 96
+	}
+	dpi := float64(targetWidthPx) * 72.0 / pageWidthPt
+	if dpi < 72 {
+		return 72
+	}
+	if dpi > 120 {
+		return 120
+	}
+	return int(dpi)
+}
+
+// 缩略图生成去重：同一 comicID 同时只有一个生成任务，其余等待结果
+var thumbnailGen sync.Map // comicID -> chan struct{}
+
+const largePDFCoverScanThreshold = 32 << 20
+
+// GenerateThumbnail generates a WebP thumbnail for a comic.
+// Returns the thumbnail bytes, the original cover aspect ratio (width/height), and writes it to disk cache.
+func GenerateThumbnail(archivePath, comicID string) ([]byte, string, float64, error) {
+	// 快速路径：磁盘缓存命中。PDF 渲染失败时生成的文字占位图不能永久命中，
+	// 否则即使后续具备渲染/原图提取能力也永远不会重新生成真实封面。
+	tw := config.GetThumbnailWidth()
+	th := config.GetThumbnailHeight()
+	cacheName := fmt.Sprintf("%s_%dx%d.webp", comicID, tw, th)
+	cachePath := filepath.Join(config.GetThumbnailsDir(), cacheName)
+	if data, err := os.ReadFile(cachePath); err == nil && len(data) > 0 {
+		if DetectType(archivePath) == TypePdf && isGeneratedPDFTextCover(data) {
+			_ = os.Remove(cachePath)
+			log.Printf("[thumbnail] discarded stale PDF placeholder cache for %s", comicID)
+		} else {
+			return data, ThumbnailMimeType(data), 0, nil
+		}
+	}
+
+	// 去重：如果同一 comicID 正在生成，等待其完成后读缓存
+	ch, loaded := thumbnailGen.LoadOrStore(comicID, make(chan struct{}, 1))
+	done := ch.(chan struct{})
+	if loaded {
+		// 其他 goroutine 正在生成，等待完成
+		<-done
+		data, err := os.ReadFile(cachePath)
+		if err != nil {
+			return nil, "", 0, fmt.Errorf("thumbnail not found after wait for %s", comicID)
+		}
+		return data, ThumbnailMimeType(data), 0, nil
+	}
+
+	// 当前 goroutine 负责生成，完成后通知等待者
+	defer func() {
+		close(done)
+		thumbnailGen.Delete(comicID)
+	}()
+
+	return generateThumbnailInternal(archivePath, comicID)
+}
+
+func generateThumbnailInternal(archivePath, comicID string) ([]byte, string, float64, error) {
+	thumbDir := config.GetThumbnailsDir()
+	if err := os.MkdirAll(thumbDir, 0755); err != nil {
+		return nil, "", 0, err
+	}
+
+	tw := config.GetThumbnailWidth()
+	th := config.GetThumbnailHeight()
+	cacheName := fmt.Sprintf("%s_%dx%d.webp", comicID, tw, th)
+	cachePath := filepath.Join(thumbDir, cacheName)
+
+	// 清理该 comicID 的旧尺寸缓存文件
+	cleanOldThumbnailCache(thumbDir, comicID, cacheName)
+
+	archiveType := DetectType(archivePath)
+
+	var pageBuffer []byte
+
+	switch {
+	case archiveType == TypePdf:
+		// 页数多、体积大的漫画 PDF 优先顺序扫描文件前部的首个大 JPEG。
+		// 该路径不解析完整交叉引用表，避免数百 MB PDF 在低内存 NAS 上解析超时或 OOM。
+		if info, statErr := os.Stat(archivePath); statErr == nil && info.Size() >= largePDFCoverScanThreshold {
+			if extracted, scanErr := ExtractFirstEmbeddedJPEG(archivePath); scanErr == nil && len(extracted) > 0 {
+				pageBuffer = extracted
+				log.Printf("[thumbnail] large PDF cover found by streaming JPEG scan for %s", comicID)
+				break
+			} else if scanErr != nil {
+				log.Printf("[thumbnail] large PDF streaming JPEG scan unavailable for %s: %v; trying structured extraction", comicID, scanErr)
+			}
+		}
+
+		// 图片型漫画 PDF 通常直接把整页 JPEG 放在第一页 XObject 中。
+		// 先走纯 Go 原图提取，不依赖 mutool/pdftoppm，也避免超大 PDF 渲染 OOM。
+		if extracted, extractErr := ExtractPDFPagePrimaryImage(archivePath, 0); extractErr == nil && len(extracted) > 0 {
+			pageBuffer = extracted
+			log.Printf("[thumbnail] PDF cover extracted directly from page 0 for %s", comicID)
+			break
+		} else if extractErr != nil {
+			log.Printf("[thumbnail] native PDF cover extraction unavailable for %s: %v; trying renderer", comicID, extractErr)
+		}
+
+		// 通用 PDF 仍使用渲染器兜底，并尝试前 5 页处理空白扉页。
+		maxPages := 5
+		pageCount, cntErr := GetPdfPageCount(archivePath)
+		if cntErr == nil && pageCount < maxPages {
+			maxPages = pageCount
+		}
+		var buf []byte
+		var renderErr error
+		for pg := 0; pg < maxPages; pg++ {
+			var dpi int
+			if w, _, err := GetPdfPageSize(archivePath, pg); err == nil && w > 0 {
+				dpi = CalcThumbnailDPI(w, config.GetThumbnailWidth())
+			} else {
+				dpi = 96
+			}
+			buf, _, renderErr = RenderPdfPage(archivePath, pg, dpi)
+			if renderErr == nil && len(buf) > 1024 {
+				log.Printf("[thumbnail] PDF cover from page %d for %s", pg, comicID)
+				break
+			}
+			buf = nil
+		}
+		if len(buf) == 0 {
+			log.Printf("[thumbnail] PDF extraction/render failed for %s: %v, generating retryable text cover", comicID, renderErr)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		pageBuffer = buf
+
+	case archiveType == TypeEpub || archiveType == TypeMobi || archiveType == TypeAzw3:
+		// EPUB/MOBI/AZW3: try to extract cover image
+		// 对于 MOBI/AZW3，优先使用纯 Go 解析器直接提取封面
+		if archiveType == TypeMobi || archiveType == TypeAzw3 {
+			coverData, err := ExtractMobiCoverImage(archivePath)
+			if err == nil && len(coverData) > 0 {
+				pageBuffer = coverData
+				break
+			}
+			log.Printf("[thumbnail] Native MOBI cover extraction failed for %s: %v, trying via reader", comicID, err)
+		}
+
+		reader, err := NewReader(archivePath)
+		if err != nil {
+			log.Printf("[thumbnail] open ebook failed for %s: %v, falling back to text cover", comicID, err)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		defer reader.Close()
+
+		// 尝试从 EPUB reader 获取封面
+		coverData, err := GetEpubCoverImage(reader)
+		if err != nil {
+			// 尝试从 MOBI reader 获取封面
+			coverData, err = GetMobiCoverImage(reader)
+		}
+		if err != nil {
+			log.Printf("[thumbnail] Cover extraction failed for %s: %v, generating text cover", comicID, err)
+			// Fallback: generate a text-based cover
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		pageBuffer = coverData
+
+	case archiveType == TypeTxt:
+		// TXT: generate a text-based cover image
+		data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+		return data, "image/png", 0, err
+
+	case archiveType == TypeImageFolder:
+		// 图片文件夹漫画：直接读取第一张图片作为封面
+		reader, err := NewReader(archivePath)
+		if err != nil {
+			log.Printf("[thumbnail] open image folder failed for %s: %v, falling back to text cover", comicID, err)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		defer reader.Close()
+
+		images := GetImageEntries(reader)
+		if len(images) == 0 {
+			log.Printf("[thumbnail] no images in folder %s, falling back to text cover", archivePath)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+
+		buf, err := reader.ExtractEntry(images[0])
+		if err != nil {
+			log.Printf("[thumbnail] extract first page from folder failed for %s: %v, falling back to text cover", comicID, err)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		pageBuffer = buf
+
+	default:
+		// Open archive and extract first image
+		reader, err := NewReader(archivePath)
+		if err != nil {
+			log.Printf("[thumbnail] open archive failed for %s: %v, falling back to text cover", comicID, err)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		defer reader.Close()
+
+		images := GetImageEntries(reader)
+		if len(images) == 0 {
+			log.Printf("[thumbnail] no images in archive %s, falling back to text cover", archivePath)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+
+		buf, err := reader.ExtractEntry(images[0])
+		if err != nil {
+			log.Printf("[thumbnail] extract first page failed for %s: %v, falling back to text cover", comicID, err)
+			data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+			return data, "image/png", 0, err
+		}
+		pageBuffer = buf
+	}
+
+	if len(pageBuffer) == 0 {
+		log.Printf("[thumbnail] empty page buffer for %s, falling back to text cover", comicID)
+		data, _, err := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+		return data, "image/png", 0, err
+	}
+
+	// Detect original aspect ratio before resizing
+	aspectRatio := detectAspectRatio(pageBuffer)
+
+	// Generate thumbnail
+	thumbnail, thumbMime, err := resizeToWebP(pageBuffer, config.GetThumbnailWidth(), config.GetThumbnailHeight(), 80)
+	if err != nil {
+		// 所有编码器都失败时，兜底到文字封面，避免前端出现破图
+		log.Printf("[thumbnail] resize/encode failed for %s: %v, falling back to text cover", comicID, err)
+		data, _, txtErr := generateTextCover(archivePath, comicID, thumbDir, cachePath)
+		if txtErr != nil {
+			return nil, "", 0, fmt.Errorf("thumbnail encode failed: %v; text cover fallback also failed: %v", err, txtErr)
+		}
+		return data, "image/png", 0, nil
+	}
+
+	// Write to cache (fire-and-forget)
+	if err := os.WriteFile(cachePath, thumbnail, 0644); err != nil {
+		log.Printf("[thumbnail] Failed to write cache for %s: %v", comicID, err)
+	}
+
+	return thumbnail, thumbMime, aspectRatio, nil
+}
+
+// resizeToWebP resizes an image and converts it to WebP format.
+// Tries external tools first (cwebp, ffmpeg), falls back to Go native (JPEG).
+// 关键改进：每一层失败时自动尝试下一层，永远返回有效图像（除非源图损坏）。
+func resizeToWebP(imgData []byte, width, height, quality int) ([]byte, string, error) {
+	var lastErr error
+
+	// Method 1: Use cwebp (libwebp) for best quality
+	if cwebp, err := exec.LookPath("cwebp"); err == nil {
+		out, err := resizeWithCwebp(cwebp, imgData, width, height, quality)
+		if err == nil && len(out) > 0 {
+			return out, "image/webp", nil
+		}
+		log.Printf("[thumbnail] cwebp failed, falling back: %v", err)
+		lastErr = err
+	}
+
+	// Method 2: Use ffmpeg
+	if ffmpeg, err := exec.LookPath("ffmpeg"); err == nil {
+		out, err := resizeWithFfmpeg(ffmpeg, imgData, width, height, quality)
+		if err == nil && len(out) > 0 {
+			return out, "image/webp", nil
+		}
+		log.Printf("[thumbnail] ffmpeg failed, falling back to Go native: %v", err)
+		lastErr = err
+	}
+
+	// Method 3: Use Go native (resize + encode as JPEG with .webp extension)
+	// This is a fallback — the file will actually be JPEG but named .webp
+	// The Content-Type header will still serve it correctly
+	out, _, err := resizeGoNative(imgData, width, height, quality)
+	if err == nil && len(out) > 0 {
+		return out, "image/jpeg", nil
+	}
+	if lastErr != nil {
+		return nil, "", fmt.Errorf("all encoders failed (last: %v, native: %v)", lastErr, err)
+	}
+	return nil, "", err
+}
+
+// resizeWithCwebp uses cwebp to resize and convert to WebP.
+// cwebp 原生支持 JPEG/PNG/WebP 输入，直接流式传入源数据，避免先在 Go 中把超大
+// JPEG 完整解码并转成 PNG 所造成的数百 MB 内存峰值。
+func resizeWithCwebp(cwebpPath string, imgData []byte, width, height, quality int) ([]byte, error) {
+	cmd := exec.Command(cwebpPath,
+		"-quiet",
+		"-mt",
+		"-low_memory",
+		"-resize", fmt.Sprintf("%d", width), fmt.Sprintf("%d", height),
+		"-q", fmt.Sprintf("%d", quality),
+		"-o", "-", "--", "-",
+	)
+	cmd.Stdin = bytes.NewReader(imgData)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("cwebp: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("cwebp returned empty output")
+	}
+	return out, nil
+}
+
+// resizeWithFfmpeg uses ffmpeg to resize and convert to WebP.
+func resizeWithFfmpeg(ffmpegPath string, imgData []byte, width, height, quality int) ([]byte, error) {
+	// ffmpeg -i pipe:0 -vf "scale=W:H:force_original_aspect_ratio=increase,crop=W:H:(iw-W)/2:0"
+	//        -c:v libwebp -quality Q -f webp pipe:1
+	filter := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d:(iw-%d)/2:0",
+		width, height, width, height, width)
+	cmd := exec.Command(ffmpegPath, "-y", "-i", "pipe:0",
+		"-vf", filter,
+		"-c:v", "libwebp", "-quality", fmt.Sprintf("%d", quality),
+		"-f", "webp", "pipe:1")
+	cmd.Stdin = bytes.NewReader(imgData)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg: %w (%s)", err, stderr.String())
+	}
+	return stdout.Bytes(), nil
+}
+
+// resizeGoNative uses Go's standard library for resizing.
+// Outputs JPEG (closest we can do without cgo WebP libs).
+func resizeGoNative(imgData []byte, width, height, quality int) ([]byte, string, error) {
+	img, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		return nil, "", fmt.Errorf("decode image: %w", err)
+	}
+
+	// Simple nearest-neighbor resize (cover fit, crop from top)
+	srcBounds := img.Bounds()
+	srcW := srcBounds.Dx()
+	srcH := srcBounds.Dy()
+
+	// Calculate scale to cover target dimensions
+	scaleX := float64(width) / float64(srcW)
+	scaleY := float64(height) / float64(srcH)
+	scale := scaleX
+	if scaleY > scaleX {
+		scale = scaleY
+	}
+
+	scaledW := int(float64(srcW) * scale)
+
+	// Create resized image with simple bilinear-ish sampling
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// Offset for "top" position (crop from top center)
+	offsetX := (scaledW - width) / 2
+	offsetY := 0 // top position
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			srcX := int(float64(x+offsetX) / scale)
+			srcY := int(float64(y+offsetY) / scale)
+			if srcX >= srcW {
+				srcX = srcW - 1
+			}
+			if srcY >= srcH {
+				srcY = srcH - 1
+			}
+			if srcX < 0 {
+				srcX = 0
+			}
+			if srcY < 0 {
+				srcY = 0
+			}
+			dst.Set(x, y, img.At(srcBounds.Min.X+srcX, srcBounds.Min.Y+srcY))
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); err != nil {
+		return nil, "", fmt.Errorf("encode jpeg: %w", err)
+	}
+	return buf.Bytes(), "image/jpeg", nil
+}
+
+// toPNG converts image data to PNG format.
+func toPNG(imgData []byte) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// ResizeImageToWebP is a public helper for cover upload processing.
+// quality 85 for user uploads.
+func ResizeImageToWebP(imgData []byte, width, height, quality int) ([]byte, string, error) {
+	return resizeToWebP(imgData, width, height, quality)
+}
+
+// ThumbnailEncoderPriority returns the external encoders used before the
+// built-in Go JPEG fallback.
+func ThumbnailEncoderPriority() []string {
+	return []string{"cwebp", "ffmpeg"}
+}
+
+// ThumbnailMimeType detects the actual cached image format. Cache filenames
+// keep a stable .webp suffix even when the native fallback produced JPEG data.
+func ThumbnailMimeType(data []byte) string {
+	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
+		return "image/webp"
+	}
+	mimeType := http.DetectContentType(data)
+	if strings.HasPrefix(mimeType, "image/") {
+		return mimeType
+	}
+	return "application/octet-stream"
+}
+
+// ThumbnailCacheName returns the canonical cache filename for a comic thumbnail.
+// All code that reads/writes thumbnail cache MUST use this function to ensure consistency.
+func ThumbnailCacheName(comicID string) string {
+	tw := config.GetThumbnailWidth()
+	th := config.GetThumbnailHeight()
+	return fmt.Sprintf("%s_%dx%d.webp", comicID, tw, th)
+}
+
+func SeriesCoverCacheName(seriesID string) string {
+	tw := config.GetThumbnailWidth()
+	th := config.GetThumbnailHeight()
+	return fmt.Sprintf("series_%s_%dx%d.webp", seriesID, tw, th)
+}
+
+func ClearSeriesCoverCache(seriesID string) {
+	thumbDir := config.GetThumbnailsDir()
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		return
+	}
+	prefix := "series_" + seriesID + "_"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			_ = os.Remove(filepath.Join(thumbDir, entry.Name()))
+		}
+	}
+}
+
+// ClearThumbnailCache removes all cached thumbnails for a given comic ID,
+// including the old format ({id}.webp) and all sized variants ({id}_{W}x{H}.webp).
+func ClearThumbnailCache(comicID string) {
+	thumbDir := config.GetThumbnailsDir()
+	// Remove old format
+	oldPath := filepath.Join(thumbDir, comicID+".webp")
+	_ = os.Remove(oldPath)
+	// Remove all sized variants
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		return
+	}
+	prefix := comicID + "_"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			_ = os.Remove(filepath.Join(thumbDir, entry.Name()))
+		}
+	}
+}
+
+// MigrateThumbnailCache preserves a cached or manually uploaded cover when two
+// database rows for the same physical book are merged. Existing target cache
+// files win; source files are removed after a successful move.
+func MigrateThumbnailCache(sourceID, targetID string) {
+	if sourceID == "" || targetID == "" || sourceID == targetID {
+		return
+	}
+	thumbDir := config.GetThumbnailsDir()
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		var suffix string
+		switch {
+		case name == sourceID+".webp":
+			suffix = ".webp"
+		case strings.HasPrefix(name, sourceID+"_"):
+			suffix = strings.TrimPrefix(name, sourceID)
+		default:
+			continue
+		}
+		sourcePath := filepath.Join(thumbDir, name)
+		targetPath := filepath.Join(thumbDir, targetID+suffix)
+		if _, err := os.Stat(targetPath); err == nil {
+			_ = os.Remove(sourcePath)
+			continue
+		}
+		if err := os.Rename(sourcePath, targetPath); err != nil {
+			if data, readErr := os.ReadFile(sourcePath); readErr == nil {
+				if writeErr := os.WriteFile(targetPath, data, 0644); writeErr == nil {
+					_ = os.Remove(sourcePath)
+				}
+			}
+		}
+	}
+}
+
+// cleanOldThumbnailCache 删除同一 comicID 的旧尺寸缓存文件（包括旧格式 comicID.webp）。
+func cleanOldThumbnailCache(thumbDir, comicID, currentCacheName string) {
+	// 清理旧格式缓存 comicID.webp（不含尺寸后缀）
+	oldFormatPath := filepath.Join(thumbDir, comicID+".webp")
+	if _, err := os.Stat(oldFormatPath); err == nil {
+		_ = os.Remove(oldFormatPath)
+	}
+
+	// 清理同 comicID 但不同尺寸的缓存
+	entries, err := os.ReadDir(thumbDir)
+	if err != nil {
+		return
+	}
+	prefix := comicID + "_"
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, prefix) && name != currentCacheName {
+			_ = os.Remove(filepath.Join(thumbDir, name))
+		}
+	}
+}
+
+// generateTextCover creates a simple image thumbnail for text files.
+// Uses Go's image library to draw a colored background with the title.
+func generateTextCover(filePath, comicID, thumbDir, cachePath string) ([]byte, string, error) {
+	// 从配置读取缩略图尺寸，而不是硬编码
+	width := config.GetThumbnailWidth()
+	height := config.GetThumbnailHeight()
+
+	// Create a gradient-like background
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// Generate a consistent color based on filename hash — dark glassmorphism theme
+	hash := []byte(comicID)
+	hue := int(hash[0]) % 6
+	var bgR, bgG, bgB uint8
+	switch hue {
+	case 0:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	case 1:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	case 2:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	case 3:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	case 4:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	default:
+		bgR, bgG, bgB = 15, 23, 42 // slate-900
+	}
+
+	// Fill background
+	for y := 0; y < height; y++ {
+		// Slight vertical gradient
+		factor := float64(y) / float64(height)
+		r := uint8(float64(bgR) * (1.0 - factor*0.3))
+		g := uint8(float64(bgG) * (1.0 - factor*0.3))
+		b := uint8(float64(bgB) * (1.0 - factor*0.3))
+		for x := 0; x < width; x++ {
+			dst.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
+		}
+	}
+
+	// Draw a book icon area (subtle blue-tinted rectangle in center)
+	iconTop := 120
+	iconW := 160
+	iconH := 200
+	iconLeft := (width - iconW) / 2
+	for y := iconTop; y < iconTop+iconH; y++ {
+		for x := iconLeft; x < iconLeft+iconW; x++ {
+			dst.Set(x, y, color.RGBA{R: 59, G: 130, B: 246, A: 25})
+		}
+	}
+	// Draw subtle border around icon area
+	for x := iconLeft; x < iconLeft+iconW; x++ {
+		dst.Set(x, iconTop, color.RGBA{R: 255, G: 255, B: 255, A: 15})
+		dst.Set(x, iconTop+iconH-1, color.RGBA{R: 255, G: 255, B: 255, A: 15})
+	}
+	for y := iconTop; y < iconTop+iconH; y++ {
+		dst.Set(iconLeft, y, color.RGBA{R: 255, G: 255, B: 255, A: 15})
+		dst.Set(iconLeft+iconW-1, y, color.RGBA{R: 255, G: 255, B: 255, A: 15})
+	}
+
+	// Draw "TXT" or "EPUB" label
+	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(filePath), "."))
+	// Draw simple pixel text for the extension label — muted blue
+	drawSimpleText(dst, ext, width/2, iconTop+iconH/2, color.RGBA{R: 148, G: 163, B: 184, A: 180})
+
+	// Encode as PNG for universal compatibility
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, dst); err != nil {
+		return nil, "", fmt.Errorf("encode text cover: %w", err)
+	}
+
+	thumbnail := buf.Bytes()
+
+	// Write to cache
+	if err := os.WriteFile(cachePath, thumbnail, 0644); err != nil {
+		log.Printf("[thumbnail] Failed to write text cover cache for %s: %v", comicID, err)
+	}
+
+	return thumbnail, "image/png", nil
+}
+
+// detectAspectRatio decodes image bytes and returns width/height ratio.
+// Returns 0 if the image cannot be decoded.
+func detectAspectRatio(imgData []byte) float64 {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(imgData))
+	if err != nil {
+		return 0
+	}
+	if cfg.Height == 0 {
+		return 0
+	}
+	return float64(cfg.Width) / float64(cfg.Height)
+}
+
+// drawSimpleText draws a simple blocky text string centered at (cx, cy).
+func drawSimpleText(img *image.RGBA, text string, cx, cy int, clr color.RGBA) {
+	// Simple 5x7 pixel font for uppercase letters and digits
+	glyphs := map[rune][]string{
+		'T': {"#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  "},
+		'X': {"#   #", " # # ", "  #  ", "  #  ", " # # ", "#   #", "#   #"},
+		'E': {"#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####"},
+		'P': {"#### ", "#   #", "#   #", "#### ", "#    ", "#    ", "#    "},
+		'U': {"#   #", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "},
+		'B': {"#### ", "#   #", "#   #", "#### ", "#   #", "#   #", "#### "},
+		'M': {"#   #", "## ##", "# # #", "#   #", "#   #", "#   #", "#   #"},
+		'O': {" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "},
+		'I': {"#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "#####"},
+		'A': {" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"},
+		'W': {"#   #", "#   #", "#   #", "#   #", "# # #", "## ##", "#   #"},
+		'Z': {"#####", "    #", "   # ", "  #  ", " #   ", "#    ", "#####"},
+		'3': {"#####", "    #", "    #", " ### ", "    #", "    #", "#####"},
+	}
+
+	scale := 4
+	charW := 5*scale + scale // char width + spacing
+	totalW := len(text) * charW
+	startX := cx - totalW/2
+
+	for i, ch := range text {
+		glyph, ok := glyphs[ch]
+		if !ok {
+			continue
+		}
+		ox := startX + i*charW
+		oy := cy - (7*scale)/2
+
+		for row, line := range glyph {
+			for col, pixel := range line {
+				if pixel == '#' {
+					for dy := 0; dy < scale; dy++ {
+						for dx := 0; dx < scale; dx++ {
+							px := ox + col*scale + dx
+							py := oy + row*scale + dy
+							if px >= 0 && px < img.Bounds().Dx() && py >= 0 && py < img.Bounds().Dy() {
+								img.Set(px, py, clr)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
