@@ -123,6 +123,36 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestScraperEnabledDefaultsToTrueWhenUnset(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	siteConfigCache = nil
+	t.Cleanup(func() {
+		siteConfigCache = nil
+	})
+
+	if !IsScraperEnabled() {
+		t.Fatal("IsScraperEnabled() = false when scraperEnabled is unset, want true")
+	}
+}
+
+func TestScraperEnabledPreservesExplicitFalse(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	siteConfigCache = nil
+	t.Cleanup(func() {
+		siteConfigCache = nil
+	})
+
+	disabled := false
+	if err := SaveSiteConfig(&SiteConfig{ScraperEnabled: &disabled}); err != nil {
+		t.Fatalf("SaveSiteConfig() error = %v", err)
+	}
+	siteConfigCache = nil
+
+	if IsScraperEnabled() {
+		t.Fatal("IsScraperEnabled() = true after explicitly saving false, want false")
+	}
+}
+
 func TestDatabaseURL(t *testing.T) {
 	// Default
 	os.Unsetenv("DATABASE_URL")

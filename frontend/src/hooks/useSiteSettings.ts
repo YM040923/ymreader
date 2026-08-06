@@ -12,7 +12,7 @@ interface SiteSettings {
 const defaultSettings: SiteSettings = {
   siteName: "NowenReader",
   siteIcon: "",
-  scraperEnabled: false,
+  scraperEnabled: true,
 };
 
 // 模块级缓存，避免每个组件都重复请求
@@ -27,7 +27,7 @@ async function fetchSiteSettings(): Promise<SiteSettings> {
     return {
       siteName: data.siteName || "NowenReader",
       siteIcon: data.siteIcon || "",
-      scraperEnabled: data.scraperEnabled ?? false,
+      scraperEnabled: data.scraperEnabled ?? true,
     };
   } catch {
     return defaultSettings;

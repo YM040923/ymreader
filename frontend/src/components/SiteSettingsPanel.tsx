@@ -189,6 +189,7 @@ export function SiteSettingsPanel() {
         extraComicsDirs: [],
         extraNovelsDirs: [],
         ebookTypeAutoDetect: "comics",
+        scraperEnabled: true,
         ...data,
       });
     } catch (err) {

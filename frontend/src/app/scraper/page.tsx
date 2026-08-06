@@ -121,8 +121,8 @@ export default function ScraperPage() {
   useEffect(() => {
     fetch(apiPath("/api/site-settings"))
       .then(r => r.json())
-      .then(data => setScraperEnabled(data.scraperEnabled ?? false))
-      .catch(() => setScraperEnabled(false));
+      .then(data => setScraperEnabled(data.scraperEnabled ?? true))
+      .catch(() => setScraperEnabled(true));
   }, []);
 
   const {

@@ -27,7 +27,7 @@ type SiteConfig struct {
 	Theme            string           `json:"theme,omitempty"`
 	ScannerConfig    *ScannerConfig   `json:"scannerConfig,omitempty"`
 	RegistrationMode string           `json:"registrationMode,omitempty"` // "open" | "invite" | "closed"，默认 "open"
-	ScraperEnabled   *bool            `json:"scraperEnabled,omitempty"`   // 是否启用内容刮削功能，默认 false
+	ScraperEnabled   *bool            `json:"scraperEnabled,omitempty"`   // 是否启用内容刮削功能，默认 true
 	ScanRules        *ScanRulesConfig `json:"scanRules,omitempty"`        // 扫描期统一规则（AI 识别 + 自动归类等）
 
 	// PdfRendererPath 指定 PDF 渲染外部工具所在目录或具体可执行文件路径。
@@ -460,13 +460,13 @@ func GetRegistrationMode() string {
 	return "open"
 }
 
-// IsScraperEnabled 返回是否启用内容刮削功能，默认为 false（关闭）。
+// IsScraperEnabled 返回是否启用内容刮削功能，默认为 true（开启）。
 func IsScraperEnabled() bool {
 	cfg := loadSiteConfig()
 	if cfg.ScraperEnabled != nil {
 		return *cfg.ScraperEnabled
 	}
-	return false
+	return true
 }
 
 // GetPdfRendererPath 返回用户配置的 PDF 渲染工具路径（目录或可执行文件）。
