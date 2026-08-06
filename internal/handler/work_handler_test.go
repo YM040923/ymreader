@@ -84,6 +84,61 @@ func TestWorkAPIListsFullWorkThenReturnsDetailAndUnits(t *testing.T) {
 	}
 }
 
+func TestWorkReadEndpointsDoNotWriteLogicalWorkTables(t *testing.T) {
+	r := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	resetWorkCatalogCache()
+	cookie := registerAndLogin(t, r)
+	createWorkTestLibrary(t, "lib-read-only-work", "Read only", "private")
+	createWorkTestComics(t, "lib-read-only-work", []workTestComic{
+		{ID: "read-only-1", Path: "只读作品/第001话", Title: "第001话"},
+		{ID: "read-only-2", Path: "只读作品/第002话", Title: "第002话"},
+	})
+
+	result, err := store.GetAllComics(store.ComicListOptions{
+		ContentType: "comic", LibraryIDs: []string{"lib-read-only-work"}, FilterLibraryIDs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{})
+	if err := service.PersistAndApplyLogicalWorks(works); err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 {
+		t.Fatalf("works=%#v", works)
+	}
+	workID := works[0].ID
+
+	for _, table := range []string{"LogicalWork", "LogicalWorkTag", "LogicalWorkCategory"} {
+		trigger := `CREATE TRIGGER "deny_` + table + `_insert" BEFORE INSERT ON "` + table + `" BEGIN SELECT RAISE(ABORT, 'read endpoint attempted write'); END`
+		if _, err := store.DB().Exec(trigger); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.DB().Exec(`
+		CREATE TRIGGER "deny_LogicalWork_update"
+		BEFORE UPDATE ON "LogicalWork"
+		BEGIN SELECT RAISE(ABORT, 'read endpoint attempted write'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	resetWorkCatalogCache()
+
+	for _, path := range []string{
+		"/api/works",
+		"/api/works/" + workID,
+		"/api/works/" + workID + "/units",
+	} {
+		response := performAuthedRequest(r, http.MethodGet, path, nil, cookie)
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestWorkAPIFilterKeepsEveryUnitOfMatchingWork(t *testing.T) {
 	r := setupTestRouter(t)
 	cookie := registerAndLogin(t, r)
@@ -226,6 +281,17 @@ func TestComicsSeriesViewReturnsUnifiedWorkDTO(t *testing.T) {
 		{ID: "series-view-work-1", Path: "作品/第一话/", Title: "第一话"},
 		{ID: "series-view-work-2", Path: "作品/第二话/", Title: "第二话"},
 	})
+	result, err := store.GetAllComics(store.ComicListOptions{
+		ContentType: "comic", LibraryIDs: []string{"lib-series-view-work"}, FilterLibraryIDs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{})
+	if err := service.PersistAndApplyLogicalWorks(works); err != nil {
+		t.Fatal(err)
+	}
+	resetWorkCatalogCache()
 
 	response := performAuthedRequest(r, http.MethodGet, "/api/comics?seriesView=true", nil, cookie)
 	if response.Code != http.StatusOK {
@@ -300,6 +366,9 @@ func TestWorkAPIUsesPersistedSeriesMetadataFromDatabase(t *testing.T) {
 		Title: &title, Author: &author, ExternalRating: &rating,
 		ExternalRatingMax: &ratingMax, ExternalRatingSource: &ratingSource,
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
 		t.Fatal(err)
 	}
 

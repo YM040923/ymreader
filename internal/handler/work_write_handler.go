@@ -35,6 +35,31 @@ func (h *WorkHandler) SetFavorite(c *gin.Context) {
 	completeWorkMutation(c, gin.H{"success": true, "isFavorite": body.IsFavorite})
 }
 
+func (h *WorkHandler) SetRating(c *gin.Context) {
+	targets, ok := h.requireManageTargets(c, []string{c.Param("id")})
+	if !ok {
+		return
+	}
+	var body struct {
+		Rating *int `json:"rating"`
+	}
+	if c.ShouldBindJSON(&body) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	if body.Rating != nil && (*body.Rating < 1 || *body.Rating > 5) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Rating must be between 1 and 5"})
+		return
+	}
+	for _, comicID := range targets[0].ComicIDs {
+		if err := store.UpdateRating(comicID, body.Rating, getUserID(c)); err != nil {
+			writeWorkMutationError(c, err)
+			return
+		}
+	}
+	completeWorkMutation(c, gin.H{"success": true, "rating": body.Rating})
+}
+
 func (h *WorkHandler) SetReadingStatus(c *gin.Context) {
 	targets, ok := h.requireManageTargets(c, []string{c.Param("id")})
 	if !ok {
@@ -359,6 +384,12 @@ func (h *WorkHandler) CategoryStats(c *gin.Context) {
 func (h *WorkHandler) requireManageTargets(c *gin.Context, workIDs []string) ([]workWriteTarget, bool) {
 	catalog, err := h.loadWorkCatalog(c)
 	if err != nil {
+		writeWorkMutationError(c, err)
+		return nil, false
+	}
+	// Write handlers may be the first caller after a fresh scan. Materialize
+	// the detected Work rows here, while keeping all GET handlers read-only.
+	if err := service.PersistAndApplyLogicalWorks(catalog.Works); err != nil {
 		writeWorkMutationError(c, err)
 		return nil, false
 	}

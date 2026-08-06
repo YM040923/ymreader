@@ -149,13 +149,21 @@ export async function startBatchSelected() {
   const abort = new AbortController();
   selectedAbortController = abort;
   const lang = navigator.language.startsWith("zh") ? "zh" : "en";
+  const selectedItems = Array.from(state.selectedIds).map((id) => {
+    const item = state.libraryItems.find((candidate) => candidate.id === id);
+    return item || { id, entityType: "comic" as const };
+  });
 
   try {
     const res = await fetch(apiPath("/api/metadata/batch-selected"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        comicIds: Array.from(state.selectedIds),
+        targets: selectedItems.map((item) => ({
+          id: item.id,
+          entityType: item.entityType,
+        })),
+        comicIds: selectedItems.map((item) => item.id),
         lang,
         updateTitle: state.updateTitle,
         mode: state.batchMode,

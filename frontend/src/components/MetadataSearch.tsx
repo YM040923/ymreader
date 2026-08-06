@@ -60,11 +60,12 @@ interface Props {
   comicId: string;
   comicTitle: string;
   filename?: string;
-  comicType?: string; // "comic" | "novel" — 优先使用此字段判断类型
+  comicType?: string; // "comic" | "novel"
+  entityType?: "work" | "comic";
   onApplied?: () => void;
 }
 
-export function MetadataSearch({ comicId, comicTitle, filename, comicType, onApplied }: Props) {
+export function MetadataSearch({ comicId, comicTitle, filename, comicType, entityType = "comic", onApplied }: Props) {
   const t = useTranslation();
   const { locale } = useLocale();
 
@@ -127,6 +128,17 @@ export function MetadataSearch({ comicId, comicTitle, filename, comicType, onApp
     setError("");
     try {
       // 小说使用专用刮削接口，漫画使用通用刮削接口
+      if (entityType === "work") {
+        const res = await fetch(apiPath(`/api/works/${encodeURIComponent(comicId)}/scrape-metadata`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, lang: locale }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setResults(data.results || []);
+        return;
+      }
       const scanUrl = isNovel ? "/api/metadata/novel-scan" : "/api/metadata/scan";
       const res = await fetch(apiPath(scanUrl), {
         method: "POST",
@@ -155,11 +167,17 @@ export function MetadataSearch({ comicId, comicTitle, filename, comicType, onApp
   const handleApply = async (index: number) => {
     setApplying(index);
     try {
-      const res = await fetch(apiPath("/api/metadata/apply"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comicId, metadata: results[index], lang: locale, overwrite: true, skipCover }),
-      });
+      const res = entityType === "work"
+        ? await fetch(apiPath(`/api/works/${encodeURIComponent(comicId)}/apply-metadata`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ metadata: results[index], fields: skipCover ? ["title", "author", "publisher", "year", "description", "language", "genre", "rating", "tags"] : [], overwrite: true, skipCover, syncTags: true }),
+          })
+        : await fetch(apiPath("/api/metadata/apply"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ comicId, metadata: results[index], lang: locale, overwrite: true, skipCover }),
+          });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setApplied(index);

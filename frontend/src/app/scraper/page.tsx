@@ -607,7 +607,7 @@ export default function ScraperPage() {
                       {/* 封面 */}
                       <div className="relative h-11 w-8 flex-shrink-0 overflow-hidden rounded-lg border border-border/30 bg-muted/10">
                         <Image
-                          src={apiPath(`/api/comics/${item.id}/thumbnail`)}
+                          src={item.coverUrl || apiPath(`/api/comics/${item.id}/thumbnail`)}
                           alt=""
                           fill
                           className="object-cover"
@@ -1021,7 +1021,7 @@ export default function ScraperPage() {
                     <div className="flex items-center gap-2.5 rounded-lg bg-card-hover/50 p-2.5">
                       <div className="relative h-10 w-7 flex-shrink-0 overflow-hidden rounded border border-border/30 bg-muted/10">
                         <Image
-                          src={apiPath(`/api/comics/${currentProgress.comicId}/thumbnail`)}
+                          src={currentProgress.coverUrl || apiPath(`/api/comics/${currentProgress.comicId}/thumbnail`)}
                           alt=""
                           fill
                           className="object-cover"
@@ -1103,7 +1103,7 @@ export default function ScraperPage() {
                           </div>
                           <div className="relative h-8 w-6 flex-shrink-0 overflow-hidden rounded border border-border/30 bg-muted/10">
                             <Image
-                              src={apiPath(`/api/comics/${item.comicId}/thumbnail`)}
+                              src={item.coverUrl || apiPath(`/api/comics/${item.comicId}/thumbnail`)}
                               alt=""
                               fill
                               className="object-cover"

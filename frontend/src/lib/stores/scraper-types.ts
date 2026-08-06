@@ -14,6 +14,7 @@ export interface ProgressItem {
   step?: string;
   status?: string;
   source?: string;
+  coverUrl?: string;
   message?: string;
   matchTitle?: string;
   resultsCount?: number;
@@ -65,6 +66,10 @@ export interface LibraryItemCategory {
 
 export interface LibraryItem {
   id: string;
+  entityType: "work" | "comic";
+  representativeComicId?: string;
+  coverUrl?: string;
+  itemCount?: number;
   title: string;
   filename: string;
   author: string;

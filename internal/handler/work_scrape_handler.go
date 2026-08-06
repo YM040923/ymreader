@@ -51,6 +51,7 @@ func (h *WorkHandler) ApplyScrapedMetadata(c *gin.Context) {
 		Metadata      service.ComicMetadata `json:"metadata"`
 		Fields        []string              `json:"fields"`
 		Overwrite     bool                  `json:"overwrite"`
+		SkipCover     bool                  `json:"skipCover"`
 		SyncTags      bool                  `json:"syncTags"`
 		SyncToVolumes bool                  `json:"syncToVolumes"`
 		SyncRating    bool                  `json:"syncRating"`
@@ -119,16 +120,20 @@ func (h *WorkHandler) ApplyScrapedMetadata(c *gin.Context) {
 	}
 
 	if meta.Genre != "" && shouldApply("tags") {
+		comicIDs := []string(nil)
+		if body.SyncTags {
+			comicIDs = target.ComicIDs
+		}
 		if err := store.AddLogicalWorkAndComicTags(
 			[]string{target.Work.ID},
-			target.ComicIDs,
+			comicIDs,
 			splitAndTrim(meta.Genre),
 		); err != nil {
 			writeWorkMutationError(c, err)
 			return
 		}
 	}
-	if meta.CoverURL != "" && shouldApply("cover") {
+	if !body.SkipCover && meta.CoverURL != "" && shouldApply("cover") {
 		locked := true
 		source := "remote"
 		if err := store.UpdateLogicalWorkCover(target.Work.ID, store.LogicalWorkCoverUpdate{

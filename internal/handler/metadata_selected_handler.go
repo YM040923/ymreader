@@ -14,18 +14,32 @@ import (
 
 func (h *MetadataHandler) BatchSelected(c *gin.Context) {
 	var body struct {
-		ComicIDs    []string `json:"comicIds"`
-		Lang        string   `json:"lang"`
-		UpdateTitle bool     `json:"updateTitle"`
-		Mode        string   `json:"mode"`      // "standard" | "ai"
-		SkipCover   bool     `json:"skipCover"` // P2-A: 不替换封面
+		ComicIDs []string `json:"comicIds"`
+		Targets  []struct {
+			ID         string `json:"id"`
+			EntityType string `json:"entityType"`
+		} `json:"targets"`
+		Lang        string `json:"lang"`
+		UpdateTitle bool   `json:"updateTitle"`
+		Mode        string `json:"mode"`      // "standard" | "ai"
+		SkipCover   bool   `json:"skipCover"` // P2-A: 不替换封面
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || len(body.ComicIDs) == 0 {
+	if err := c.ShouldBindJSON(&body); err != nil || (len(body.ComicIDs) == 0 && len(body.Targets) == 0) {
 		c.JSON(400, gin.H{"error": "comicIds array required"})
 		return
 	}
 	if body.Lang == "" {
 		body.Lang = "en"
+	}
+	workIDs := make([]string, 0)
+	for _, target := range body.Targets {
+		if target.EntityType == "work" && target.ID != "" {
+			workIDs = append(workIDs, target.ID)
+		}
+	}
+	if len(workIDs) > 0 {
+		h.batchSelectedWorks(c, workIDs, body.SkipCover)
+		return
 	}
 
 	// 获取所有选中漫画的信息（含标题，用于智能搜索）
@@ -316,6 +330,59 @@ func (h *MetadataHandler) BatchSelected(c *gin.Context) {
 		"success": success,
 		"failed":  failed,
 	})
+}
+
+func (h *MetadataHandler) batchSelectedWorks(c *gin.Context, workIDs []string, skipCover bool) {
+	catalog, err := NewWorkHandler().loadWorkCatalog(c)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to load Works"})
+		return
+	}
+	works := make([]service.Work, 0, len(workIDs))
+	seen := make(map[string]struct{}, len(workIDs))
+	for _, id := range workIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if work := catalog.ByID[id]; work != nil {
+			works = append(works, *work)
+		}
+	}
+	if len(works) == 0 {
+		c.JSON(400, gin.H{"error": "No valid Works found"})
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+	send := func(data interface{}) {
+		encoded, _ := json.Marshal(data)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", encoded)
+		c.Writer.Flush()
+	}
+	send(gin.H{"type": "start", "total": len(works)})
+	success, failed := 0, 0
+	for index, work := range works {
+		progress := gin.H{
+			"type": "progress", "current": index + 1, "total": len(works),
+			"comicId": work.ID, "filename": work.RootPath, "entityType": "work",
+			"coverUrl": work.CoverURL,
+		}
+		if err := service.ScrapeWorkMetadata(work, skipCover || work.CoverLocked); err != nil {
+			progress["status"] = "failed"
+			progress["message"] = err.Error()
+			failed++
+		} else {
+			progress["status"] = "success"
+			progress["source"] = "work"
+			success++
+		}
+		send(progress)
+	}
+	send(gin.H{"type": "complete", "total": len(works), "success": success, "failed": failed})
 }
 
 // POST /api/metadata/clear — 清除选中项的元数据

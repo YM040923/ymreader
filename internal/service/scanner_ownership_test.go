@@ -106,8 +106,11 @@ func TestQuickSyncWithChangesReportsNewAndModifiedFiles(t *testing.T) {
 	}
 }
 
-func TestSyncLibraryByIDSchedulesOnlyChangedComicIDs(t *testing.T) {
+func TestSyncLibraryByIDPersistsWorksWithoutSchedulingAutomaticScrape(t *testing.T) {
 	setupScannerTestDB(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Work.cbz"), []byte("comic"), 0644); err != nil {
 		t.Fatal(err)
@@ -120,37 +123,19 @@ func TestSyncLibraryByIDSchedulesOnlyChangedComicIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	original := automaticWorkScrapeScheduler
-	t.Cleanup(func() { automaticWorkScrapeScheduler = original })
-	type scheduledCall struct {
-		libraries []string
-		comics    []string
-	}
-	calls := make(chan scheduledCall, 2)
-	automaticWorkScrapeScheduler = func(libraryIDs, changedComicIDs []string) {
-		calls <- scheduledCall{
-			libraries: append([]string(nil), libraryIDs...),
-			comics:    append([]string(nil), changedComicIDs...),
-		}
-	}
-
 	if added, removed, err := SyncLibraryByID(lib.ID); err != nil || added != 1 || removed != 0 {
 		t.Fatalf("scan added=%d removed=%d err=%v", added, removed, err)
 	}
-	call := <-calls
-	comicID := store.PathToID(lib.ID, "Work.cbz")
-	if len(call.libraries) != 1 || call.libraries[0] != lib.ID ||
-		len(call.comics) != 1 || call.comics[0] != comicID {
-		t.Fatalf("scheduled call=%#v", call)
+	var workCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM "LogicalWork" WHERE "libraryId" = ?`, lib.ID).Scan(&workCount); err != nil {
+		t.Fatal(err)
+	}
+	if workCount != 1 {
+		t.Fatalf("persisted Work count=%d, want 1", workCount)
 	}
 
 	if added, removed, err := SyncLibraryByID(lib.ID); err != nil || added != 0 || removed != 0 {
 		t.Fatalf("unchanged scan added=%d removed=%d err=%v", added, removed, err)
-	}
-	select {
-	case unexpected := <-calls:
-		t.Fatalf("unchanged scan scheduled %#v", unexpected)
-	case <-time.After(30 * time.Millisecond):
 	}
 }
 

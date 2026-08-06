@@ -51,8 +51,6 @@ var (
 	// 阅读时暂停扫描：当有活跃阅读会话时，暂停后台扫描以减少 IO 竞争
 	activeReaders   int
 	activeReadersMu sync.Mutex
-
-	automaticWorkScrapeScheduler = ScheduleAutomaticWorkScrape
 )
 
 // 从配置文件读取可配置参数
@@ -1179,29 +1177,6 @@ func RedetectEbookTypes() int {
 // Main sync orchestrator
 // ============================================================
 
-func scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs []string) {
-	if len(changedComicIDs) == 0 {
-		return
-	}
-	libraryByComic, err := store.GetComicsLibraryIDsByIDs(changedComicIDs)
-	if err != nil {
-		log.Printf("[auto-work-scrape] Failed to resolve changed comic libraries: %v", err)
-		return
-	}
-	librarySet := make(map[string]struct{})
-	for _, libraryID := range libraryByComic {
-		if libraryID != "" {
-			librarySet[libraryID] = struct{}{}
-		}
-	}
-	libraryIDs := make([]string, 0, len(librarySet))
-	for libraryID := range librarySet {
-		libraryIDs = append(libraryIDs, libraryID)
-	}
-	sort.Strings(libraryIDs)
-	automaticWorkScrapeScheduler(libraryIDs, changedComicIDs)
-}
-
 // SyncComicsToDatabase runs a quick sync if conditions are met.
 func SyncComicsToDatabase() {
 	syncMu.Lock()
@@ -1240,13 +1215,15 @@ func SyncComicsToDatabase() {
 	// 让紧接着的 quickSync 重新把里面的 .txt/.epub 等小说文件作为独立条目加回来。
 	repairMisclassifiedFolderComics()
 
-	added, _, changedComicIDs := quickSyncWithChanges()
+	added, _, _ := quickSyncWithChanges()
 	updateDirMtimes()
 
 	if added > 0 {
 		RunScanRulesForNewlyAdded()
 	}
-	scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs)
+	if err := PersistDetectedWorksForLibraries(nil); err != nil {
+		log.Printf("[work-sync] Failed to persist detected Works: %v", err)
+	}
 
 	// 重新检测已入库的 mobi/azw3 文件的内容类型（修正错误分类）
 	go RedetectEbookTypes()
@@ -1286,7 +1263,7 @@ func ForceSyncComicsToDatabase() SyncResult {
 	repairMisclassifiedFolderComics()
 
 	// 执行 quickSync（包含 libraryId 归属修复）
-	added, removed, changedComicIDs := quickSyncWithChanges()
+	added, removed, _ := quickSyncWithChanges()
 	updateDirMtimes()
 
 	// 清理服务端缓存
@@ -1295,7 +1272,9 @@ func ForceSyncComicsToDatabase() SyncResult {
 	if added > 0 {
 		RunScanRulesForNewlyAdded()
 	}
-	scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs)
+	if err := PersistDetectedWorksForLibraries(nil); err != nil {
+		log.Printf("[work-sync] Failed to persist detected Works: %v", err)
+	}
 
 	// 重新检测已入库的 mobi/azw3 文件的内容类型
 	reclassified := RedetectEbookTypes()
@@ -1516,6 +1495,10 @@ const missingGracePeriod = 24 * time.Hour
 
 // SyncLibraryByID 仅扫描指定书库对应的根目录，并更新该书库的扫描状态。
 func SyncLibraryByID(libraryID string) (added, removed int, err error) {
+	if !tryBeginLibraryOperation(libraryID) {
+		return 0, 0, fmt.Errorf("library operation is already running")
+	}
+	defer endLibraryOperation(libraryID)
 	syncMu.Lock()
 	if syncInProgress {
 		syncMu.Unlock()
@@ -1740,16 +1723,8 @@ func SyncLibraryByID(libraryID string) (added, removed int, err error) {
 		InvalidateAllCaches()
 	}
 
-	changedComicIDs := make([]string, 0, len(toAdd)+len(toMove)+len(changedExistingIDs))
-	for _, item := range toAdd {
-		changedComicIDs = append(changedComicIDs, item.ID)
-	}
-	changedComicIDs = append(changedComicIDs, toMove...)
-	changedComicIDs = append(changedComicIDs, changedExistingIDs...)
-	changedComicIDs = uniqueNonEmptyStrings(changedComicIDs)
-	sort.Strings(changedComicIDs)
-	if len(changedComicIDs) > 0 {
-		automaticWorkScrapeScheduler([]string{libraryID}, changedComicIDs)
+	if err := PersistDetectedWorksForLibraries([]string{libraryID}); err != nil {
+		return totalAdded, len(toRemove), fmt.Errorf("failed to persist detected Works: %w", err)
 	}
 
 	return totalAdded, len(toRemove), nil

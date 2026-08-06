@@ -41,7 +41,9 @@ func newWorkCatalogCache() *workCatalogCache {
 var globalWorkCatalogCache = newWorkCatalogCache()
 
 func resetWorkCatalogCache() {
-	globalWorkCatalogCache = newWorkCatalogCache()
+	globalWorkCatalogCache.mu.Lock()
+	globalWorkCatalogCache.entries = make(map[string]workCatalogCacheEntry)
+	globalWorkCatalogCache.mu.Unlock()
 }
 
 func (cache *workCatalogCache) get(key, fingerprint string, loader func() ([]service.Work, error)) (*workCatalog, error) {
@@ -103,7 +105,7 @@ func (h *WorkHandler) listWithResponseKey(c *gin.Context, responseKey string) {
 	works, err := h.loadWorks(c, true)
 	if err != nil {
 		log.Printf("[works] list failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch works"})
+		writeWorkReadError(c, err)
 		return
 	}
 	page, pageSize := parseWorkPagination(c)
@@ -156,7 +158,7 @@ func (h *WorkHandler) findAccessibleWork(c *gin.Context) *service.Work {
 	catalog, err := h.loadWorkCatalog(c)
 	if err != nil {
 		log.Printf("[works] detail failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch works"})
+		writeWorkReadError(c, err)
 		return nil
 	}
 	id := strings.TrimSpace(c.Param("id"))
@@ -166,6 +168,18 @@ func (h *WorkHandler) findAccessibleWork(c *gin.Context) *service.Work {
 	// Do not reveal whether a Work exists in an inaccessible library.
 	c.JSON(http.StatusNotFound, gin.H{"error": "Work not found"})
 	return nil
+}
+
+func writeWorkReadError(c *gin.Context, err error) {
+	if store.IsSQLiteBusyError(err) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "database is busy", "code": "database_busy",
+		})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"error": "Failed to fetch works", "code": "load_failed",
+	})
 }
 
 func (h *WorkHandler) loadWorks(c *gin.Context, applyFilters bool) ([]service.Work, error) {
@@ -189,9 +203,6 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 	}
 	if filterLibraries && len(libraryIDs) == 0 {
 		return indexWorkCatalog(nil), nil
-	}
-	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
-		log.Printf("[works] series-to-work metadata migration unavailable: %v", err)
 	}
 	fingerprint, err := store.GetWorkSourceFingerprint(userID, libraryIDs, filterLibraries)
 	if err != nil {
@@ -234,8 +245,8 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 			return nil, orderErr
 		}
 		service.ApplyWorkSortOrders(works, orders)
-		if persistErr := service.PersistAndApplyLogicalWorks(works); persistErr != nil {
-			return nil, persistErr
+		if overlayErr := service.ApplyPersistedLogicalWorks(works); overlayErr != nil {
+			return nil, overlayErr
 		}
 		return works, nil
 	})
@@ -380,7 +391,7 @@ func workHasMetadata(work service.Work) bool {
 		strings.TrimSpace(work.Genre) != "" ||
 		work.Year != nil ||
 		work.ExternalRating != nil ||
-		strings.TrimSpace(work.CoverURL) != ""
+		strings.TrimSpace(work.StoredCoverURL) != ""
 }
 
 func workContainsSearch(work service.Work, query string) bool {

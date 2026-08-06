@@ -193,27 +193,33 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			continue
 		}
 		rows := make([]service.OPDSComic, 0, len(work.Units)+1)
-		rows = append(rows, service.OPDSComic{
-			ID:              work.ID,
-			EntryID:         "continuous_" + work.ID,
-			Title:           "连续阅读（整部）",
-			Author:          work.Author,
-			Description:     work.Description,
-			Language:        work.Language,
-			Genre:           work.Genre,
-			Publisher:       work.Publisher,
-			PageCount:       work.PageCount,
-			FileSize:        0,
-			AddedAt:         work.AddedAt,
-			UpdatedAt:       work.UpdatedAt,
-			Tags:            comicTagNames(work.Tags),
-			Filename:        work.Title + ".cbz",
-			ComicType:       "comic",
-			CoverHref:       "/api/opds/work-cover/" + url.PathEscape(work.ID),
-			AcquisitionHref: "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/download",
-			AcquisitionType: "application/vnd.comicbook+zip",
-			StreamHref:      "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/stream?page={pageNumber}&width={maxWidth}",
-		})
+		// Do not advertise an empty virtual CBZ. A number of OPDS clients
+		// immediately issue ranged requests for the first acquisition entry;
+		// a zero-page Work produces only an empty ZIP header and those clients
+		// then request bytes beyond EOF, resulting in HTTP 416.
+		if work.PageCount > 0 {
+			rows = append(rows, service.OPDSComic{
+				ID:              work.ID,
+				EntryID:         "continuous_" + work.ID,
+				Title:           "连续阅读（整部）",
+				Author:          work.Author,
+				Description:     work.Description,
+				Language:        work.Language,
+				Genre:           work.Genre,
+				Publisher:       work.Publisher,
+				PageCount:       work.PageCount,
+				FileSize:        0,
+				AddedAt:         work.AddedAt,
+				UpdatedAt:       work.UpdatedAt,
+				Tags:            comicTagNames(work.Tags),
+				Filename:        work.Title + ".cbz",
+				ComicType:       "comic",
+				CoverHref:       "/api/opds/work-cover/" + url.PathEscape(work.ID),
+				AcquisitionHref: "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/download",
+				AcquisitionType: "application/vnd.comicbook+zip",
+				StreamHref:      "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/stream?page={pageNumber}&width={maxWidth}",
+			})
+		}
 		for _, unit := range work.Units {
 			comic, ok := getOPDSPublication(unit.ComicID)
 			if !ok {

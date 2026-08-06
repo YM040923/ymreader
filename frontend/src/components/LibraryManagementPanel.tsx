@@ -33,6 +33,7 @@ import {
   previewLibraryOwnership,
   reconcileLibraryOwnership,
   scanLibrary,
+  scrapeLibrary,
   type Library as LibraryType,
   type LibraryOwnershipPreview,
 } from "@/api/libraries";
@@ -169,6 +170,7 @@ export function LibraryManagementPanel() {
   const [editScanEnabled, setEditScanEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [scanningId, setScanningId] = useState<string | null>(null);
+  const [scrapingId, setScrapingId] = useState<string | null>(null);
 
   const [deletingTarget, setDeletingTarget] = useState<LibraryType | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -374,6 +376,19 @@ export function LibraryManagementPanel() {
       showMessage(err instanceof Error ? err.message : "扫描失败", true);
     } finally {
       setScanningId(null);
+    }
+  };
+
+  const handleScrape = async (id: string) => {
+    try {
+      setScrapingId(id);
+      const result = await scrapeLibrary(id);
+      showMessage(`刮削完成：成功 ${result.success}，失败 ${result.failed}，跳过 ${result.skipped}，共 ${result.total}`);
+      await fetchLibraryList();
+    } catch (err) {
+      showMessage(err instanceof Error ? `刮削失败: ${err.message}` : "刮削失败", true);
+    } finally {
+      setScrapingId(null);
     }
   };
 
@@ -743,6 +758,19 @@ export function LibraryManagementPanel() {
                       >
                         <ScanLine className="h-4 w-4" /> 立即扫描
                       </button>
+                      {lib.type !== "novel" && (
+                        <button
+                          disabled={scrapingId === lib.id}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-card-hover hover:text-foreground disabled:opacity-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(null);
+                            handleScrape(lib.id);
+                          }}
+                        >
+                          {scrapingId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />} 立即刮削
+                        </button>
+                      )}
                       <button
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-card-hover hover:text-foreground"
                         onClick={(e) => {
@@ -954,6 +982,12 @@ export function LibraryManagementPanel() {
                         {scanningId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
                         立即扫描
                       </InlineButton>
+                      {lib.type !== "novel" && (
+                        <InlineButton variant="soft" onClick={() => handleScrape(lib.id)} disabled={scrapingId === lib.id}>
+                          {scrapingId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                          立即刮削
+                        </InlineButton>
+                      )}
                       <InlineButton variant="ghost" onClick={() => startEdit(lib)}>
                         <Edit className="h-4 w-4" /> 编辑
                       </InlineButton>

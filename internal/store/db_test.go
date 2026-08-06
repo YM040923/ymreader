@@ -37,6 +37,9 @@ func TestInitDB(t *testing.T) {
 	if DB() == nil {
 		t.Fatal("DB() returned nil after InitDB")
 	}
+	if got := DB().Stats().MaxOpenConnections; got < 4 {
+		t.Fatalf("SQLite connection pool max open connections = %d, want concurrent read pool", got)
+	}
 
 	// Verify tables exist by querying them
 	tables := []string{"User", "UserSession", "Comic", "Tag", "ComicTag", "Category", "ComicCategory", "ReadingSession"}

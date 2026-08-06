@@ -278,6 +278,24 @@ func scrapeWorkAutomatically(job workScrapeJob) error {
 	return applyAutomaticWorkMetadata(job, results[0])
 }
 
+// ScrapeWorkMetadata performs one explicit Work-level metadata scrape. It is
+// intentionally separate from the automatic queue so callers can keep
+// automatic scraping disabled while still offering manual actions.
+func ScrapeWorkMetadata(work Work, skipCover bool) error {
+	if strings.TrimSpace(work.ID) == "" {
+		return fmt.Errorf("work id is required")
+	}
+	if work.MetadataHostType != "work" {
+		work.MetadataHostType = "work"
+		work.MetadataHostID = work.ID
+	}
+	results := SearchMetadata(work.Title, nil, "zh", "comic")
+	if len(results) == 0 {
+		return fmt.Errorf("no metadata result for %q", work.Title)
+	}
+	return applyAutomaticWorkMetadata(workScrapeJob{Work: work, SkipCover: skipCover}, results[0])
+}
+
 func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {
 	if job.Work.MetadataHostType == "work" {
 		work, err := store.GetLogicalWork(job.Work.MetadataHostID)
@@ -334,7 +352,7 @@ func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {
 			}
 		}
 		if meta.Genre != "" {
-			if err := mergeAutomaticLogicalWorkTags(work.ID, PhysicalComicIDs(job.Work), meta.Genre); err != nil {
+			if err := mergeAutomaticLogicalWorkTags(work.ID, meta.Genre); err != nil {
 				return err
 			}
 		}
@@ -437,7 +455,7 @@ func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {
 	return err
 }
 
-func mergeAutomaticLogicalWorkTags(workID string, comicIDs []string, genre string) error {
+func mergeAutomaticLogicalWorkTags(workID, genre string) error {
 	names := make([]string, 0)
 	for _, name := range strings.Split(genre, ",") {
 		if name = strings.TrimSpace(name); name != "" {
@@ -447,7 +465,7 @@ func mergeAutomaticLogicalWorkTags(workID string, comicIDs []string, genre strin
 	if len(names) == 0 {
 		return nil
 	}
-	return store.AddLogicalWorkAndComicTags([]string{workID}, comicIDs, names)
+	return store.AddLogicalWorkAndComicTags([]string{workID}, nil, names)
 }
 
 func mergeAutomaticSeriesTags(seriesID, genre string) error {

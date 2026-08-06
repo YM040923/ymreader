@@ -17,6 +17,7 @@ func registerWorkRoutes(api *gin.RouterGroup) {
 		works.PUT("/reorder", handler.Reorder)
 		works.GET("/:id/units", handler.Units)
 		works.PUT("/:id/favorite", handler.SetFavorite)
+		works.PUT("/:id/rating", handler.SetRating)
 		works.PUT("/:id/reading-status", handler.SetReadingStatus)
 		works.PUT("/:id/tags", handler.SetTags)
 		works.PUT("/:id/categories", handler.SetCategories)

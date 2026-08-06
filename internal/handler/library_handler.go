@@ -442,6 +442,48 @@ func (h *LibraryHandler) ScanLibrary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"added": added, "removed": removed, "library": lib})
 }
 
+// POST /api/admin/libraries/:id/scrape
+func (h *LibraryHandler) ScrapeLibrary(c *gin.Context) {
+	id := c.Param("id")
+	user := middleware.GetCurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	existing, err := store.GetLibraryByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch library"})
+		return
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Library not found"})
+		return
+	}
+	canManage, err := store.UserCanManageLibrary(user.ID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check library permission"})
+		return
+	}
+	if !canManage {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: no manage permission for this library"})
+		return
+	}
+	var body struct {
+		Force bool `json:"force"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	result, err := service.ScrapeLibraryWorks(id, body.Force)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "already running") {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // OwnershipPreview reports rows that resolve to the same physical file or are
 // assigned to a parent library instead of the deepest matching root.
 func (h *LibraryHandler) OwnershipPreview(c *gin.Context) {

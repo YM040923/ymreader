@@ -264,6 +264,46 @@ func TestOPDSWorkUnitFeedUsesPhysicalAcquisitionAndInternalPageOffsets(t *testin
 	}
 }
 
+func TestOPDSWorkUnitFeedOmitsEmptyContinuousPublication(t *testing.T) {
+	router := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations failed: %v", err)
+	}
+	user, token := createOPDSTestUserAndKey(t, "opds-zero-page-user", "opds-zero-page-user")
+	createOPDSHandlerLibrary(t, "opds-zero-page-library", "comic", true)
+	createOPDSHandlerComic(t, "opds-zero-page-ch1", "Zero Page Work/Chapter 001.cbz", "comic", "opds-zero-page-library")
+	createOPDSHandlerComic(t, "opds-zero-page-ch2", "Zero Page Work/Chapter 002.cbz", "comic", "opds-zero-page-library")
+	if err := store.SetUserLibraryAccess(user.ID, []store.LibraryAccessReq{{
+		LibraryID: "opds-zero-page-library", CanDownload: true,
+	}}); err != nil {
+		t.Fatalf("SetUserLibraryAccess failed: %v", err)
+	}
+
+	result, err := store.GetAllComics(store.ComicListOptions{
+		ContentType: "comic", UserID: user.ID,
+		LibraryIDs: []string{"opds-zero-page-library"}, FilterLibraryIDs: true,
+	})
+	if err != nil {
+		t.Fatalf("GetAllComics failed: %v", err)
+	}
+	works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{})
+	if len(works) != 1 || works[0].PageCount != 0 {
+		t.Fatalf("zero-page fixture built unexpected Works: %#v", works)
+	}
+
+	response := performOPDSBasicRequest(router, "/api/opds/works/"+works[0].ID, user.Username, token)
+	if response.Code != http.StatusOK {
+		t.Fatalf("zero-page Work feed returned %d: %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	if strings.Contains(body, "/continuous/download") || strings.Contains(body, "continuous_"+works[0].ID) {
+		t.Fatalf("zero-page Work advertised an empty continuous CBZ: %s", body)
+	}
+	if strings.Count(body, "<entry>") != 2 {
+		t.Fatalf("zero-page Work should expose only its two physical Units: %s", body)
+	}
+}
+
 func TestOPDSInternalUnitCoverUsesDetectedCoverPage(t *testing.T) {
 	unit := service.WorkUnit{
 		ComicID:      "archive-comic",
@@ -427,7 +467,7 @@ func TestOPDSPDFWorkKeepsPhysicalAcquisition(t *testing.T) {
 		t.Fatalf("PDF Work detail returned %d: %s", detail.Code, detail.Body.String())
 	}
 	body := detail.Body.String()
-	if strings.Count(body, "<entry>") != 2 ||
+	if strings.Count(body, "<entry>") != 1 ||
 		!strings.Contains(body, `type="application/pdf"`) ||
 		!strings.Contains(body, "/api/opds/download/opds-pdf-work/PDF%20Work.pdf") {
 		t.Fatalf("PDF Work did not retain one physical acquisition: %s", body)
@@ -512,6 +552,9 @@ func TestOPDSWorkCatalogAppliesSeriesMetadataAndActualUpdatedAt(t *testing.T) {
 	}
 	if err := store.SetSeriesTags("opds-metadata-series", []string{"Completed"}); err != nil {
 		t.Fatalf("SetSeriesTags failed: %v", err)
+	}
+	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
+		t.Fatalf("MigrateComicSeriesToLogicalWorks failed: %v", err)
 	}
 	response := performOPDSBasicRequest(router, "/api/opds/works", user.Username, token)
 	if response.Code != http.StatusOK {

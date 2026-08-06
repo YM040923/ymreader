@@ -37,6 +37,13 @@ export interface LibraryDeleteResult {
   deleteSourceFiles: false;
 }
 
+export interface LibraryScrapeResult {
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+}
+
 export interface UserLibraryAccess {
   libraryId: string;
   canView: boolean;
@@ -186,6 +193,13 @@ export async function scanLibrary(
   id: string
 ): Promise<{ added: number; removed: number; library: Library }> {
   const res = await fetch(apiPath(`/api/admin/libraries/${id}/scan`), {
+    method: "POST",
+  });
+  return safeJson(res);
+}
+
+export async function scrapeLibrary(id: string): Promise<LibraryScrapeResult> {
+  const res = await fetch(apiPath(`/api/admin/libraries/${id}/scrape`), {
     method: "POST",
   });
   return safeJson(res);

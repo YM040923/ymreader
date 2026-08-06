@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/service"
@@ -40,6 +41,62 @@ func (h *MetadataHandler) Library(c *gin.Context) {
 	}
 
 	// metaStatus 排序需要特殊处理：映射到数据库字段
+	if contentType != "novel" {
+		works, err := NewWorkHandler().loadWorks(c, true)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get comic Works"})
+			return
+		}
+		if metaFilter == "with" || metaFilter == "missing" {
+			filtered := works[:0]
+			for _, work := range works {
+				hasMeta := workHasMetadata(work)
+				if (metaFilter == "with" && hasMeta) || (metaFilter == "missing" && !hasMeta) {
+					filtered = append(filtered, work)
+				}
+			}
+			works = filtered
+		}
+		sortWorks(works, sortBy, sortOrder)
+		total := len(works)
+		start := (page - 1) * pageSize
+		if start > total {
+			start = total
+		}
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		items := make([]gin.H, 0, end-start)
+		for _, work := range works[start:end] {
+			tags := make([]gin.H, 0, len(work.Tags))
+			for _, tag := range work.Tags {
+				tags = append(tags, gin.H{"name": tag.Name, "color": tag.Color})
+			}
+			categories := make([]gin.H, 0, len(work.Categories))
+			for _, category := range work.Categories {
+				categories = append(categories, gin.H{"slug": category.Slug, "name": category.Name, "icon": category.Icon})
+			}
+			items = append(items, gin.H{
+				"id": work.ID, "title": work.Title, "filename": work.RootPath,
+				"author": work.Author, "genre": work.Genre, "description": work.Description,
+				"year": work.Year, "publisher": work.Publisher, "language": work.Language,
+				"fileSize": work.FileSize, "updatedAt": work.UpdatedAt,
+				"metadataSource": work.MetadataSource, "hasMetadata": workHasMetadata(work),
+				"contentType": "comic", "entityType": "work", "itemCount": work.ItemCount,
+				"representativeComicId": work.RepresentativeComicID,
+				"coverUrl":              work.CoverURL, "tags": tags, "rating": work.Rating,
+				"isFavorite": work.IsFavorite, "categories": categories,
+			})
+		}
+		totalPages := 1
+		if total > 0 {
+			totalPages = (total + pageSize - 1) / pageSize
+		}
+		c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": page, "pageSize": pageSize, "totalPages": totalPages})
+		return
+	}
+
 	dbSortBy := sortBy
 	if sortBy == "metaStatus" {
 		dbSortBy = "metadataSource"

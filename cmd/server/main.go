@@ -59,6 +59,9 @@ func main() {
 	if err := store.RunMigrations(); err != nil {
 		log.Fatalf("[Main] Schema migration failed: %v", err)
 	}
+	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
+		log.Printf("[Main] Warning: legacy series metadata migration failed: %v", err)
+	}
 
 	// Rebuild FTS5 full-text search index in background (non-blocking)
 	go func() {

@@ -4,10 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/workmodel"
 )
+
+var logicalWorkWriteMu sync.Mutex
 
 type LogicalWork struct {
 	ID                      string
@@ -89,6 +92,8 @@ type LogicalWorkCoverUpdate struct {
 }
 
 func UpdateLogicalWorkScrapeState(workID, status, scrapeError string, scrapedAt *time.Time) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	if !LogicalWorkPersistenceAvailable() {
 		return nil
 	}
@@ -121,11 +126,19 @@ func isSQLiteBusyError(err error) bool {
 		strings.Contains(message, "database table is locked")
 }
 
+// IsSQLiteBusyError lets HTTP handlers distinguish a transient database
+// contention from a missing Work.
+func IsSQLiteBusyError(err error) bool {
+	return isSQLiteBusyError(err)
+}
+
 func LogicalWorkPersistenceAvailable() bool {
 	return db != nil && workTableExists("LogicalWork")
 }
 
 func UpsertDetectedLogicalWorks(seeds []LogicalWorkSeed) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	if len(seeds) == 0 {
 		return nil
 	}
@@ -320,6 +333,8 @@ func scanLogicalWork(scanner logicalWorkScanner) (*LogicalWork, error) {
 }
 
 func UpdateLogicalWorkMetadata(id string, update LogicalWorkMetadataUpdate) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	sets := []string{`"updatedAt" = ?`}
 	args := []interface{}{time.Now().UTC()}
 	appendValue := func(column string, value interface{}) {
@@ -392,6 +407,8 @@ func UpdateLogicalWorkMetadata(id string, update LogicalWorkMetadataUpdate) erro
 }
 
 func UpdateLogicalWorkCover(id string, update LogicalWorkCoverUpdate) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	sets := []string{`"updatedAt" = ?`}
 	args := []interface{}{time.Now().UTC()}
 	appendValue := func(column string, value interface{}) {
@@ -545,6 +562,8 @@ func GetLogicalWorkCategoriesByWorkIDs(workIDs []string) (map[string][]ComicCate
 }
 
 func SeedLogicalWorkRelations(workID string, tags []ComicTagInfo, categories []ComicCategoryInfo) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -602,6 +621,8 @@ func ResolveLogicalWorkAlias(aliasType, aliasID string) (string, error) {
 }
 
 func MigrateComicSeriesToLogicalWorks() error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	if !LogicalWorkPersistenceAvailable() || !workTableExists("ComicSeries") {
 		return nil
 	}
@@ -778,6 +799,8 @@ func firstNonEmptyStore(values ...string) string {
 }
 
 func ReplaceLogicalWorkTags(workID string, names []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -799,6 +822,8 @@ func ReplaceLogicalWorkTags(workID string, names []string) error {
 }
 
 func ReplaceLogicalWorkCategories(workID string, slugs []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -820,6 +845,8 @@ func ReplaceLogicalWorkCategories(workID string, slugs []string) error {
 }
 
 func ReplaceLogicalWorkAndComicTags(workID string, comicIDs, names []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -855,6 +882,8 @@ func ReplaceLogicalWorkAndComicTags(workID string, comicIDs, names []string) err
 }
 
 func AddLogicalWorkAndComicTags(workIDs, comicIDs, names []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -886,6 +915,8 @@ func AddLogicalWorkAndComicTags(workIDs, comicIDs, names []string) error {
 }
 
 func RemoveLogicalWorkAndComicTags(workIDs, comicIDs, names []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -919,6 +950,8 @@ func RemoveLogicalWorkAndComicTags(workIDs, comicIDs, names []string) error {
 }
 
 func ReplaceLogicalWorkAndComicCategories(workID string, comicIDs, slugs []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -953,6 +986,8 @@ func ReplaceLogicalWorkAndComicCategories(workID string, comicIDs, slugs []strin
 }
 
 func MarkMissingLogicalWorks(libraryID string, visibleWorkIDs []string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
 	now := time.Now().UTC()
 	visibleWorkIDs = uniqueWorkIDs(visibleWorkIDs)
 	if len(visibleWorkIDs) == 0 {
