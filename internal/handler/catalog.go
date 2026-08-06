@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/middleware"
-	"github.com/nowen-reader/nowen-reader/internal/service"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
 
@@ -56,14 +55,6 @@ func (h *CatalogHandler) ListItems(c *gin.Context) {
 		return
 	}
 	filterLibraryIDs := user.Role != "admin" || strings.TrimSpace(c.Query("libraryIds")) != ""
-
-	if contentType == "comic" && !(filterLibraryIDs && len(libraryIDs) == 0) {
-		if err := service.EnsureComicSeriesFresh(); err != nil {
-			log.Printf("[catalog] refresh before item list failed: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh comic series"})
-			return
-		}
-	}
 
 	result, err := store.GetCatalogItems(store.CatalogItemQueryOptions{
 		Search:           c.Query("search"),
