@@ -29,6 +29,22 @@ ATOM = {
     "atom": "http://www.w3.org/2005/Atom",
     "dcterms": "http://purl.org/dc/terms/",
 }
+WORK_STATS_PATH = "/api/stats?view=work&includeNovels=true"
+
+
+def work_stats_path() -> str:
+    return WORK_STATS_PATH
+
+
+def expected_work_count_after_read(
+    baseline_total: int,
+    work_was_already_read: bool,
+) -> int:
+    return baseline_total if work_was_already_read else baseline_total + 1
+
+
+def opds_work_detail_path(work_id: str) -> str:
+    return f"/api/opds/works/{work_id}?page=1&pageSize=500"
 
 
 def validate_target_url(value: str) -> str:
@@ -156,6 +172,8 @@ def sha256(payload: bytes) -> str:
 
 def image_fingerprint(payload: bytes) -> dict:
     with Image.open(io.BytesIO(payload)) as image:
+        image.verify()
+    with Image.open(io.BytesIO(payload)) as image:
         width, height = image.size
         grayscale = image.convert("L").resize((8, 8))
         pixels = list(grayscale.get_flattened_data())
@@ -168,6 +186,15 @@ def image_fingerprint(payload: bytes) -> dict:
         "aspectRatio": width / height if height else 0,
         "averageHash": f"{int(bits, 2):016x}",
     }
+
+
+def readable_image_fingerprint(payload: bytes) -> dict | None:
+    if not payload:
+        return None
+    try:
+        return image_fingerprint(payload)
+    except (OSError, ValueError, SyntaxError):
+        return None
 
 
 def hash_distance(left: str, right: str) -> int:
@@ -384,9 +411,10 @@ class VerificationSuite:
             cover_status, cover_headers, cover = self.client.request(
                 f"/api/opds/work-cover/{work_id}"
             )
+            cover_fingerprint = readable_image_fingerprint(cover)
             self.check(
                 cover_status == 200
-                and len(cover) > 0
+                and cover_fingerprint is not None
                 and str(cover_headers.get("Content-Type", "")).startswith("image/"),
                 f"Work cover is readable: {title}",
             )
@@ -880,7 +908,7 @@ class VerificationSuite:
     ) -> dict:
         if not self.exercise_state or not units:
             return {"skipped": True}
-        status, baseline = self.client.json("/api/stats")
+        status, baseline = self.client.json(work_stats_path())
         baseline_sessions = (
             int(baseline.get("totalSessions", 0))
             if status == 200 and isinstance(baseline, dict)
@@ -1013,7 +1041,7 @@ class VerificationSuite:
             for item in payload_items(history_payload, "works")
             if item.get("lastReadAt")
         ]
-        stats_status, stats = self.client.json("/api/stats")
+        stats_status, stats = self.client.json(work_stats_path())
         total_sessions = (
             int(stats.get("totalSessions", 0))
             if isinstance(stats, dict)
@@ -1070,7 +1098,11 @@ class VerificationSuite:
         cover_status, _, cover_payload = self.client.request(
             f"/api/opds/work-cover/{urllib.parse.quote(work_id, safe='')}"
         )
-        cover = image_fingerprint(cover_payload) if cover_status == 200 else {}
+        cover = (
+            readable_image_fingerprint(cover_payload)
+            if cover_status == 200
+            else None
+        ) or {}
         unit_snapshots = []
         flattened_pages = []
         normalized_cursor = 0
@@ -1988,7 +2020,7 @@ class VerificationSuite:
         for work in self.works:
             work_id = urllib.parse.quote(str(work.get("id", "")), safe="")
             status, _, payload = self.client.request(
-                f"/api/opds/works/{work_id}"
+                opds_work_detail_path(work_id)
             )
             root, entries = parse_feed(payload)
             units = payload_items(self.details.get(str(work.get("id")), {}), "units")
@@ -2119,7 +2151,7 @@ class VerificationSuite:
         if len(selected_units) != 2:
             return work_id
 
-        status, baseline_stats = self.client.json("/api/stats")
+        status, baseline_stats = self.client.json(work_stats_path())
         baseline_total_sessions = (
             int(baseline_stats.get("totalSessions", 0))
             if status == 200 and isinstance(baseline_stats, dict)
@@ -2132,13 +2164,14 @@ class VerificationSuite:
         )
         self.check(status == 200, "baseline Work statistics are readable")
         baseline_sessions = payload_items(baseline_stats, "recentSessions")
+        baseline_history = payload_items(baseline_stats, "history")
+        baseline_history_ids = [
+            str(item.get("id", "")) for item in baseline_history if item.get("id")
+        ]
+        baseline_work_was_read = work_id in set(baseline_history_ids)
         self.check(
-            not any(
-                str(session.get("comicId", "")) in selected_comics
-                or str(session.get("workId", "")) == work_id
-                for session in baseline_sessions
-            ),
-            "selected Work has no stale reading history in the clean fixture",
+            len(baseline_history_ids) == len(set(baseline_history_ids)),
+            "baseline reading history is already aggregated by Work",
         )
 
         read_results: list[tuple[dict, int, int]] = []
@@ -2250,7 +2283,7 @@ class VerificationSuite:
             sum(1 for work in sorted_works if work.get("id") == work_id) == 1,
             "Work history contains exactly one card for both read Units",
         )
-        status, stats = self.client.json("/api/stats")
+        status, stats = self.client.json(work_stats_path())
         sessions = payload_items(stats, "recentSessions")
         read_comic_ids = {
             str(unit.get("comicId", "")) for unit in selected_units
@@ -2280,7 +2313,10 @@ class VerificationSuite:
         self.check(
             status == 200
             and int(stats.get("totalComicsRead", -1) if isinstance(stats, dict) else -1)
-            == baseline_total_works + 1,
+            == expected_work_count_after_read(
+                baseline_total_works,
+                baseline_work_was_read,
+            ),
             "statistics counts the two Units as one Work rather than two books",
         )
         return work_id
