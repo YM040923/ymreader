@@ -56,6 +56,17 @@ func (h *CatalogHandler) ListItems(c *gin.Context) {
 	}
 	filterLibraryIDs := user.Role != "admin" || strings.TrimSpace(c.Query("libraryIds")) != ""
 
+	if contentType == "comic" {
+		result, err := h.listWorkCatalogItems(c, page, pageSize)
+		if err != nil {
+			log.Printf("[catalog] list Work items failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list catalog items"})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+
 	result, err := store.GetCatalogItems(store.CatalogItemQueryOptions{
 		Search:           c.Query("search"),
 		ContentType:      contentType,
@@ -71,4 +82,42 @@ func (h *CatalogHandler) ListItems(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *CatalogHandler) listWorkCatalogItems(
+	c *gin.Context,
+	page, pageSize int,
+) (*store.CatalogItemResult, error) {
+	works, err := NewWorkHandler().loadWorks(c, true)
+	if err != nil {
+		return nil, err
+	}
+	total := len(works)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	items := make([]store.CatalogItem, 0, end-start)
+	for _, work := range works[start:end] {
+		items = append(items, store.CatalogItem{
+			ID:        work.ID,
+			Kind:      store.CatalogItemComic,
+			Title:     work.Title,
+			CoverURL:  work.CoverURL,
+			ItemCount: work.ItemCount,
+			LibraryID: work.LibraryID,
+		})
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	return &store.CatalogItemResult{
+		Items: items, Page: page, PageSize: pageSize,
+		Total: total, TotalPages: totalPages,
+	}, nil
 }
