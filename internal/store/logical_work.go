@@ -88,6 +88,21 @@ type LogicalWorkCoverUpdate struct {
 	CoverLocked      *bool
 }
 
+func UpdateLogicalWorkScrapeState(workID, status, scrapeError string, scrapedAt *time.Time) error {
+	if !LogicalWorkPersistenceAvailable() {
+		return nil
+	}
+	sets := []string{`"scrapeStatus" = ?`, `"scrapeError" = ?`, `"updatedAt" = ?`}
+	args := []interface{}{strings.TrimSpace(status), strings.TrimSpace(scrapeError), time.Now().UTC()}
+	if scrapedAt != nil {
+		sets = append(sets, `"lastScrapedAt" = ?`)
+		args = append(args, *scrapedAt)
+	}
+	args = append(args, workID)
+	_, err := db.Exec(`UPDATE "LogicalWork" SET `+strings.Join(sets, ", ")+` WHERE "id" = ?`, args...)
+	return err
+}
+
 func LogicalWorkPersistenceAvailable() bool {
 	return db != nil && workTableExists("LogicalWork")
 }
@@ -132,12 +147,32 @@ func UpsertDetectedLogicalWorks(seeds []LogicalWorkSeed) error {
 				"libraryId" = excluded."libraryId",
 				"rootPath" = excluded."rootPath",
 				"contentType" = excluded."contentType",
-				"title" = CASE WHEN "LogicalWork"."metadataLocked" = 1 THEN "LogicalWork"."title" ELSE excluded."title" END,
-				"sortTitle" = CASE WHEN "LogicalWork"."metadataLocked" = 1 THEN "LogicalWork"."sortTitle" ELSE excluded."sortTitle" END,
-				"coverSource" = CASE WHEN "LogicalWork"."coverLocked" = 1 THEN "LogicalWork"."coverSource" ELSE excluded."coverSource" END,
-				"coverComicId" = CASE WHEN "LogicalWork"."coverLocked" = 1 THEN "LogicalWork"."coverComicId" ELSE excluded."coverComicId" END,
-				"coverPage" = CASE WHEN "LogicalWork"."coverLocked" = 1 THEN "LogicalWork"."coverPage" ELSE excluded."coverPage" END,
-				"coverAspectRatio" = CASE WHEN "LogicalWork"."coverLocked" = 1 THEN "LogicalWork"."coverAspectRatio" ELSE excluded."coverAspectRatio" END,
+				"title" = CASE
+					WHEN "LogicalWork"."metadataLocked" = 1 OR "LogicalWork"."metadataSource" != ''
+						OR "LogicalWork"."title" != ?
+					THEN "LogicalWork"."title" ELSE excluded."title"
+				END,
+				"sortTitle" = CASE
+					WHEN "LogicalWork"."metadataLocked" = 1 OR "LogicalWork"."metadataSource" != ''
+						OR "LogicalWork"."title" != ?
+					THEN "LogicalWork"."sortTitle" ELSE excluded."sortTitle"
+				END,
+				"coverSource" = CASE
+					WHEN "LogicalWork"."coverLocked" = 1 OR "LogicalWork"."coverUrl" != ''
+					THEN "LogicalWork"."coverSource" ELSE excluded."coverSource"
+				END,
+				"coverComicId" = CASE
+					WHEN "LogicalWork"."coverLocked" = 1 OR "LogicalWork"."coverUrl" != ''
+					THEN "LogicalWork"."coverComicId" ELSE excluded."coverComicId"
+				END,
+				"coverPage" = CASE
+					WHEN "LogicalWork"."coverLocked" = 1 OR "LogicalWork"."coverUrl" != ''
+					THEN "LogicalWork"."coverPage" ELSE excluded."coverPage"
+				END,
+				"coverAspectRatio" = CASE
+					WHEN "LogicalWork"."coverLocked" = 1 OR "LogicalWork"."coverUrl" != ''
+					THEN "LogicalWork"."coverAspectRatio" ELSE excluded."coverAspectRatio"
+				END,
 				"layoutFingerprint" = excluded."layoutFingerprint",
 				"sourceFingerprint" = excluded."sourceFingerprint",
 				"updatedAt" = "LogicalWork"."updatedAt",
@@ -145,7 +180,8 @@ func UpsertDetectedLogicalWorks(seeds []LogicalWorkSeed) error {
 				"missingSince" = NULL
 		`, id, seed.LibraryID, root, contentType, title, BuildTitleSortKey(title),
 			coverSource, seed.CoverComicID, seed.CoverPage, seed.CoverAspectRatio,
-			seed.LayoutFingerprint, seed.SourceFingerprint, now, now, now); err != nil {
+			seed.LayoutFingerprint, seed.SourceFingerprint, now, now, now,
+			pathBase(root), pathBase(root)); err != nil {
 			return err
 		}
 	}

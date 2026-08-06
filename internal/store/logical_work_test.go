@@ -168,4 +168,50 @@ func TestUpsertDetectedLogicalWorkDoesNotOverwriteLockedMetadataOrCover(t *testi
 	}
 }
 
+func TestUpsertDetectedLogicalWorkDoesNotOverwriteScrapedMetadataOrCover(t *testing.T) {
+	setupTestDB(t)
+	if _, err := DB().Exec(`
+		INSERT INTO "Library" ("id", "name", "type", "rootPath", "enabled")
+		VALUES ('upsert-scraped-library', 'Upsert Scraped', 'comic', '/upsert-scraped', 1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	workID := workmodel.StableWorkID("upsert-scraped-library", "作品")
+	if err := UpsertDetectedLogicalWorks([]LogicalWorkSeed{
+		{LibraryID: "upsert-scraped-library", RootPath: "作品", Title: "扫描标题"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scrapedTitle := "刮削标题"
+	scrapedSource := "bangumi"
+	if err := UpdateLogicalWorkMetadata(workID, LogicalWorkMetadataUpdate{
+		Title: &scrapedTitle, MetadataSource: &scrapedSource,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scrapedCover := "https://example.test/scraped.jpg"
+	if err := UpdateLogicalWorkCover(workID, LogicalWorkCoverUpdate{
+		CoverURL: &scrapedCover, CoverSource: stringPointer("remote"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpsertDetectedLogicalWorks([]LogicalWorkSeed{
+		{LibraryID: "upsert-scraped-library", RootPath: "作品", Title: "新的扫描标题", CoverComicID: "new-cover"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	work, err := GetLogicalWork(workID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.Title != scrapedTitle || work.MetadataSource != scrapedSource {
+		t.Fatalf("scraped metadata was overwritten: %+v", work)
+	}
+	if work.CoverURL != scrapedCover || work.CoverSource != "remote" {
+		t.Fatalf("scraped cover was overwritten: %+v", work)
+	}
+}
+
 func stringPointer(value string) *string { return &value }

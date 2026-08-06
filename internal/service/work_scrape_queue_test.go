@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/store"
+	"github.com/nowen-reader/nowen-reader/internal/workmodel"
 )
 
 func TestSelectAutomaticWorkScrapeJobsOnlyChangedMetadataPoorWorks(t *testing.T) {
@@ -204,7 +205,7 @@ func TestScheduleAutomaticWorkScrapeReturnsWithoutWaitingForDiscovery(t *testing
 	close(release)
 }
 
-func TestApplyAutomaticSeriesMetadataPreservesLockedCover(t *testing.T) {
+func TestApplyAutomaticLogicalWorkMetadataPreservesLockedCover(t *testing.T) {
 	dbPath := t.TempDir() + "/auto-work.db"
 	if err := store.InitDB(dbPath); err != nil {
 		t.Fatal(err)
@@ -229,26 +230,27 @@ func TestApplyAutomaticSeriesMetadataPreservesLockedCover(t *testing.T) {
 	`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DB().Exec(`
-		INSERT INTO "ComicSeries" (
-			"id", "libraryId", "rootRelativePath", "title", "sortTitle", "coverComicId",
-			"coverUrl", "metadataSource", "metadataLocked", "createdAt", "updatedAt"
-		) VALUES (
-			'series-locked', 'lib', 'Locked', 'Locked', 'locked', 'comic-1',
-			'', 'manual', 1, ?, ?
-		)
-	`, now, now); err != nil {
+	if err := store.UpsertDetectedLogicalWorks([]store.LogicalWorkSeed{{
+		ID: workmodel.StableWorkID("lib", "Locked"), LibraryID: "lib", RootPath: "Locked",
+		Title: "Locked", CoverComicID: "comic-1",
+	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DB().Exec(`
-		INSERT INTO "ComicSeriesItem" ("seriesId", "comicId", "sortIndex", "displayLabel")
-		VALUES ('series-locked', 'comic-1', 0, '001')
-	`); err != nil {
+	manualCover := "https://manual.example/locked.jpg"
+	locked := true
+	if err := store.UpdateLogicalWorkCover(
+		workmodel.StableWorkID("lib", "Locked"),
+		store.LogicalWorkCoverUpdate{CoverURL: &manualCover, CoverLocked: &locked},
+	); err != nil {
 		t.Fatal(err)
 	}
 
 	job := workScrapeJob{
-		Work:      Work{ID: "work-locked", MetadataHostType: "series", MetadataHostID: "series-locked"},
+		Work: Work{
+			ID: workmodel.StableWorkID("lib", "Locked"), LibraryID: "lib", RootPath: "Locked",
+			MetadataHostType: "work", MetadataHostID: workmodel.StableWorkID("lib", "Locked"),
+			Units: []WorkUnit{{ComicID: "comic-1"}},
+		},
 		SkipCover: false,
 	}
 	meta := ComicMetadata{
@@ -261,11 +263,11 @@ func TestApplyAutomaticSeriesMetadataPreservesLockedCover(t *testing.T) {
 
 	var coverURL, author string
 	if err := store.DB().QueryRow(`
-		SELECT "coverUrl", "author" FROM "ComicSeries" WHERE "id" = 'series-locked'
-	`).Scan(&coverURL, &author); err != nil {
+		SELECT "coverUrl", "author" FROM "LogicalWork" WHERE "id" = ?
+	`, job.Work.ID).Scan(&coverURL, &author); err != nil {
 		t.Fatal(err)
 	}
-	if coverURL != "" {
+	if coverURL != manualCover {
 		t.Fatalf("locked cover overwritten with %q", coverURL)
 	}
 	if author != "Scraped Author" {

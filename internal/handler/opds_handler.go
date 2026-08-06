@@ -589,12 +589,6 @@ func loadOPDSWorks(c *gin.Context) ([]opdsWorkCatalogItem, error) {
 	for _, comic := range result.Comics {
 		timesByComic[comic.ID] = [2]string{comic.AddedAt, comic.UpdatedAt}
 	}
-	seriesUpdated := make(map[string]string)
-	if summaries, seriesErr := store.ListSeriesSummaries(comicLibraryIDs, getOPDSUserID(c), ""); seriesErr == nil {
-		for _, summary := range summaries {
-			seriesUpdated[summary.ID] = summary.UpdatedAt
-		}
-	}
 	items := make([]opdsWorkCatalogItem, 0, len(filtered))
 	for _, work := range filtered {
 		item := opdsWorkCatalogItem{Work: work}
@@ -604,9 +598,6 @@ func loadOPDSWorks(c *gin.Context) ([]opdsWorkCatalogItem, error) {
 			item.UpdatedAt = maxAtomTime(item.UpdatedAt, values[1])
 		}
 		item.UpdatedAt = maxAtomTime(item.UpdatedAt, work.UpdatedAt)
-		if work.SeriesID != "" {
-			item.UpdatedAt = maxAtomTime(item.UpdatedAt, seriesUpdated[work.SeriesID])
-		}
 		items = append(items, item)
 	}
 	return items, nil

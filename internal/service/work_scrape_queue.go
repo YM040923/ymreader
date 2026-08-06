@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -28,6 +29,7 @@ type workScrapeQueueOptions struct {
 	Interval time.Duration
 	Enabled  func() bool
 	Scrape   func(workScrapeJob) error
+	State    func(workScrapeJob, string, error)
 	Record   func(workScrapeJob, error)
 }
 
@@ -35,6 +37,7 @@ type workScrapeQueue struct {
 	jobs      chan workScrapeJob
 	enabled   func() bool
 	scrape    func(workScrapeJob) error
+	state     func(workScrapeJob, string, error)
 	record    func(workScrapeJob, error)
 	interval  time.Duration
 	pendingMu sync.Mutex
@@ -56,6 +59,9 @@ func newWorkScrapeQueue(opts workScrapeQueueOptions) *workScrapeQueue {
 	if opts.Scrape == nil {
 		opts.Scrape = func(workScrapeJob) error { return nil }
 	}
+	if opts.State == nil {
+		opts.State = func(workScrapeJob, string, error) {}
+	}
 	if opts.Record == nil {
 		opts.Record = func(workScrapeJob, error) {}
 	}
@@ -63,6 +69,7 @@ func newWorkScrapeQueue(opts workScrapeQueueOptions) *workScrapeQueue {
 		jobs:     make(chan workScrapeJob, opts.Capacity),
 		enabled:  opts.Enabled,
 		scrape:   opts.Scrape,
+		state:    opts.State,
 		record:   opts.Record,
 		interval: opts.Interval,
 		pending:  make(map[string]struct{}),
@@ -75,7 +82,11 @@ func newWorkScrapeQueue(opts workScrapeQueueOptions) *workScrapeQueue {
 }
 
 func (q *workScrapeQueue) Enqueue(job workScrapeJob) bool {
-	if q == nil || strings.TrimSpace(job.Work.ID) == "" || !q.enabled() {
+	if q == nil || strings.TrimSpace(job.Work.ID) == "" {
+		return false
+	}
+	if !q.enabled() {
+		q.state(job, "disabled", nil)
 		return false
 	}
 	q.pendingMu.Lock()
@@ -88,9 +99,11 @@ func (q *workScrapeQueue) Enqueue(job workScrapeJob) bool {
 
 	select {
 	case q.jobs <- job:
+		q.state(job, "queued", nil)
 		return true
 	default:
 		q.finish(job.Work.ID)
+		q.state(job, "deferred", errors.New("automatic work scrape queue is full"))
 		log.Printf("[auto-work-scrape] queue full; skipped work %s", job.Work.ID)
 		return false
 	}
@@ -109,13 +122,30 @@ func (q *workScrapeQueue) worker() {
 		if limiter != nil {
 			<-limiter
 		}
-		var err error
-		if q.enabled() {
-			err = q.scrape(job)
-			q.record(job, err)
+		if !q.enabled() {
+			q.state(job, "disabled", nil)
+			q.finish(job.Work.ID)
+			continue
 		}
+		q.state(job, "running", nil)
+		err := q.safeScrape(job)
+		if err != nil {
+			q.state(job, "failed", err)
+		} else {
+			q.state(job, "success", nil)
+		}
+		q.record(job, err)
 		q.finish(job.Work.ID)
 	}
+}
+
+func (q *workScrapeQueue) safeScrape(job workScrapeJob) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("automatic work scrape panic: %v", recovered)
+		}
+	}()
+	return q.scrape(job)
 }
 
 func (q *workScrapeQueue) finish(workID string) {
@@ -140,6 +170,7 @@ var defaultAutomaticWorkScrapeQueue = newWorkScrapeQueue(workScrapeQueueOptions{
 	Interval: defaultWorkScrapeInterval,
 	Enabled:  config.IsScraperEnabled,
 	Scrape:   scrapeWorkAutomatically,
+	State:    recordAutomaticWorkScrapeState,
 	Record:   recordAutomaticWorkScrapeOutcome,
 })
 
@@ -182,10 +213,8 @@ func scheduleAutomaticWorkScrape(
 
 func discoverAutomaticWorkScrapeJobs(libraryIDs, changedComicIDs []string) ([]workScrapeJob, error) {
 	libraryIDs = uniqueNonEmptyStrings(libraryIDs)
-	for _, libraryID := range libraryIDs {
-		if err := RebuildComicSeriesForLibrary(libraryID); err != nil {
-			return nil, fmt.Errorf("rebuild work projection for library %s: %w", libraryID, err)
-		}
+	if err := store.MigrateComicSeriesToLogicalWorks(); err != nil {
+		return nil, err
 	}
 	result, err := store.GetAllComics(store.ComicListOptions{
 		ContentType:      "comic",
@@ -200,11 +229,9 @@ func discoverAutomaticWorkScrapeJobs(libraryIDs, changedComicIDs []string) ([]wo
 		return nil, err
 	}
 	works := BuildWorksFromComicList(result.Comics, WorkBuildOptions{})
-	summaries, err := store.ListSeriesSummaries(libraryIDs, "", "")
-	if err != nil {
+	if err := PersistAndApplyLogicalWorks(works); err != nil {
 		return nil, err
 	}
-	ApplySeriesMetadata(works, summaries)
 	return selectAutomaticWorkScrapeJobs(works, changedComicIDs), nil
 }
 
@@ -252,6 +279,76 @@ func scrapeWorkAutomatically(job workScrapeJob) error {
 }
 
 func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {
+	if job.Work.MetadataHostType == "work" {
+		work, err := store.GetLogicalWork(job.Work.MetadataHostID)
+		if err != nil {
+			return err
+		}
+		if work == nil {
+			return fmt.Errorf("logical Work metadata host not found: %s", job.Work.MetadataHostID)
+		}
+		update := store.LogicalWorkMetadataUpdate{}
+		changed := false
+		if work.Title == "" && meta.Title != "" {
+			update.Title = &meta.Title
+			changed = true
+		}
+		if work.Author == "" && meta.Author != "" {
+			update.Author = &meta.Author
+			changed = true
+		}
+		if work.Publisher == "" && meta.Publisher != "" {
+			update.Publisher = &meta.Publisher
+			changed = true
+		}
+		if work.Description == "" && meta.Description != "" {
+			update.Description = &meta.Description
+			changed = true
+		}
+		if work.Language == "" && meta.Language != "" {
+			update.Language = &meta.Language
+			changed = true
+		}
+		if work.Genre == "" && meta.Genre != "" {
+			update.Genre = &meta.Genre
+			changed = true
+		}
+		if work.Year == nil && meta.Year != nil {
+			update.Year = meta.Year
+			changed = true
+		}
+		if work.ExternalRating == nil && meta.ExternalRating != nil {
+			update.ExternalRating = meta.ExternalRating
+			update.ExternalRatingMax = meta.ExternalRatingMax
+			update.ExternalRatingSource = &meta.ExternalRatingSource
+			updatedAt := time.Now().UTC()
+			update.ExternalRatingUpdatedAt = &updatedAt
+			changed = true
+		}
+		if changed && work.MetadataSource != "manual" && meta.Source != "" {
+			update.MetadataSource = &meta.Source
+		}
+		if changed {
+			if err := store.UpdateLogicalWorkMetadata(work.ID, update); err != nil {
+				return err
+			}
+		}
+		if meta.Genre != "" {
+			if err := mergeAutomaticLogicalWorkTags(work.ID, PhysicalComicIDs(job.Work), meta.Genre); err != nil {
+				return err
+			}
+		}
+		coverProtected := job.SkipCover || work.CoverLocked
+		if !coverProtected && work.CoverURL == "" && meta.CoverURL != "" {
+			coverURL := meta.CoverURL
+			if err := store.UpdateLogicalWorkCover(work.ID, store.LogicalWorkCoverUpdate{CoverURL: &coverURL}); err != nil {
+				return err
+			}
+			DownloadWorkCover(work.ID, coverURL)
+		}
+		InvalidateAllCaches()
+		return nil
+	}
 	if job.Work.MetadataHostType == "series" {
 		detail, err := store.GetSeriesDetail(job.Work.MetadataHostID, "")
 		if err != nil {
@@ -340,6 +437,19 @@ func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {
 	return err
 }
 
+func mergeAutomaticLogicalWorkTags(workID string, comicIDs []string, genre string) error {
+	names := make([]string, 0)
+	for _, name := range strings.Split(genre, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return store.AddLogicalWorkAndComicTags([]string{workID}, comicIDs, names)
+}
+
 func mergeAutomaticSeriesTags(seriesID, genre string) error {
 	existing, err := store.GetSeriesTags(seriesID)
 	if err != nil {
@@ -387,6 +497,24 @@ func recordAutomaticWorkScrapeOutcome(job workScrapeJob, scrapeErr error) {
 		"status": status,
 		"error":  message,
 	}, nil)
+}
+
+func recordAutomaticWorkScrapeState(job workScrapeJob, status string, stateErr error) {
+	if job.Work.MetadataHostType != "work" || strings.TrimSpace(job.Work.MetadataHostID) == "" {
+		return
+	}
+	message := ""
+	if stateErr != nil {
+		message = stateErr.Error()
+	}
+	var scrapedAt *time.Time
+	if status == "success" {
+		now := time.Now().UTC()
+		scrapedAt = &now
+	}
+	if err := store.UpdateLogicalWorkScrapeState(job.Work.MetadataHostID, status, message, scrapedAt); err != nil {
+		log.Printf("[auto-work-scrape] failed to persist Work %s state %s: %v", job.Work.MetadataHostID, status, err)
+	}
 }
 
 func uniqueNonEmptyStrings(values []string) []string {
