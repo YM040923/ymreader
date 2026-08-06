@@ -56,6 +56,39 @@ func TestBuildWorksFromComicListGroupsMixedFolderAndArchiveUnits(t *testing.T) {
 	}
 }
 
+func TestBuildWorksFromComicListGroupsDecimalAndSuffixlessChineseChapterArchives(t *testing.T) {
+	items := []store.ComicListItem{
+		{
+			ID:           "decimal",
+			Title:        "女子学院的男生 第118.1话_你对秦枫是怎么想的？",
+			Filename:     "第118.1话_你对秦枫是怎么想的？.cbz",
+			LibraryID:    "lib",
+			RelativePath: "女子学院的男生/第118.1话_你对秦枫是怎么想的？.cbz",
+		},
+		{
+			ID:           "suffixless",
+			Title:        "女子学院的男生 第119_新的开始",
+			Filename:     "第119_新的开始.cbz",
+			LibraryID:    "lib",
+			RelativePath: "女子学院的男生/第119_新的开始.cbz",
+		},
+	}
+
+	works := BuildWorksFromComicList(items, WorkBuildOptions{})
+	if len(works) != 1 {
+		t.Fatalf("len(works)=%d, want one logical work: %#v", len(works), works)
+	}
+	if works[0].RootPath != "女子学院的男生" || works[0].ItemCount != 2 {
+		t.Fatalf("work=%#v", works[0])
+	}
+	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{
+		"第118.1话_你对秦枫是怎么想的？",
+		"第119_新的开始",
+	}) {
+		t.Fatalf("labels=%#v", got)
+	}
+}
+
 func TestBuildWorksFromComicListGroupsRootLevelNamedArchives(t *testing.T) {
 	items := []store.ComicListItem{
 		{ID: "v10", Title: "作品 Vol.10", Filename: "作品 Vol.10.cbz", LibraryID: "lib", RelativePath: "作品 Vol.10.cbz"},

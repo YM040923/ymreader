@@ -32,8 +32,10 @@ type Work struct {
 	CoverURL              string                    `json:"coverUrl,omitempty"`
 	CoverAspectRatio      float64                   `json:"coverAspectRatio"`
 	ItemCount             int                       `json:"itemCount"`
+	CompletedItemCount    int                       `json:"completedItemCount"`
 	PageCount             int                       `json:"pageCount"`
 	FileSize              int64                     `json:"fileSize"`
+	TotalReadTime         int                       `json:"totalReadTime"`
 	AddedAt               string                    `json:"addedAt"`
 	UpdatedAt             string                    `json:"updatedAt"`
 	SortOrder             int                       `json:"sortOrder"`
@@ -78,6 +80,7 @@ type WorkUnit struct {
 	CoverAspectRatio float64 `json:"coverAspectRatio"`
 	LastReadPage     int     `json:"lastReadPage"`
 	LastReadAt       *string `json:"lastReadAt,omitempty"`
+	ReadingStatus    string  `json:"readingStatus,omitempty"`
 }
 
 type WorkBuildOptions struct {
@@ -236,6 +239,7 @@ func finalizeWork(acc *workAccumulator) {
 	for _, item := range sources {
 		mergeMissingMetadata(work, item)
 		mergeWorkUserState(work, item)
+		work.TotalReadTime += item.TotalReadTime
 		work.Tags = mergeTags(work.Tags, item.Tags)
 		work.Categories = mergeCategories(work.Categories, item.Categories)
 	}
@@ -255,6 +259,7 @@ func finalizeWork(acc *workAccumulator) {
 	}
 	work.ReadingStatus = aggregateWorkReadingStatus(sources)
 	projectReadingProgress(work, acc.sources)
+	projectCompletedUnits(work, acc.sources)
 }
 
 // ApplySeriesMetadata overlays the persistent ComicSeries metadata for
@@ -437,6 +442,35 @@ func appendWorkUnit(work *Work, item store.ComicListItem, title, displayLabel, i
 		CoverURL:         coverURL,
 		CoverAspectRatio: item.CoverAspectRatio,
 	})
+}
+
+func projectCompletedUnits(work *Work, sourceByID map[string]store.ComicListItem) {
+	unitCountByComic := make(map[string]int, len(sourceByID))
+	for _, unit := range work.Units {
+		unitCountByComic[unit.ComicID]++
+	}
+	completed := 0
+	for index := range work.Units {
+		unit := &work.Units[index]
+		source, ok := sourceByID[unit.ComicID]
+		if !ok {
+			continue
+		}
+		finished := strings.EqualFold(source.ReadingStatus, "finished")
+		if !finished && source.LastReadAt != nil && unit.PageCount > 0 {
+			finished = source.LastReadPage >= unit.StartPage+unit.PageCount-1
+		}
+		if finished {
+			unit.ReadingStatus = "finished"
+			completed++
+		} else if unit.LastReadAt != nil ||
+			(unitCountByComic[unit.ComicID] == 1 && strings.EqualFold(source.ReadingStatus, "reading")) {
+			unit.ReadingStatus = "reading"
+		} else if unitCountByComic[unit.ComicID] == 1 {
+			unit.ReadingStatus = source.ReadingStatus
+		}
+	}
+	work.CompletedItemCount = completed
 }
 
 func chooseRepresentativeSource(items []store.ComicListItem) *store.ComicListItem {
@@ -894,8 +928,9 @@ func cloneArchiveLayout(layout archiveLayout) archiveLayout {
 }
 
 var (
-	chineseChapterPattern        = regexp.MustCompile(`(?i)第\s*[零〇一二三四五六七八九十百千万两\d]+\s*(?:话|話|卷|回|章|册|冊)`)
+	chineseChapterPattern        = regexp.MustCompile(`(?i)第\s*[零〇一二三四五六七八九十百千万两\d]+(?:\.\d+)?\s*(?:话|話|卷|回|章|册|冊)`)
 	chineseChapterReversePattern = regexp.MustCompile(`(?i)(?:话|話|卷|回|章|册|冊)\s*[零〇一二三四五六七八九十百千万两\d]+`)
+	chineseNumberedUnitPattern   = regexp.MustCompile(`(?i)^第\s*[零〇一二三四五六七八九十百千万两\d]+(?:\.\d+)?(?:\s*(?:话|話|卷|回|章|册|冊).+|[\s._-]+.+)$`)
 	englishUnitPattern           = regexp.MustCompile(`(?i)(?:^|[\s._-])(?:ch(?:apter)?|vol(?:ume)?|ep(?:isode)?)\.?\s*\d+`)
 	rootLevelUnitPattern         = regexp.MustCompile(`(?i)^(.+?)[\s._-]+((?:第\s*[零〇一二三四五六七八九十百千万两\d]+\s*(?:话|話|卷|回|章|册|冊).*)|(?:(?:ch(?:apter)?|vol(?:ume)?|ep(?:isode)?)\.?\s*\d+.*))$`)
 	sectionPattern               = regexp.MustCompile(`(?i)^(?:第\s*[零〇一二三四五六七八九十百千万两\d]+\s*(?:季|部|篇)|season\s*\d+|part\s*\d+|正传|前传|后传|特别篇|special|extras?)$`)
@@ -962,7 +997,7 @@ func isChapterUnitLabel(value string) bool {
 		return false
 	}
 	lower := strings.ToLower(name)
-	if chineseChapterPattern.MatchString(name) || chineseChapterReversePattern.MatchString(name) || englishUnitPattern.MatchString(name) {
+	if chineseChapterPattern.MatchString(name) || chineseChapterReversePattern.MatchString(name) || chineseNumberedUnitPattern.MatchString(name) || englishUnitPattern.MatchString(name) {
 		return true
 	}
 	for _, marker := range []string{"序章", "终章", "終章", "番外", "特典", "后记", "後記", "extra", "prologue", "epilogue"} {

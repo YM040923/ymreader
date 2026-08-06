@@ -30,8 +30,10 @@ export interface Work {
   coverComicId: string;
   coverUrl?: string;
   itemCount: number;
+  completedItemCount?: number;
   pageCount: number;
   fileSize: number;
+  totalReadTime?: number;
   lastReadAt?: string | null;
   addedAt?: string;
   updatedAt?: string;
