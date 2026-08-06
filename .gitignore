@@ -78,3 +78,4 @@ coverage.out
 *.log
 git-tmp*.txt
 run-log.txt
+scripts/__pycache__/
