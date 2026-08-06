@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/nowen-reader/nowen-reader/internal/workmodel"
@@ -211,6 +212,18 @@ func TestUpsertDetectedLogicalWorkDoesNotOverwriteScrapedMetadataOrCover(t *test
 	}
 	if work.CoverURL != scrapedCover || work.CoverSource != "remote" {
 		t.Fatalf("scraped cover was overwritten: %+v", work)
+	}
+}
+
+func TestIsSQLiteBusyError(t *testing.T) {
+	if !isSQLiteBusyError(errors.New("database is locked (5)")) {
+		t.Fatal("database locked error was not recognized")
+	}
+	if !isSQLiteBusyError(errors.New("SQLITE_BUSY: database table is locked")) {
+		t.Fatal("sqlite busy error was not recognized")
+	}
+	if isSQLiteBusyError(errors.New("constraint failed")) {
+		t.Fatal("non-busy error was misclassified")
 	}
 }
 

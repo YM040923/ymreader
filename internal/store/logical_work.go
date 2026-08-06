@@ -99,8 +99,26 @@ func UpdateLogicalWorkScrapeState(workID, status, scrapeError string, scrapedAt 
 		args = append(args, *scrapedAt)
 	}
 	args = append(args, workID)
-	_, err := db.Exec(`UPDATE "LogicalWork" SET `+strings.Join(sets, ", ")+` WHERE "id" = ?`, args...)
+	query := `UPDATE "LogicalWork" SET ` + strings.Join(sets, ", ") + ` WHERE "id" = ?`
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		_, err = db.Exec(query, args...)
+		if err == nil || !isSQLiteBusyError(err) {
+			return err
+		}
+		time.Sleep(time.Duration(25*(1<<attempt)) * time.Millisecond)
+	}
 	return err
+}
+
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "database table is locked")
 }
 
 func LogicalWorkPersistenceAvailable() bool {
