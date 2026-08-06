@@ -332,6 +332,40 @@ func TestUnsupportedPublicationIsNotSerialized(t *testing.T) {
 	}
 }
 
+func TestAcquisitionFeedUsesVirtualUnitAndContinuousWorkLinks(t *testing.T) {
+	feed := GenerateAcquisitionFeed(OPDSAcquisitionFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "作品",
+		FeedID:  "http://example.test/api/opds/works/work-1",
+		Comics: []OPDSComic{{
+			ID:              "comic-1",
+			EntryID:         "unit-1",
+			Title:           "第001话",
+			Filename:        "source.zip",
+			ComicType:       "comic",
+			PageCount:       12,
+			AcquisitionHref: "/api/opds/units/unit-1/download",
+			AcquisitionType: "application/vnd.comicbook+zip",
+			StreamHref:      "/api/opds/units/unit-1/stream?page={pageNumber}&width={maxWidth}",
+		}},
+		Pagination: OPDSPagination{
+			SelfHref: "/api/opds/works/work-1", FirstHref: "/api/opds/works/work-1",
+			LastHref: "/api/opds/works/work-1", TotalResults: 1, ItemsPerPage: 100,
+		},
+	})
+	for _, want := range []string{
+		`rel="http://opds-spec.org/acquisition" href="http://example.test/api/opds/units/unit-1/download" type="application/vnd.comicbook+zip"`,
+		`rel="http://vaemendis.net/opds-pse/stream" href="http://example.test/api/opds/units/unit-1/stream?page={pageNumber}&amp;width={maxWidth}"`,
+	} {
+		if !strings.Contains(feed, want) {
+			t.Fatalf("feed missing %q: %s", want, feed)
+		}
+	}
+	if strings.Contains(feed, "/api/opds/download/comic-1") {
+		t.Fatalf("custom virtual acquisition was replaced by the physical source: %s", feed)
+	}
+}
+
 func TestOPDSAcquisitionMIMEForFilename(t *testing.T) {
 	tests := map[string]string{
 		"book.cbz":  "application/vnd.comicbook+zip",

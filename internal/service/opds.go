@@ -51,6 +51,9 @@ type OPDSComic struct {
 	StreamPageCount     int
 	CoverHref           string
 	SuppressAcquisition bool
+	AcquisitionHref     string
+	AcquisitionType     string
+	StreamHref          string
 }
 
 type OPDSWork struct {
@@ -355,6 +358,12 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 	entries := make([]atomEntry, 0, len(opts.Comics))
 	for _, comic := range opts.Comics {
 		mimeType, canAcquire := OPDSAcquisitionMIMEForFilename(comic.Filename)
+		if comic.AcquisitionType != "" {
+			mimeType = comic.AcquisitionType
+		}
+		if comic.AcquisitionHref != "" {
+			canAcquire = true
+		}
 		canStream := OPDSPSESupported(comic.Filename, comic.ComicType, comic.PageCount)
 		if !canAcquire && !canStream {
 			continue
@@ -382,9 +391,13 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 			{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, coverHref)},
 		}
 		if canAcquire && !comic.SuppressAcquisition {
+			acquisitionHref := comic.AcquisitionHref
+			if acquisitionHref == "" {
+				acquisitionHref = opdsDownloadPath(comic.ID, comic.Filename)
+			}
 			links = append(links, atomLink{
 				Rel:    "http://opds-spec.org/acquisition",
-				Href:   absoluteOPDSURL(opts.BaseURL, opdsDownloadPath(comic.ID, comic.Filename)),
+				Href:   absoluteOPDSURL(opts.BaseURL, acquisitionHref),
 				Type:   mimeType,
 				Length: opdsFileLength(comic.FileSize),
 			})
@@ -399,9 +412,13 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 			Publisher: strings.TrimSpace(comic.Publisher),
 		}
 		if canStream {
+			streamHref := comic.StreamHref
+			if streamHref == "" {
+				streamHref = opdsPSEStreamPath(comic.ID, comic.StreamStartPage, comic.StreamPageCount)
+			}
 			streamLink := atomLink{
 				Rel:   opdsPSEStream,
-				Href:  absoluteOPDSURL(opts.BaseURL, opdsPSEStreamPath(comic.ID, comic.StreamStartPage, comic.StreamPageCount)),
+				Href:  absoluteOPDSURL(opts.BaseURL, streamHref),
 				Type:  "image/jpeg",
 				Count: comic.PageCount,
 			}

@@ -145,8 +145,8 @@ func TestOPDSWorkUnitFeedUsesPhysicalAcquisitionAndInternalPageOffsets(t *testin
 		t.Fatalf("Work unit feed returned %d: %s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	if strings.Count(body, "<entry>") != 2 {
-		t.Fatalf("Work unit feed should expose two Unit entries: %s", body)
+	if strings.Count(body, "<entry>") != 3 || !strings.Contains(body, "<title>连续阅读（整部）</title>") {
+		t.Fatalf("Work unit feed should expose continuous reading plus two Unit entries: %s", body)
 	}
 	for _, unit := range works[0].Units {
 		if !strings.Contains(body, "<id>urn:nowen:unit:"+unit.ID+"</id>") {
@@ -164,9 +164,64 @@ func TestOPDSWorkUnitFeedUsesPhysicalAcquisitionAndInternalPageOffsets(t *testin
 		if !strings.Contains(body, expectedStream) {
 			t.Fatalf("Unit %q missing page offset stream %q: %s", unit.DisplayLabel, expectedStream, body)
 		}
+		expectedDownload := "/api/opds/units/" + unit.ID + "/download"
+		if !strings.Contains(body, expectedDownload) {
+			t.Fatalf("Unit %q missing virtual CBZ acquisition %q: %s", unit.DisplayLabel, expectedDownload, body)
+		}
+		if strings.Contains(body, expectedDownload+`" type="application/vnd.comicbook+zip" length="`) {
+			t.Fatalf("virtual Unit acquisition must not advertise the physical archive size: %s", body)
+		}
+	}
+	continuousDownload := "/api/opds/works/" + works[0].ID + "/continuous/download"
+	if strings.Contains(body, continuousDownload+`" type="application/vnd.comicbook+zip" length="`) {
+		t.Fatalf("continuous Work acquisition must not advertise the summed physical size: %s", body)
 	}
 	if strings.Contains(body, "/api/opds/download/opds-archive-work-comic/Archive%20Work.cbz") {
-		t.Fatalf("internal virtual Units must be PSE-only instead of duplicating the whole archive acquisition: %s", body)
+		t.Fatalf("internal virtual Units must not duplicate the whole archive acquisition: %s", body)
+	}
+	virtualUnit := performOPDSBasicRequest(
+		router,
+		"/api/opds/units/"+works[0].Units[0].ID+"/download",
+		user.Username,
+		token,
+	)
+	if virtualUnit.Code != http.StatusOK {
+		t.Fatalf("virtual Unit CBZ returned %d: %s", virtualUnit.Code, virtualUnit.Body.String())
+	}
+	if got := virtualUnit.Header().Get("Content-Type"); got != "application/vnd.comicbook+zip" {
+		t.Fatalf("virtual Unit Content-Type = %q", got)
+	}
+	zipReader, err := zip.NewReader(bytes.NewReader(virtualUnit.Body.Bytes()), int64(virtualUnit.Body.Len()))
+	if err != nil {
+		t.Fatalf("virtual Unit response is not a CBZ: %v", err)
+	}
+	if len(zipReader.File) != works[0].Units[0].PageCount {
+		t.Fatalf("virtual Unit contains %d pages, want %d", len(zipReader.File), works[0].Units[0].PageCount)
+	}
+	continuous := performOPDSBasicRequest(
+		router,
+		"/api/opds/works/"+works[0].ID+"/continuous/download",
+		user.Username,
+		token,
+	)
+	if continuous.Code != http.StatusOK {
+		t.Fatalf("continuous Work CBZ returned %d: %s", continuous.Code, continuous.Body.String())
+	}
+	continuousZip, err := zip.NewReader(bytes.NewReader(continuous.Body.Bytes()), int64(continuous.Body.Len()))
+	if err != nil {
+		t.Fatalf("continuous Work response is not a CBZ: %v", err)
+	}
+	if len(continuousZip.File) != works[0].PageCount {
+		t.Fatalf("continuous Work contains %d pages, want %d", len(continuousZip.File), works[0].PageCount)
+	}
+	continuousPage := performOPDSBasicRequest(
+		router,
+		"/api/opds/works/"+works[0].ID+"/continuous/stream?page=2",
+		user.Username,
+		token,
+	)
+	if continuousPage.Code != http.StatusOK || continuousPage.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("continuous Work page returned %d %q", continuousPage.Code, continuousPage.Header().Get("Content-Type"))
 	}
 	firstCover := performOPDSBasicRequest(
 		router,
@@ -365,7 +420,7 @@ func TestOPDSPDFWorkKeepsPhysicalAcquisition(t *testing.T) {
 		t.Fatalf("PDF Work detail returned %d: %s", detail.Code, detail.Body.String())
 	}
 	body := detail.Body.String()
-	if strings.Count(body, "<entry>") != 1 ||
+	if strings.Count(body, "<entry>") != 2 ||
 		!strings.Contains(body, `type="application/pdf"`) ||
 		!strings.Contains(body, "/api/opds/download/opds-pdf-work/PDF%20Work.pdf") {
 		t.Fatalf("PDF Work did not retain one physical acquisition: %s", body)
@@ -491,8 +546,8 @@ func TestOPDSWorkUnitFeedKeepsFolderUnitsAsPhysicalPageStreams(t *testing.T) {
 		t.Fatalf("folder Work unit feed returned %d: %s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	if strings.Count(body, "<entry>") != 2 {
-		t.Fatalf("folder Work should expose two Unit entries: %s", body)
+	if strings.Count(body, "<entry>") != 3 || !strings.Contains(body, "<title>连续阅读（整部）</title>") {
+		t.Fatalf("folder Work should expose continuous reading plus two Unit entries: %s", body)
 	}
 	for _, comicID := range []string{"opds-folder-ch1", "opds-folder-ch2"} {
 		if !strings.Contains(body, "/api/opds/stream/"+comicID+"?") {
