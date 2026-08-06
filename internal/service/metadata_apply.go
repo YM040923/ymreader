@@ -89,7 +89,7 @@ func ApplyMetadata(comicID string, meta ComicMetadata, lang string, overwrite bo
 			updates["year"] = *meta.Year
 		}
 	}
-	if meta.Source != "" {
+	if meta.Source != "" && !opt.PreserveMetadataSource {
 		updates["metadataSource"] = meta.Source
 	}
 	// P2-A: 当 skipCover 为 true 时，跳过封面更新

@@ -60,6 +60,8 @@ type Work struct {
 	ContinuePage          int                       `json:"continuePage"`
 	ContinueUnitID        string                    `json:"continueUnitId,omitempty"`
 	Units                 []WorkUnit                `json:"units,omitempty"`
+	StoredCoverURL        string                    `json:"-"`
+	CoverLocked           bool                      `json:"-"`
 }
 
 // WorkUnit is a readable volume/chapter/section. StartPage is the absolute
@@ -222,6 +224,8 @@ func finalizeWork(acc *workAccumulator) {
 	representative := chooseRepresentativeSource(sources)
 	if representative != nil {
 		work.RepresentativeComicID = representative.ID
+		work.StoredCoverURL = representative.CoverImageURL
+		work.CoverLocked = representative.MetadataSource == "manual" && representative.CoverImageURL != ""
 		applyRepresentativeMetadata(work, *representative)
 	}
 	if len(sources) > 1 {
@@ -321,6 +325,8 @@ func ApplySeriesMetadata(works []Work, summaries []store.SeriesSummary) {
 		if summary.MetadataSource != "" {
 			work.MetadataSource = summary.MetadataSource
 		}
+		work.StoredCoverURL = summary.StoredCoverURL
+		work.CoverLocked = summary.MetadataLocked && summary.MetadataSource == "manual"
 		if summary.ExternalRating != nil {
 			work.ExternalRating = cloneFloat64(summary.ExternalRating)
 			work.ExternalRatingMax = cloneFloat64(summary.ExternalRatingMax)

@@ -653,8 +653,82 @@ func GetComicIDsByLibraryID(libraryID string) (map[string]struct{}, error) {
 	return result, rows.Err()
 }
 
-// UpdateComicIdentityAfterMove 在物理文件移动/重命名后同步更新 Comic 主键与相对路径。
-// Comic.id 由相对路径生成；相关外键依赖 ON UPDATE CASCADE 自动级联。
+// ComicScanState contains the persisted fields used to detect material scan changes.
+type ComicScanState struct {
+	FileSize     int64
+	LibraryID    string
+	RelativePath string
+	ComicType    string
+}
+
+func GetComicScanStatesByIDs(ids []string) (map[string]ComicScanState, error) {
+	result := make(map[string]ComicScanState, len(ids))
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, len(batch))
+		for index, id := range batch {
+			placeholders[index] = "?"
+			args[index] = id
+		}
+		rows, err := db.Query(fmt.Sprintf(`
+			SELECT "id", "fileSize", COALESCE("libraryId", ''),
+			       COALESCE(NULLIF("relativePath", ''), "filename"), COALESCE("type", '')
+			FROM "Comic" WHERE "id" IN (%s)
+		`, strings.Join(placeholders, ",")), args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var state ComicScanState
+			if err := rows.Scan(&id, &state.FileSize, &state.LibraryID, &state.RelativePath, &state.ComicType); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result[id] = state
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return result, nil
+}
+
+func BulkRefreshChangedComicFiles(fileSizes map[string]int64) error {
+	if len(fileSizes) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`
+		UPDATE "Comic"
+		SET "fileSize" = ?, "pageCount" = 0, "md5Hash" = '', "updatedAt" = ?
+		WHERE "id" = ?
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	now := time.Now().UTC()
+	for id, fileSize := range fileSizes {
+		if _, err := stmt.Exec(fileSize, now, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UpdateComicIdentityAfterMove updates the Comic identity after a physical move or rename.
 func UpdateComicIdentityAfterMove(oldID, newID, newFilename, newTitle string) error {
 	fields := []string{`"id" = ?`, `"filename" = ?`, `"relativePath" = ?`, `"updatedAt" = ?`}
 	args := []interface{}{newID, newFilename, newFilename, time.Now().UTC()}

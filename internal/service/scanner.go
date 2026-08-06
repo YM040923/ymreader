@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,8 @@ var (
 	// 阅读时暂停扫描：当有活跃阅读会话时，暂停后台扫描以减少 IO 竞争
 	activeReaders   int
 	activeReadersMu sync.Mutex
+
+	automaticWorkScrapeScheduler = ScheduleAutomaticWorkScrape
 )
 
 // 从配置文件读取可配置参数
@@ -401,6 +404,16 @@ func calcDirSize(dirPath string) int64 {
 // ============================================================
 
 func quickSync() (added, removed int) {
+	added, removed, _ = quickSyncWithChanges()
+	return added, removed
+}
+
+func quickSyncWithChanges() (added, removed int, changedComicIDs []string) {
+	added, removed = quickSyncInto(&changedComicIDs)
+	return added, removed, changedComicIDs
+}
+
+func quickSyncInto(changedOut *[]string) (added, removed int) {
 	libraries, err := store.GetScannableLibraries()
 	if err != nil {
 		log.Printf("[quick-sync] Failed to get libraries: %v", err)
@@ -531,6 +544,47 @@ func quickSync() (added, removed int) {
 	}
 	rows.Close()
 
+	changedExistingIDs := make([]string, 0)
+	changedFileSizes := make(map[string]int64)
+	changedRows, err := tx.Query(`
+		SELECT d."id", d."fileSize", c."fileSize",
+		       d."libraryId", COALESCE(c."libraryId", ''),
+		       d."relativePath", COALESCE(NULLIF(c."relativePath", ''), c."filename"),
+		       d."source", COALESCE(c."type", '')
+		FROM "_DiskFiles" d
+		JOIN "Comic" c ON c."id" = d."id"
+	`)
+	if err != nil {
+		log.Printf("[quick-sync] Failed to query changed comics: %v", err)
+		return 0, 0
+	}
+	for changedRows.Next() {
+		var id, diskLibraryID, storedLibraryID, diskRelativePath, storedRelativePath, source, comicType string
+		var diskFileSize, storedFileSize int64
+		if err := changedRows.Scan(
+			&id, &diskFileSize, &storedFileSize,
+			&diskLibraryID, &storedLibraryID,
+			&diskRelativePath, &storedRelativePath,
+			&source, &comicType,
+		); err != nil {
+			continue
+		}
+		expectedType := comicType
+		if source == "comics" {
+			expectedType = "comic"
+		} else if source == "novels" {
+			expectedType = "novel"
+		}
+		if diskFileSize != storedFileSize || diskLibraryID != storedLibraryID ||
+			diskRelativePath != storedRelativePath || expectedType != comicType {
+			changedExistingIDs = append(changedExistingIDs, id)
+		}
+		if diskFileSize != storedFileSize {
+			changedFileSizes[id] = diskFileSize
+		}
+	}
+	changedRows.Close()
+
 	// SQL JOIN: 找出数据库有但磁盘没有的文件（过期待删除）
 	rows2, err := tx.Query(`
 		SELECT c."id", c."libraryId", COALESCE(NULLIF(c."relativePath", ''), c."filename")
@@ -562,6 +616,10 @@ func quickSync() (added, removed int) {
 	tx.Exec(`DROP TABLE IF EXISTS "_DiskFiles"`)
 	tx.Exec(`DROP TABLE IF EXISTS "_ScannedLibraries"`)
 	tx.Commit()
+
+	if err := store.BulkRefreshChangedComicFiles(changedFileSizes); err != nil {
+		log.Printf("[quick-sync] Failed to refresh changed comics: %v", err)
+	}
 
 	// Batch insert new comics
 	if len(toAdd) > 0 {
@@ -617,6 +675,21 @@ func quickSync() (added, removed int) {
 
 	if len(toAdd) > 0 || len(toRemove) > 0 {
 		log.Printf("[quick-sync] Added %d, removed %d", len(toAdd), len(toRemove))
+	}
+
+	if changedOut != nil {
+		seen := make(map[string]struct{}, len(toAdd)+len(changedExistingIDs))
+		for _, item := range toAdd {
+			seen[item.ID] = struct{}{}
+		}
+		for _, id := range changedExistingIDs {
+			seen[id] = struct{}{}
+		}
+		*changedOut = (*changedOut)[:0]
+		for id := range seen {
+			*changedOut = append(*changedOut, id)
+		}
+		sort.Strings(*changedOut)
 	}
 
 	return len(toAdd), len(toRemove)
@@ -1106,6 +1179,29 @@ func RedetectEbookTypes() int {
 // Main sync orchestrator
 // ============================================================
 
+func scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs []string) {
+	if len(changedComicIDs) == 0 {
+		return
+	}
+	libraryByComic, err := store.GetComicsLibraryIDsByIDs(changedComicIDs)
+	if err != nil {
+		log.Printf("[auto-work-scrape] Failed to resolve changed comic libraries: %v", err)
+		return
+	}
+	librarySet := make(map[string]struct{})
+	for _, libraryID := range libraryByComic {
+		if libraryID != "" {
+			librarySet[libraryID] = struct{}{}
+		}
+	}
+	libraryIDs := make([]string, 0, len(librarySet))
+	for libraryID := range librarySet {
+		libraryIDs = append(libraryIDs, libraryID)
+	}
+	sort.Strings(libraryIDs)
+	automaticWorkScrapeScheduler(libraryIDs, changedComicIDs)
+}
+
 // SyncComicsToDatabase runs a quick sync if conditions are met.
 func SyncComicsToDatabase() {
 	syncMu.Lock()
@@ -1144,12 +1240,13 @@ func SyncComicsToDatabase() {
 	// 让紧接着的 quickSync 重新把里面的 .txt/.epub 等小说文件作为独立条目加回来。
 	repairMisclassifiedFolderComics()
 
-	added, _ := quickSync()
+	added, _, changedComicIDs := quickSyncWithChanges()
 	updateDirMtimes()
 
 	if added > 0 {
 		RunScanRulesForNewlyAdded()
 	}
+	scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs)
 
 	// 重新检测已入库的 mobi/azw3 文件的内容类型（修正错误分类）
 	go RedetectEbookTypes()
@@ -1189,7 +1286,7 @@ func ForceSyncComicsToDatabase() SyncResult {
 	repairMisclassifiedFolderComics()
 
 	// 执行 quickSync（包含 libraryId 归属修复）
-	added, removed := quickSync()
+	added, removed, changedComicIDs := quickSyncWithChanges()
 	updateDirMtimes()
 
 	// 清理服务端缓存
@@ -1198,6 +1295,7 @@ func ForceSyncComicsToDatabase() SyncResult {
 	if added > 0 {
 		RunScanRulesForNewlyAdded()
 	}
+	scheduleAutomaticWorkScrapeForChangedComics(changedComicIDs)
 
 	// 重新检测已入库的 mobi/azw3 文件的内容类型
 	reclassified := RedetectEbookTypes()
@@ -1505,6 +1603,27 @@ func SyncLibraryByID(libraryID string) (added, removed int, err error) {
 	for _, f := range allFiles {
 		fileMap[f.ID] = f
 	}
+	allDiskIDs := make([]string, 0, len(fileMap))
+	for id := range fileMap {
+		allDiskIDs = append(allDiskIDs, id)
+	}
+	scanStates, err := store.GetComicScanStatesByIDs(allDiskIDs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to query comic scan states: %w", err)
+	}
+	changedExistingIDs := make([]string, 0)
+	changedFileSizes := make(map[string]int64)
+	for id, file := range fileMap {
+		state, exists := scanStates[id]
+		if !exists {
+			continue
+		}
+		if state.FileSize != file.FileSize {
+			changedExistingIDs = append(changedExistingIDs, id)
+			changedFileSizes[id] = file.FileSize
+		}
+	}
+	sort.Strings(changedExistingIDs)
 
 	var toRemove []string
 	if scanComplete {
@@ -1600,6 +1719,10 @@ func SyncLibraryByID(libraryID string) (added, removed int, err error) {
 		}
 	}
 
+	if err := store.BulkRefreshChangedComicFiles(changedFileSizes); err != nil {
+		return len(toAdd) + len(toMove), len(toRemove), fmt.Errorf("failed to refresh changed comics: %w", err)
+	}
+
 	if len(toRemove) > 0 {
 		if err := store.BulkDeleteComicsByIDs(toRemove); err != nil {
 			return 0, 0, fmt.Errorf("failed to remove stale library records: %w", err)
@@ -1613,8 +1736,20 @@ func SyncLibraryByID(libraryID string) (added, removed int, err error) {
 	}
 
 	// 单书库扫描完成后清理缓存
-	if totalAdded > 0 || len(toRemove) > 0 {
+	if totalAdded > 0 || len(toRemove) > 0 || len(changedExistingIDs) > 0 {
 		InvalidateAllCaches()
+	}
+
+	changedComicIDs := make([]string, 0, len(toAdd)+len(toMove)+len(changedExistingIDs))
+	for _, item := range toAdd {
+		changedComicIDs = append(changedComicIDs, item.ID)
+	}
+	changedComicIDs = append(changedComicIDs, toMove...)
+	changedComicIDs = append(changedComicIDs, changedExistingIDs...)
+	changedComicIDs = uniqueNonEmptyStrings(changedComicIDs)
+	sort.Strings(changedComicIDs)
+	if len(changedComicIDs) > 0 {
+		automaticWorkScrapeScheduler([]string{libraryID}, changedComicIDs)
 	}
 
 	return totalAdded, len(toRemove), nil

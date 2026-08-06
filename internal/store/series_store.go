@@ -71,6 +71,7 @@ type SeriesSummary struct {
 	SortTitle               string     `json:"sortTitle"`
 	CoverComicID            string     `json:"coverComicId"`
 	CoverURL                string     `json:"coverUrl"`
+	StoredCoverURL          string     `json:"-"`
 	CoverAspectRatio        float64    `json:"coverAspectRatio"`
 	Author                  string     `json:"author"`
 	Description             string     `json:"description"`
@@ -444,6 +445,7 @@ func seriesSummaryByID(id, userID string) (*SeriesSummary, error) {
 		_ = db.QueryRow(`SELECT "comicId" FROM "ComicSeriesItem" WHERE "seriesId" = ? ORDER BY "sortIndex", "comicId" LIMIT 1`, id).Scan(&summary.CoverComicID)
 	}
 	if storedCoverURL != "" {
+		summary.StoredCoverURL = storedCoverURL
 		summary.CoverURL = BuildSeriesCoverURL(id)
 	} else if summary.CoverComicID != "" {
 		summary.CoverURL = BuildComicCoverURL(summary.CoverComicID)

@@ -18,15 +18,16 @@ type ComicMetadata struct {
 	Source      string `json:"source"`
 
 	// External rating from scraping sources
-	ExternalRating          *float64   `json:"externalRating,omitempty"`       // 外部评分原始分数
-	ExternalRatingMax       *float64   `json:"externalRatingMax,omitempty"`    // 满分值（如 10, 100）
-	ExternalRatingSource    string     `json:"externalRatingSource,omitempty"` // 评分来源（"anilist", "bangumi"）
+	ExternalRating          *float64   `json:"externalRating,omitempty"`          // 外部评分原始分数
+	ExternalRatingMax       *float64   `json:"externalRatingMax,omitempty"`       // 满分值（如 10, 100）
+	ExternalRatingSource    string     `json:"externalRatingSource,omitempty"`    // 评分来源（"anilist", "bangumi"）
 	ExternalRatingUpdatedAt *time.Time `json:"externalRatingUpdatedAt,omitempty"` // 评分更新时间
 }
 
 // ApplyOption 控制 ApplyMetadata 的可选行为。
 type ApplyOption struct {
-	SkipCover bool // 为 true 时跳过封面更新（用户反馈：刮削的封面大多是日版，而资源一般是台版）
+	SkipCover              bool // 为 true 时跳过封面更新（用户反馈：刮削的封面大多是日版，而资源一般是台版）
+	PreserveMetadataSource bool // preserve an existing manual metadata source during automatic fill
 }
 
 // ============================================================

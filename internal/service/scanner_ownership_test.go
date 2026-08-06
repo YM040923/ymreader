@@ -59,6 +59,101 @@ func TestQuickSyncIndexesNestedFileOnce(t *testing.T) {
 	}
 }
 
+func TestQuickSyncWithChangesReportsNewAndModifiedFiles(t *testing.T) {
+	setupScannerTestDB(t)
+	root := t.TempDir()
+	comicPath := filepath.Join(root, "Work.cbz")
+	if err := os.WriteFile(comicPath, []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	lib := &model.Library{
+		ID: "changed-files", Name: "Changed Files", Type: "comic",
+		RootPath: root, Enabled: true, ScanEnabled: true,
+	}
+	if err := store.CreateLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+
+	added, removed, changed := quickSyncWithChanges()
+	comicID := store.PathToID(lib.ID, "Work.cbz")
+	if added != 1 || removed != 0 || len(changed) != 1 || changed[0] != comicID {
+		t.Fatalf("initial sync added=%d removed=%d changed=%v", added, removed, changed)
+	}
+
+	if _, err := store.DB().Exec(`
+		UPDATE "Comic" SET "pageCount" = 12, "md5Hash" = 'old-hash' WHERE "id" = ?
+	`, comicID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(comicPath, []byte("second-version-is-larger"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	added, removed, changed = quickSyncWithChanges()
+	if added != 0 || removed != 0 || len(changed) != 1 || changed[0] != comicID {
+		t.Fatalf("modified sync added=%d removed=%d changed=%v", added, removed, changed)
+	}
+	var fileSize int64
+	var pageCount int
+	var md5Hash string
+	if err := store.DB().QueryRow(`
+		SELECT "fileSize", "pageCount", "md5Hash" FROM "Comic" WHERE "id" = ?
+	`, comicID).Scan(&fileSize, &pageCount, &md5Hash); err != nil {
+		t.Fatal(err)
+	}
+	if fileSize != int64(len("second-version-is-larger")) || pageCount != 0 || md5Hash != "" {
+		t.Fatalf("changed file state size=%d pageCount=%d md5=%q", fileSize, pageCount, md5Hash)
+	}
+}
+
+func TestSyncLibraryByIDSchedulesOnlyChangedComicIDs(t *testing.T) {
+	setupScannerTestDB(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Work.cbz"), []byte("comic"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	lib := &model.Library{
+		ID: "schedule-library", Name: "Schedule Library", Type: "comic",
+		RootPath: root, Enabled: true, ScanEnabled: true,
+	}
+	if err := store.CreateLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+
+	original := automaticWorkScrapeScheduler
+	t.Cleanup(func() { automaticWorkScrapeScheduler = original })
+	type scheduledCall struct {
+		libraries []string
+		comics    []string
+	}
+	calls := make(chan scheduledCall, 2)
+	automaticWorkScrapeScheduler = func(libraryIDs, changedComicIDs []string) {
+		calls <- scheduledCall{
+			libraries: append([]string(nil), libraryIDs...),
+			comics:    append([]string(nil), changedComicIDs...),
+		}
+	}
+
+	if added, removed, err := SyncLibraryByID(lib.ID); err != nil || added != 1 || removed != 0 {
+		t.Fatalf("scan added=%d removed=%d err=%v", added, removed, err)
+	}
+	call := <-calls
+	comicID := store.PathToID(lib.ID, "Work.cbz")
+	if len(call.libraries) != 1 || call.libraries[0] != lib.ID ||
+		len(call.comics) != 1 || call.comics[0] != comicID {
+		t.Fatalf("scheduled call=%#v", call)
+	}
+
+	if added, removed, err := SyncLibraryByID(lib.ID); err != nil || added != 0 || removed != 0 {
+		t.Fatalf("unchanged scan added=%d removed=%d err=%v", added, removed, err)
+	}
+	select {
+	case unexpected := <-calls:
+		t.Fatalf("unchanged scan scheduled %#v", unexpected)
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
 func TestQuickSyncSkipsExactRootConflict(t *testing.T) {
 	setupScannerTestDB(t)
 	root := t.TempDir()
