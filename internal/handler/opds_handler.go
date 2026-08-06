@@ -1116,10 +1116,6 @@ func getOPDSUserID(c *gin.Context) string {
 }
 
 func getAccessibleOPDSSeries(c *gin.Context, seriesID string) (*store.OPDSSeriesRow, []string, bool) {
-	if err := service.EnsureComicSeriesFresh(); err != nil {
-		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to refresh comic series"))
-		return nil, nil, false
-	}
 	libraryIDs, err := store.GetUserDownloadableLibraryIDs(getOPDSUserID(c))
 	if err != nil {
 		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to resolve library access"))
