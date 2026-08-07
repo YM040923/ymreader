@@ -382,6 +382,9 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			row := virtualOPDSUnitRow(comic, unit)
 			rows = append(rows, row)
 		}
+		if len(rows) > 0 {
+			rows[0].CoverHref = "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=parent4"
+		}
 		page, pageSize := parseOPDSPagination(c)
 		total := len(rows)
 		start := (page - 1) * pageSize
