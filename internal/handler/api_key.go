@@ -87,21 +87,23 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 }
 
 // Revoke handles DELETE /api/auth/api-keys/:id.
+// The UI exposes this operation as deletion, so remove the database row
+// instead of retaining an indefinitely visible revoked tombstone.
 func (h *APIKeyHandler) Revoke(c *gin.Context) {
 	user := middleware.GetCurrentUser(c)
-	revoked, err := store.RevokeAPIKey(user.ID, c.Param("id"))
+	deleted, err := store.DeleteAPIKey(user.ID, c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke API key"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API key"})
 		return
 	}
-	if !revoked {
-		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found or already revoked"})
+	if !deleted {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-// RevokeAll handles DELETE /api/auth/api-keys.
+// RevokeAll handles DELETE /api/auth/api-keys and permanently removes all keys.
 func (h *APIKeyHandler) RevokeAll(c *gin.Context) {
 	var req struct {
 		CurrentPassword string `json:"currentPassword"`
@@ -122,9 +124,9 @@ func (h *APIKeyHandler) RevokeAll(c *gin.Context) {
 		return
 	}
 
-	count, err := store.RevokeAllAPIKeys(user.ID)
+	count, err := store.DeleteAllAPIKeys(user.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke API keys"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API keys"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"revokedCount": count})

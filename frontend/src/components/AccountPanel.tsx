@@ -66,7 +66,7 @@ const apiKeyCopy = {
     title: "API 密钥",
     description: "用于脚本或客户端访问，权限始终跟随当前账户。",
     create: "创建密钥",
-    revokeAll: "撤销全部",
+    revokeAll: "删除全部",
     empty: "尚未创建 API 密钥",
     active: "有效",
     expired: "已过期",
@@ -76,10 +76,13 @@ const apiKeyCopy = {
     neverUsed: "从未使用",
     expires: "到期于",
     neverExpires: "永不过期",
-    revoke: "撤销密钥",
-    confirmRevoke: "确定撤销这个 API 密钥吗？撤销后无法恢复。",
+    revoke: "删除密钥",
+    delete: "删除密钥",
+    confirmRevoke: "确定永久删除这个 API 密钥吗？删除后无法恢复。",
+    confirmDeleteKey: "确定永久删除这个 API 密钥吗？删除后无法恢复。",
     loadFailed: "加载 API 密钥失败",
-    revokeFailed: "撤销 API 密钥失败",
+    revokeFailed: "删除 API 密钥失败",
+    deleteKeyFailed: "删除 API 密钥失败",
     createTitle: "创建 API 密钥",
     name: "名称",
     namePlaceholder: "例如：家庭自动化",
@@ -98,16 +101,16 @@ const apiKeyCopy = {
     copy: "复制密钥",
     copied: "已复制",
     close: "关闭",
-    revokeAllTitle: "撤销全部 API 密钥",
-    revokeAllWarning: "所有使用这些密钥的脚本和客户端都会立即失去访问权限。",
-    revokeAllConfirm: "确认全部撤销",
-    revokeAllFailed: "撤销全部 API 密钥失败",
+    revokeAllTitle: "删除全部 API 密钥",
+    revokeAllWarning: "所有 API 密钥都将被永久删除，使用这些密钥的脚本和客户端会立即失去访问权限。",
+    revokeAllConfirm: "确认全部删除",
+    revokeAllFailed: "删除全部 API 密钥失败",
   },
   en: {
     title: "API Keys",
     description: "For scripts and clients. Access always follows this account's current permissions.",
     create: "Create key",
-    revokeAll: "Revoke all",
+    revokeAll: "Delete all",
     empty: "No API keys created",
     active: "Active",
     expired: "Expired",
@@ -117,10 +120,13 @@ const apiKeyCopy = {
     neverUsed: "Never used",
     expires: "Expires",
     neverExpires: "Never expires",
-    revoke: "Revoke key",
-    confirmRevoke: "Revoke this API key? This cannot be undone.",
+    revoke: "Delete key",
+    delete: "Delete key",
+    confirmRevoke: "Permanently delete this API key? This cannot be undone.",
+    confirmDeleteKey: "Permanently delete this API key? This cannot be undone.",
     loadFailed: "Failed to load API keys",
-    revokeFailed: "Failed to revoke API key",
+    revokeFailed: "Failed to delete API key",
+    deleteKeyFailed: "Failed to delete API key",
     createTitle: "Create API key",
     name: "Name",
     namePlaceholder: "For example: Home automation",
@@ -139,10 +145,10 @@ const apiKeyCopy = {
     copy: "Copy key",
     copied: "Copied",
     close: "Close",
-    revokeAllTitle: "Revoke all API keys",
-    revokeAllWarning: "Every script and client using these keys will immediately lose access.",
-    revokeAllConfirm: "Revoke all keys",
-    revokeAllFailed: "Failed to revoke all API keys",
+    revokeAllTitle: "Delete all API keys",
+    revokeAllWarning: "All API keys will be permanently deleted. Every script and client using them will immediately lose access.",
+    revokeAllConfirm: "Delete all keys",
+    revokeAllFailed: "Failed to delete all API keys",
   },
 } as const;
 
@@ -178,14 +184,14 @@ function APIKeySection() {
     return keys.filter((key) => !key.revokedAt && (!key.expiresAt || Date.parse(key.expiresAt) > now)).length;
   }, [keys]);
 
-  const handleRevoke = async (key: APIKeyRecord) => {
-    if (!window.confirm(text.confirmRevoke)) return;
+  const handleDeleteKey = async (key: APIKeyRecord) => {
+    if (!window.confirm(text.confirmDeleteKey)) return;
     setError("");
     try {
       await revokeAPIKey(key.id);
       await loadKeys();
     } catch (err) {
-      setError(getAPIErrorMessage(err, text.revokeFailed));
+      setError(getAPIErrorMessage(err, text.deleteKeyFailed));
     }
   };
 
@@ -250,7 +256,7 @@ function APIKeySection() {
         ) : (
           keys.map((key) => {
             const status = getStatus(key);
-            const canRevoke = !key.revokedAt && (!key.expiresAt || Date.parse(key.expiresAt) > Date.now());
+            const canDelete = true;
             return (
               <div key={key.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
@@ -265,12 +271,12 @@ function APIKeySection() {
                     <span>{text.expires}: {key.expiresAt ? formatDate(key.expiresAt) : text.neverExpires}</span>
                   </div>
                 </div>
-                {canRevoke && (
+                {canDelete && (
                   <button
                     type="button"
-                    onClick={() => void handleRevoke(key)}
-                    title={text.revoke}
-                    aria-label={text.revoke}
+                    onClick={() => void handleDeleteKey(key)}
+                    title={text.delete}
+                    aria-label={text.delete}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-red-500/10 hover:text-red-400"
                   >
                     <Trash2 className="h-4 w-4" />

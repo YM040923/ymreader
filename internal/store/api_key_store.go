@@ -241,3 +241,28 @@ func markAPIKeyUsed(keyID string, now time.Time) (*time.Time, error) {
 	}
 	return &now, nil
 }
+
+// DeleteAPIKey 从数据库彻底删除指定 API 密钥（硬删除，区别于 Revoke 仅标记 revokedAt）。
+func DeleteAPIKey(userID, keyID string) (bool, error) {
+	result, err := db.Exec(
+		`DELETE FROM "ApiKey" WHERE "id" = ? AND "userId" = ?`,
+		keyID, userID,
+	)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
+}
+
+// DeleteAllAPIKeys 彻底删除指定用户的所有 API 密钥（硬删除）。
+func DeleteAllAPIKeys(userID string) (int64, error) {
+	result, err := db.Exec(
+		`DELETE FROM "ApiKey" WHERE "userId" = ?`,
+		userID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

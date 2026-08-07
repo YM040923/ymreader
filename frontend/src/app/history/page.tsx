@@ -127,17 +127,26 @@ export default function HistoryPage() {
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
-  const deleteHistory = useCallback(async (comicIds: string[], all = false) => {
+  const deleteHistory = useCallback(async (items: Comic[], all = false) => {
     if (!confirm(all ? "确定要彻底删除全部阅读历史吗？此操作不可撤销。" : "确定要从阅读历史中彻底删除选中的作品吗？此操作不可撤销。")) {
       return;
     }
     setDeleting(true);
     try {
-      await fetch(apiPath("/api/history"), {
+      const workIds = items
+        .filter((item) => item.detailHref?.startsWith("/work/"))
+        .map((item) => item.id);
+      const comicIds = items
+        .filter((item) => !item.detailHref?.startsWith("/work/"))
+        .map((item) => item.id);
+      const response = await fetch(apiPath("/api/history"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(all ? { all: true } : { comicIds }),
+        body: JSON.stringify(all ? { all: true } : { comicIds, workIds }),
       });
+      if (!response.ok) {
+        throw new Error("删除阅读历史失败");
+      }
       await fetchHistory();
     } catch {
       // silent
@@ -220,7 +229,7 @@ export default function HistoryPage() {
                 : "开始阅读一本作品后，它会出现在这里。"}
             </p>
             <button
-              onClick={() => deleteHistory([], true)}
+                onClick={() => deleteHistory([], true)}
               disabled={deleting}
               className="shrink-0 rounded-lg px-3 py-2 text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-all disabled:opacity-50"
             >
@@ -298,7 +307,7 @@ export default function HistoryPage() {
                 )}
                 <div className="space-y-2">
                   {group.items.map((comic) => (
-                    <HistoryCard key={comic.id} comic={comic} onDelete={(id) => deleteHistory([id])} deleting={deleting} />
+                    <HistoryCard key={comic.id} comic={comic} onDelete={(item) => deleteHistory([item])} deleting={deleting} />
                   ))}
                 </div>
               </div>
@@ -310,7 +319,7 @@ export default function HistoryPage() {
   );
 }
 
-function HistoryCard({ comic, onDelete, deleting }: { comic: Comic; onDelete: (id: string) => void; deleting: boolean }) {
+function HistoryCard({ comic, onDelete, deleting }: { comic: Comic; onDelete: (comic: Comic) => void; deleting: boolean }) {
   const progress = calculateStoredReadingProgress(comic.lastReadPage || 0, comic.pageCount || 0, comic.lastReadAt || null, comic.readingStatus);
   const finished = isStoredReadingFinished(comic.lastReadPage || 0, comic.pageCount || 0, comic.lastReadAt || null, comic.readingStatus);
   // 判断是否已开始阅读（不依赖 progress > 0，避免小数进度被四舍五入为 0）
@@ -422,7 +431,7 @@ function HistoryCard({ comic, onDelete, deleting }: { comic: Comic; onDelete: (i
               </Link>
             )}
             <button
-              onClick={() => onDelete(comic.id)}
+              onClick={() => onDelete(comic)}
               disabled={deleting}
               title="彻底删除阅读历史"
               className="rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-all disabled:opacity-50"

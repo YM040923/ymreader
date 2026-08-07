@@ -1048,9 +1048,10 @@ func DeleteReadingHistoryByComicIDs(comicIDs []string, userID string) (int, erro
 		// 重置全局与该用户的阅读进度
 		if userID != "" {
 			_, _ = tx.Exec(`
-				INSERT INTO "UserComicState" ("userId", "comicId", "lastReadPage", "lastReadAt", "readingStatus")
-				VALUES (?, ?, 0, NULL, '')
-				ON CONFLICT("userId", "comicId") DO UPDATE SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = ''
+				INSERT INTO "UserComicState" ("userId", "comicId", "lastReadPage", "lastReadAt", "readingStatus", "totalReadTime")
+				VALUES (?, ?, 0, NULL, '', 0)
+				ON CONFLICT("userId", "comicId") DO UPDATE SET
+					"lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '', "totalReadTime" = 0
 			`, userID, comicID)
 		}
 		_, _ = tx.Exec(`UPDATE "Comic" SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '' WHERE "id" = ?`, comicID)
@@ -1071,7 +1072,11 @@ func DeleteAllReadingHistory(userID string) (int, error) {
 		return 0, err
 	}
 	deleted, _ := res.RowsAffected()
-	_, _ = db.Exec(`UPDATE "UserComicState" SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '' WHERE "userId" = ?`, userID)
+	_, _ = db.Exec(`
+		UPDATE "UserComicState"
+		SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '', "totalReadTime" = 0
+		WHERE "userId" = ?
+	`, userID)
 	return int(deleted), nil
 }
 

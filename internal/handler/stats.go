@@ -203,6 +203,7 @@ func (h *StatsHandler) GetHistory(c *gin.Context) {
 func (h *StatsHandler) DeleteHistory(c *gin.Context) {
 	var body struct {
 		ComicIDs []string `json:"comicIds"`
+		WorkIDs  []string `json:"workIds"`
 		All      bool     `json:"all"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -219,11 +220,27 @@ func (h *StatsHandler) DeleteHistory(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": true, "deleted": deleted})
 		return
 	}
-	if len(body.ComicIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "comicIds or all is required"})
+	comicIDs := append([]string(nil), body.ComicIDs...)
+	if len(body.WorkIDs) > 0 {
+		catalog, err := NewWorkHandler().loadWorkCatalog(c)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for _, workID := range body.WorkIDs {
+			work := catalog.ByID[workID]
+			if work == nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Work not found"})
+				return
+			}
+			comicIDs = append(comicIDs, service.PhysicalComicIDs(*work)...)
+		}
+	}
+	if len(comicIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "comicIds, workIds or all is required"})
 		return
 	}
-	deleted, err := store.DeleteReadingHistoryByComicIDs(body.ComicIDs, uid)
+	deleted, err := store.DeleteReadingHistoryByComicIDs(comicIDs, uid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
