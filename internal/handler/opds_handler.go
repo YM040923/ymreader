@@ -111,7 +111,7 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 	coverByLibrary := make(map[string]string, len(libraryIDs))
 	for _, item := range works {
 		if _, exists := coverByLibrary[item.Work.LibraryID]; !exists {
-			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID)
+			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=jpeg2"
 		}
 	}
 	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+2)
@@ -448,7 +448,7 @@ func physicalOPDSComicRow(comic *store.ComicListItem, units []service.WorkUnit) 
 		ComicType:    comic.ComicType,
 		LastReadPage: lastReadPage,
 		LastReadAt:   lastReadAt,
-		CoverHref:    "/api/opds/public-cover/" + url.PathEscape(comic.ID),
+		CoverHref:    "/api/opds/public-cover/" + url.PathEscape(comic.ID) + "?v=jpeg2",
 	}
 }
 
@@ -722,7 +722,7 @@ type opdsWorkCatalogItem struct {
 func (item opdsWorkCatalogItem) OPDSWork() service.OPDSWork {
 	result := service.OPDSWork{
 		Work:      item.Work,
-		CoverHref: "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID),
+		CoverHref: "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=jpeg2",
 		AddedAt:   item.AddedAt,
 		UpdatedAt: item.UpdatedAt,
 	}
@@ -836,9 +836,9 @@ func maxAtomTime(left, right string) string {
 
 func opdsUnitCoverHref(unit service.WorkUnit) string {
 	if unit.InternalPath != "" {
-		return fmt.Sprintf("/api/opds/public-unit-cover/%s?page=%d", url.PathEscape(unit.ComicID), unit.CoverPage)
+		return fmt.Sprintf("/api/opds/public-unit-cover/%s?page=%d&v=jpeg2", url.PathEscape(unit.ComicID), unit.CoverPage)
 	}
-	return "/api/opds/public-cover/" + url.PathEscape(unit.ComicID)
+	return "/api/opds/public-cover/" + url.PathEscape(unit.ComicID) + "?v=jpeg2"
 }
 
 // GET /api/opds/series
