@@ -14,6 +14,7 @@
     "test:pwa": "node scripts/test-service-worker.mjs",
     "test:ai": "node scripts/test-ai-settings-gateway.mjs",
     "test:site-settings-sse": "node scripts/test-site-settings-sse-contract.mjs",
+    "test:reader-options": "node --experimental-strip-types scripts/test-reader-options-scope.mjs",
     "copy-dist": "node scripts/copy-dist.mjs"
   },
   "dependencies": {

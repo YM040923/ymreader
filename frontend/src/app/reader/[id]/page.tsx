@@ -70,13 +70,17 @@ export default function ReaderPage() {
     () => parseReaderNavigation(location.search),
     [location.search],
   );
+  const readerOptionsScope = readerNavigation.workId
+    ? `work:${readerNavigation.workId}`
+    : `comic:${comicId}`;
   const [readerWork, setReaderWork] = useState<Work | null>(null);
   const [workLoading, setWorkLoading] = useState(false);
   const [workError, setWorkError] = useState<string | null>(null);
   const t = useTranslation();
   const { locale } = useLocale();
   const { aiConfigured } = useAIStatus();
-  const { options: readerOpts, updateOptions: updateReaderOpts, loaded: optsLoaded } = useReaderOptions();
+  const { options: readerOpts, updateOptions: updateReaderOpts, loaded: optsLoaded } =
+    useReaderOptions(readerOptionsScope);
   const { bookmarks, isBookmarked, toggleBookmark, removeBookmark } = useComicBookmarks(comicId);
 
   // Try API first
@@ -247,7 +251,7 @@ export default function ReaderPage() {
     if (readerOpts.defaultOverlay) {
       setShowOverlay(true);
     }
-  }, [optsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [optsLoaded, readerOptionsScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync readerTheme with global theme
   useEffect(() => {
