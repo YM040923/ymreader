@@ -84,8 +84,17 @@ func CallCloudLLMStream(cfg AIConfig, systemPrompt, userPrompt string, opts *LLM
 
 // streamOpenAICompatible OpenAI 兼容的 SSE 流式调用
 func streamOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, callback StreamCallback) error {
-	reqURL := apiURL + "/chat/completions"
+	endpoint, err := resolveOpenAIEndpoint(apiURL)
+	if err != nil {
+		return err
+	}
+	if endpoint.Protocol == AIProtocolResponses {
+		return streamOpenAIResponses(cfg, endpoint, systemPrompt, userPrompt, maxTokens, temperature, callback)
+	}
+	return streamOpenAIChatCompletions(cfg, endpoint, systemPrompt, userPrompt, maxTokens, temperature, callback)
+}
 
+func streamOpenAIChatCompletions(cfg AIConfig, endpoint ResolvedAIEndpoint, systemPrompt, userPrompt string, maxTokens int, temperature float64, callback StreamCallback) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"model": cfg.CloudModel,
 		"messages": []map[string]string{
@@ -98,7 +107,14 @@ func streamOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt strin
 	})
 
 	client := &http.Client{Timeout: 300 * time.Second}
-	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(string(body)))
+	req, err := http.NewRequest("POST", endpoint.URL, strings.NewReader(string(body)))
+	if err != nil {
+		return &AIProviderError{
+			Kind:      AIErrorInvalidConfig,
+			Message:   err.Error(),
+			Retryable: false,
+		}
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.CloudAPIKey)
 
@@ -108,16 +124,13 @@ func streamOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		errMsg := string(respBody)
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
-		}
-		return fmt.Errorf("OpenAI stream API error %d: %s", resp.StatusCode, errMsg)
+		return parseAIProviderError(resp, respBody)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -146,8 +159,145 @@ func streamOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt strin
 		}
 	}
 
-	callback(StreamChunk{Done: true})
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return &AIProviderError{
+		Kind:       AIErrorInvalidResponse,
+		StatusCode: resp.StatusCode,
+		Message:    "AI 流在完成事件前中断",
+		RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+		Retryable:  true,
+	}
+}
+
+func streamOpenAIResponses(cfg AIConfig, endpoint ResolvedAIEndpoint, systemPrompt, userPrompt string, maxTokens int, temperature float64, callback StreamCallback) error {
+	requestBody := map[string]interface{}{
+		"model":             cfg.CloudModel,
+		"instructions":      systemPrompt,
+		"input":             userPrompt,
+		"max_output_tokens": maxTokens,
+		"temperature":       temperature,
+		"stream":            true,
+	}
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return &AIProviderError{
+			Kind:      AIErrorInvalidRequest,
+			Message:   "无法构造 Responses 流请求: " + err.Error(),
+			Retryable: false,
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint.URL, strings.NewReader(string(body)))
+	if err != nil {
+		return &AIProviderError{
+			Kind:      AIErrorInvalidConfig,
+			Message:   err.Error(),
+			Retryable: false,
+		}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+cfg.CloudAPIKey)
+
+	resp, err := (&http.Client{Timeout: 300 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return parseAIProviderError(resp, respBody)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		dataText := strings.TrimPrefix(line, "data: ")
+		if dataText == "[DONE]" {
+			callback(StreamChunk{Done: true})
+			return nil
+		}
+
+		var event struct {
+			Type  string `json:"type"`
+			Delta string `json:"delta"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Response struct {
+				Status            string `json:"status"`
+				IncompleteDetails struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
+				Error *struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(dataText), &event); err != nil {
+			return &AIProviderError{
+				Kind:       AIErrorInvalidResponse,
+				StatusCode: resp.StatusCode,
+				Message:    "无法解析 Responses 流事件: " + err.Error(),
+				RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+				Retryable:  false,
+			}
+		}
+
+		switch event.Type {
+		case "response.output_text.delta":
+			if event.Delta != "" && !callback(StreamChunk{Content: event.Delta}) {
+				return nil
+			}
+		case "response.completed":
+			callback(StreamChunk{Done: true})
+			return nil
+		case "response.failed", "error":
+			message := "Responses API 流式请求失败"
+			if event.Response.Error != nil && event.Response.Error.Message != "" {
+				message = event.Response.Error.Message
+			} else if event.Error != nil && event.Error.Message != "" {
+				message = event.Error.Message
+			}
+			return &AIProviderError{
+				Kind:       AIErrorProvider,
+				StatusCode: resp.StatusCode,
+				Message:    message,
+				RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+				Retryable:  false,
+			}
+		case "response.incomplete":
+			kind := AIErrorInvalidResponse
+			message := "Responses API 流式响应未完成"
+			if strings.Contains(strings.ToLower(event.Response.IncompleteDetails.Reason), "max") {
+				kind = AIErrorTruncated
+				message = "AI 输出达到 token 上限，流式响应被截断"
+			}
+			return &AIProviderError{
+				Kind:       kind,
+				StatusCode: resp.StatusCode,
+				Message:    message,
+				RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+				Retryable:  false,
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return &AIProviderError{
+		Kind:       AIErrorInvalidResponse,
+		StatusCode: resp.StatusCode,
+		Message:    "Responses API 流在完成事件前中断",
+		RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+		Retryable:  true,
+	}
 }
 
 // streamAnthropic Anthropic 的 SSE 流式调用

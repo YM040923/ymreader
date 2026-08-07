@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nowen-reader/nowen-reader/internal/config"
 )
@@ -56,11 +57,11 @@ type AIConfig struct {
 	LocalEngine     string `json:"localEngine"`     // llama.cpp / vllm / custom
 	LocalBinaryPath string `json:"localBinaryPath"` // llama-server 可执行文件路径
 	LocalModelPath  string `json:"localModelPath"`  // GGUF 模型文件路径
-	LocalHost       string `json:"localHost"`        // 绑定地址，默认 127.0.0.1
-	LocalPort       int    `json:"localPort"`        // 端口，默认 11435
-	ContextSize     int    `json:"contextSize"`      // 上下文大小，默认 8192
-	Threads         int    `json:"threads"`          // CPU 线程数，默认 0 (自动)
-	GPULayers       string `json:"gpuLayers"`        // GPU 层数，"auto" 或数字
+	LocalHost       string `json:"localHost"`       // 绑定地址，默认 127.0.0.1
+	LocalPort       int    `json:"localPort"`       // 端口，默认 11435
+	ContextSize     int    `json:"contextSize"`     // 上下文大小，默认 8192
+	Threads         int    `json:"threads"`         // CPU 线程数，默认 0 (自动)
+	GPULayers       string `json:"gpuLayers"`       // GPU 层数，"auto" 或数字
 }
 
 var defaultAIConfig = AIConfig{
@@ -99,13 +100,19 @@ func LoadAIConfig() AIConfig {
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = defaultAIConfig.MaxTokens
 	}
-	if cfg.MaxRetries < 0 {
-		cfg.MaxRetries = 0
-	}
+	cfg.MaxRetries = normalizeAIRetryCount(cfg.MaxRetries)
+	cfg.CloudProvider = strings.TrimSpace(cfg.CloudProvider)
+	cfg.CloudAPIURL = strings.TrimSpace(cfg.CloudAPIURL)
+	cfg.CloudModel = strings.TrimSpace(cfg.CloudModel)
 	return cfg
 }
 
 func SaveAIConfig(cfg AIConfig) error {
+	cfg.MaxRetries = normalizeAIRetryCount(cfg.MaxRetries)
+	cfg.CloudProvider = strings.TrimSpace(cfg.CloudProvider)
+	cfg.CloudAPIURL = strings.TrimSpace(cfg.CloudAPIURL)
+	cfg.CloudModel = strings.TrimSpace(cfg.CloudModel)
+	cfg.CloudAPIKey = strings.TrimSpace(cfg.CloudAPIKey)
 	dir := filepath.Dir(aiConfigPath())
 	os.MkdirAll(dir, 0755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")

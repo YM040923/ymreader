@@ -33,6 +33,7 @@ Respond ONLY with a valid JSON object containing the translated fields.`, langNa
 
 	fieldsJSON, _ := json.MarshalIndent(fields, "", "  ")
 	userPrompt := fmt.Sprintf("Translate these metadata fields to %s:\n\n%s\n\nReturn a JSON object with the same keys and translated values.", langName, string(fieldsJSON))
+	maxOutputTokens := metadataTranslationMaxTokens(fieldsJSON)
 
 	// 翻译最多发送两次请求：正常生成一次，只有网络或结构化输出失败时才纠错一次。
 	// 禁用底层自动重试，避免简单翻译被放大成多次昂贵调用。
@@ -47,13 +48,16 @@ Respond ONLY with a valid JSON object containing the translated fields.`, langNa
 		}
 		content, err := CallCloudLLM(translateCfg, systemPrompt, prompt, &LLMCallOptions{
 			Scenario:        "translate",
-			MaxTokens:       2000,
+			MaxTokens:       maxOutputTokens,
 			Temperature:     &temperature,
 			JSONMode:        true,
 			DisableThinking: true,
 		})
 		if err != nil {
 			lastErr = err
+			if !shouldRetryAIError(err) {
+				return nil, err
+			}
 			continue
 		}
 		result, parseErr := parseTranslatedMetadataJSON(content)
@@ -64,6 +68,18 @@ Respond ONLY with a valid JSON object containing the translated fields.`, langNa
 		log.Printf("[Translate] Structured metadata response invalid, retrying once: %v", parseErr)
 	}
 	return nil, lastErr
+}
+
+func metadataTranslationMaxTokens(fieldsJSON []byte) int {
+	estimate := 256 + len(fieldsJSON)/2
+	switch {
+	case estimate < 256:
+		return 256
+	case estimate > 1200:
+		return 1200
+	default:
+		return estimate
+	}
 }
 
 func parseTranslatedMetadataJSON(content string) (map[string]string, error) {

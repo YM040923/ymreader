@@ -482,7 +482,10 @@ export function DetailPanel({
       const res = await fetch(apiPath(translatePath), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetLang: locale, engine: engine || translateEngine || "" }),
+        body: JSON.stringify({
+          targetLang: locale,
+          engine: engine !== undefined ? engine : translateEngine,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -993,6 +996,15 @@ export function DetailPanel({
           </div>
         )}
 
+        {metadataTranslateError && (
+          <div
+            data-testid="metadata-translate-error"
+            className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-300"
+          >
+            {metadataTranslateError}
+          </div>
+        )}
+
         {/* 元数据编辑模式 */}
         {metaEditMode && isAdmin ? (
           <div className="rounded-xl border border-accent/20 bg-accent/5 p-3 space-y-2">
@@ -1017,9 +1029,6 @@ export function DetailPanel({
               {metadataTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Languages className="h-3.5 w-3.5" />}
               {metadataTranslating ? "翻译中..." : "翻译当前作品元数据"}
             </button>
-            {metadataTranslateError && (
-              <div className="text-[10px] text-red-400">{metadataTranslateError}</div>
-            )}
           </div>
         ) : (
           /* 元数据信息（只读模式） */

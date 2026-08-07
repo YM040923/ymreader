@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -53,18 +52,16 @@ func CallCloudLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 		opts = &LLMCallOptions{}
 	}
 
-	maxRetries := cfg.MaxRetries
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
+	maxRetries := normalizeAIRetryCount(cfg.MaxRetries)
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			// 指数退避：1s, 2s, 4s...
-			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+			backoff := aiRetryDelay(lastErr, attempt)
 			log.Printf("[AI] Retry %d/%d after %v (error: %v)", attempt, maxRetries, backoff, lastErr)
-			time.Sleep(backoff)
+			if backoff > 0 {
+				time.Sleep(backoff)
+			}
 		}
 
 		start := time.Now()
@@ -73,15 +70,18 @@ func CallCloudLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 
 		// 记录使用量
 		record := AIUsageRecord{
-			Timestamp:    time.Now(),
-			Provider:     cfg.CloudProvider,
-			Model:        cfg.CloudModel,
-			PromptTokens: usage.PromptTokens,
-			OutputTokens: usage.OutputTokens,
-			TotalTokens:  usage.TotalTokens,
-			Scenario:     opts.Scenario,
-			Success:      err == nil,
-			DurationMs:   duration,
+			Timestamp:       time.Now(),
+			Provider:        cfg.CloudProvider,
+			Model:           cfg.CloudModel,
+			Protocol:        usage.Protocol,
+			PromptTokens:    usage.PromptTokens,
+			OutputTokens:    usage.OutputTokens,
+			ReasoningTokens: usage.ReasoningTokens,
+			TotalTokens:     usage.TotalTokens,
+			Scenario:        opts.Scenario,
+			Success:         err == nil,
+			DurationMs:      duration,
+			ErrorType:       aiErrorKind(err),
 		}
 		recordUsage(record)
 
@@ -90,24 +90,21 @@ func CallCloudLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 		}
 
 		lastErr = err
-
-		// 某些错误不需要重试（如认证失败、请求无效）
-		errStr := err.Error()
-		if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
-			strings.Contains(errStr, "invalid_api_key") || strings.Contains(errStr, "not configured") ||
-			strings.Contains(errStr, "does not support vision") {
+		if !shouldRetryAIError(err) {
 			return "", err
 		}
 	}
 
-	return "", fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
+	return "", fmt.Errorf("AI 请求在 %d 次尝试后仍失败: %w", maxRetries+1, lastErr)
 }
 
 // tokenUsage 从 API 响应中提取的 token 使用量
 type tokenUsage struct {
-	PromptTokens int
-	OutputTokens int
-	TotalTokens  int
+	PromptTokens    int
+	OutputTokens    int
+	ReasoningTokens int
+	TotalTokens     int
+	Protocol        string
 }
 
 // callLocalLLM 调用本地模型（通过 llama.cpp 的 OpenAI Compatible API）
@@ -136,15 +133,18 @@ func callLocalLLM(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCallOp
 
 	// 记录使用量
 	record := AIUsageRecord{
-		Timestamp:    time.Now(),
-		Provider:     "local",
-		Model:        filepath.Base(cfg.LocalModelPath),
-		PromptTokens: usage.PromptTokens,
-		OutputTokens: usage.OutputTokens,
-		TotalTokens:  usage.TotalTokens,
-		Scenario:     opts.Scenario,
-		Success:      err == nil,
-		DurationMs:   duration,
+		Timestamp:       time.Now(),
+		Provider:        "local",
+		Model:           filepath.Base(cfg.LocalModelPath),
+		Protocol:        usage.Protocol,
+		PromptTokens:    usage.PromptTokens,
+		OutputTokens:    usage.OutputTokens,
+		ReasoningTokens: usage.ReasoningTokens,
+		TotalTokens:     usage.TotalTokens,
+		Scenario:        opts.Scenario,
+		Success:         err == nil,
+		DurationMs:      duration,
+		ErrorType:       aiErrorKind(err),
 	}
 	recordUsage(record)
 
@@ -193,8 +193,19 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 }
 
 func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent, opts *LLMCallOptions) (string, tokenUsage, error) {
-	reqURL := apiURL + "/chat/completions"
+	endpoint, err := resolveOpenAIEndpoint(apiURL)
+	if err != nil {
+		return "", tokenUsage{}, err
+	}
+	switch endpoint.Protocol {
+	case AIProtocolResponses:
+		return callOpenAIResponses(cfg, endpoint, systemPrompt, userPrompt, maxTokens, temperature, images, opts)
+	default:
+		return callOpenAIChatCompletions(cfg, endpoint, systemPrompt, userPrompt, maxTokens, temperature, images, opts)
+	}
+}
 
+func callOpenAIChatCompletions(cfg AIConfig, endpoint ResolvedAIEndpoint, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent, opts *LLMCallOptions) (string, tokenUsage, error) {
 	// 构建 messages
 	messages := []interface{}{
 		map[string]string{"role": "system", "content": systemPrompt},
@@ -251,7 +262,14 @@ func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPro
 	body, _ := json.Marshal(requestBody)
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(string(body)))
+	req, err := http.NewRequest("POST", endpoint.URL, strings.NewReader(string(body)))
+	if err != nil {
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:      AIErrorInvalidConfig,
+			Message:   err.Error(),
+			Retryable: false,
+		}
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.CloudAPIKey)
 
@@ -261,13 +279,17 @@ func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPro
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		errMsg := string(respBody)
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    "读取 AI 响应失败: " + err.Error(),
+			Retryable:  false,
 		}
-		return "", tokenUsage{}, fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, errMsg)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", tokenUsage{}, parseAIProviderError(resp, respBody)
 	}
 
 	var data struct {
@@ -278,9 +300,12 @@ func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPro
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens           int `json:"prompt_tokens"`
+			CompletionTokens       int `json:"completion_tokens"`
+			TotalTokens            int `json:"total_tokens"`
+			CompletionTokenDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &data); err != nil {
@@ -288,21 +313,232 @@ func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPro
 		if len(preview) > 500 {
 			preview = preview[:500]
 		}
-		return "", tokenUsage{}, fmt.Errorf("failed to parse OpenAI API response: %w\nResponse body: %s", err, preview)
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("无法解析 AI 响应: %v；响应片段: %s", err, preview),
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
 	}
 	if len(data.Choices) == 0 {
-		return "", tokenUsage{}, fmt.Errorf("no response from LLM")
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    "AI 返回了空结果",
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
 	}
 
 	usage := tokenUsage{
-		PromptTokens: data.Usage.PromptTokens,
-		OutputTokens: data.Usage.CompletionTokens,
-		TotalTokens:  data.Usage.TotalTokens,
+		PromptTokens:    data.Usage.PromptTokens,
+		OutputTokens:    data.Usage.CompletionTokens,
+		ReasoningTokens: data.Usage.CompletionTokenDetails.ReasoningTokens,
+		TotalTokens:     data.Usage.TotalTokens,
+		Protocol:        string(AIProtocolChatCompletions),
 	}
 	if data.Choices[0].FinishReason == "length" {
-		return "", usage, fmt.Errorf("LLM response was truncated by the output token limit")
+		return "", usage, &AIProviderError{
+			Kind:       AIErrorTruncated,
+			StatusCode: resp.StatusCode,
+			Message:    "AI 输出达到 token 上限，响应被截断",
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
 	}
 	return data.Choices[0].Message.Content, usage, nil
+}
+
+func callOpenAIResponses(cfg AIConfig, endpoint ResolvedAIEndpoint, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent, opts *LLMCallOptions) (string, tokenUsage, error) {
+	requestBody := map[string]interface{}{
+		"model":             cfg.CloudModel,
+		"instructions":      systemPrompt,
+		"input":             buildResponsesInput(userPrompt, images),
+		"max_output_tokens": maxTokens,
+	}
+	if temperature >= 0 {
+		requestBody["temperature"] = temperature
+	}
+	if opts != nil && opts.JSONMode && supportsOpenAIJSONMode(cfg.CloudProvider) {
+		requestBody["text"] = map[string]interface{}{
+			"format": map[string]string{"type": "json_object"},
+		}
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:      AIErrorInvalidRequest,
+			Message:   "无法构造 AI 请求: " + err.Error(),
+			Retryable: false,
+		}
+	}
+
+	req, err := http.NewRequest("POST", endpoint.URL, strings.NewReader(string(body)))
+	if err != nil {
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:      AIErrorInvalidConfig,
+			Message:   err.Error(),
+			Retryable: false,
+		}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.CloudAPIKey)
+
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	if err != nil {
+		return "", tokenUsage{}, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    "读取 AI 响应失败: " + err.Error(),
+			Retryable:  false,
+		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", tokenUsage{}, parseAIProviderError(resp, respBody)
+	}
+
+	var data struct {
+		Status            string `json:"status"`
+		OutputText        string `json:"output_text"`
+		IncompleteDetails struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
+		Error *struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+		Usage struct {
+			InputTokens        int `json:"input_tokens"`
+			OutputTokens       int `json:"output_tokens"`
+			TotalTokens        int `json:"total_tokens"`
+			OutputTokenDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"output_tokens_details"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		preview := string(respBody)
+		if len(preview) > 500 {
+			preview = preview[:500]
+		}
+		return "", tokenUsage{}, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("无法解析 Responses API 响应: %v；响应片段: %s", err, preview),
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
+	}
+
+	usage := tokenUsage{
+		PromptTokens:    data.Usage.InputTokens,
+		OutputTokens:    data.Usage.OutputTokens,
+		ReasoningTokens: data.Usage.OutputTokenDetails.ReasoningTokens,
+		TotalTokens:     data.Usage.TotalTokens,
+		Protocol:        string(AIProtocolResponses),
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.OutputTokens
+	}
+
+	switch strings.ToLower(strings.TrimSpace(data.Status)) {
+	case "failed", "cancelled":
+		message := "Responses API 返回失败状态"
+		if data.Error != nil && data.Error.Message != "" {
+			message = data.Error.Message
+		}
+		return "", usage, &AIProviderError{
+			Kind:       AIErrorProvider,
+			StatusCode: resp.StatusCode,
+			Message:    message,
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
+	case "incomplete":
+		message := "AI 响应未完成"
+		kind := AIErrorInvalidResponse
+		if strings.Contains(strings.ToLower(data.IncompleteDetails.Reason), "max") {
+			message = "AI 输出达到 token 上限，响应被截断"
+			kind = AIErrorTruncated
+		}
+		return "", usage, &AIProviderError{
+			Kind:       kind,
+			StatusCode: resp.StatusCode,
+			Message:    message,
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
+	}
+
+	text := strings.TrimSpace(data.OutputText)
+	if text == "" {
+		var parts []string
+		for _, output := range data.Output {
+			for _, content := range output.Content {
+				if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+					parts = append(parts, content.Text)
+				}
+			}
+		}
+		text = strings.TrimSpace(strings.Join(parts, ""))
+	}
+	if text == "" {
+		return "", usage, &AIProviderError{
+			Kind:       AIErrorInvalidResponse,
+			StatusCode: resp.StatusCode,
+			Message:    "Responses API 返回了空结果",
+			RequestID:  providerRequestID(resp, providerErrorEnvelope{}),
+			Retryable:  false,
+		}
+	}
+	return text, usage, nil
+}
+
+func buildResponsesInput(userPrompt string, images []ImageContent) interface{} {
+	if len(images) == 0 {
+		return userPrompt
+	}
+
+	content := []interface{}{
+		map[string]string{"type": "input_text", "text": userPrompt},
+	}
+	for _, img := range images {
+		imageURL := ""
+		if img.Base64 != "" {
+			mimeType := img.MimeType
+			if mimeType == "" {
+				mimeType = "image/jpeg"
+			}
+			imageURL = fmt.Sprintf("data:%s;base64,%s", mimeType, img.Base64)
+		} else if img.URL != "" {
+			imageURL = img.URL
+		}
+		if imageURL != "" {
+			content = append(content, map[string]string{
+				"type":      "input_image",
+				"image_url": imageURL,
+			})
+		}
+	}
+	return []map[string]interface{}{{
+		"role":    "user",
+		"content": content,
+	}}
 }
 
 func supportsOpenAIJSONMode(provider string) bool {
@@ -393,6 +629,7 @@ func callAnthropic(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTok
 		PromptTokens: data.Usage.InputTokens,
 		OutputTokens: data.Usage.OutputTokens,
 		TotalTokens:  data.Usage.InputTokens + data.Usage.OutputTokens,
+		Protocol:     "anthropic",
 	}
 
 	for _, c := range data.Content {
@@ -484,6 +721,7 @@ func callGemini(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens
 		PromptTokens: data.UsageMetadata.PromptTokenCount,
 		OutputTokens: data.UsageMetadata.CandidatesTokenCount,
 		TotalTokens:  data.UsageMetadata.TotalTokenCount,
+		Protocol:     "gemini",
 	}
 
 	if len(data.Candidates) > 0 && len(data.Candidates[0].Content.Parts) > 0 {

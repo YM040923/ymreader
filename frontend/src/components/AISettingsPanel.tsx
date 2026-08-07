@@ -117,6 +117,7 @@ interface AIUsageStats {
   failedCalls: number;
   totalPromptTokens: number;
   totalOutputTokens: number;
+  totalReasoningTokens?: number;
   totalTokens: number;
   avgDurationMs: number;
   byScenario: Record<string, number>;
@@ -127,7 +128,10 @@ interface AIUsageStats {
     model: string;
     promptTokens: number;
     outputTokens: number;
+    reasoningTokens?: number;
     totalTokens: number;
+    protocol?: string;
+    errorType?: string;
     scenario: string;
     success: boolean;
     durationMs: number;
@@ -141,7 +145,7 @@ export function AISettingsPanel() {
   const [status, setStatus] = useState<AIStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
-  const [fetchedModels, setFetchedModels] = useState<{ id: string; name?: string }[]>([]);
+  const [fetchedModels, setFetchedModels] = useState<{ id: string; name?: string; status?: string }[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [modelMode, setModelMode] = useState<"preset" | "fetch" | "manual">("preset");
@@ -150,7 +154,13 @@ export function AISettingsPanel() {
   const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    errorType?: string;
+    statusCode?: number;
+    requestId?: string;
+  } | null>(null);
 
   // 本地模型状态
   const [localStatus, setLocalStatus] = useState<LocalAIStatus | null>(null);
@@ -171,7 +181,7 @@ export function AISettingsPanel() {
       setConfig({
         ...cfg,
         maxTokens: cfg.maxTokens || 2000,
-        maxRetries: cfg.maxRetries ?? 2,
+        maxRetries: Math.max(0, Math.min(2, cfg.maxRetries ?? 2)),
         // 本地模型默认值
         enableLocalAI: cfg.enableLocalAI ?? false,
         localEngine: cfg.localEngine || "llama.cpp",
@@ -208,23 +218,35 @@ export function AISettingsPanel() {
   }, [config]);
 
   const handleTestConnection = useCallback(async () => {
+    if (!config) return;
     setTesting(true);
     setTestResult(null);
     try {
-      // 先保存配置
-      if (config) {
-        await fetch(apiPath("/api/ai/settings"), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
-        });
-      }
-      const res = await fetch(apiPath("/api/ai/test"), { method: "POST" });
+      const res = await fetch(apiPath("/api/ai/test"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
       const data = await res.json();
       if (res.ok) {
-        setTestResult({ success: true, message: aiT.connectionSuccess || "Connection OK" });
+        const details = [data.model, data.protocol].filter(Boolean).join(" · ");
+        setTestResult({
+          success: true,
+          message: `${aiT.connectionSuccess || "连接成功"}${details ? `：${details}` : ""}`,
+        });
       } else {
-        setTestResult({ success: false, message: data.error || (aiT.connectionFailed || "Connection Failed") });
+        const details = [
+          data.statusCode ? `HTTP ${data.statusCode}` : "",
+          data.errorType || "",
+          data.requestId ? `request_id: ${data.requestId}` : "",
+        ].filter(Boolean);
+        setTestResult({
+          success: false,
+          message: `${data.error || (aiT.connectionFailed || "连接失败")}${details.length ? `（${details.join(" · ")}）` : ""}`,
+          errorType: data.errorType,
+          statusCode: data.statusCode,
+          requestId: data.requestId,
+        });
       }
     } catch (err) {
       setTestResult({ success: false, message: err instanceof Error ? err.message : "Error" });
@@ -328,32 +350,35 @@ export function AISettingsPanel() {
     setFetchingModels(true);
     setFetchError(null);
     try {
-      // Save config first to ensure server has the latest API key
-      await fetch(apiPath("/api/ai/settings"), {
-        method: "PUT",
+      const res = await fetch(apiPath("/api/ai/models"), {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
-
-      const params = new URLSearchParams({
-        provider: config.cloudProvider,
-        apiUrl: config.cloudApiUrl,
-      });
-      const res = await fetch(apiPath(`/api/ai/models?${params}`));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
+        const requestId = data.requestId ? ` · request_id: ${data.requestId}` : "";
+        throw new Error(`${data.error || `HTTP ${res.status}`}${requestId}`);
       }
       const data = await res.json();
       if (Array.isArray(data.models) && data.models.length > 0) {
-        setFetchedModels(data.models);
+        const models = data.models
+          .map((model: string | { id?: string; name?: string; status?: string }) =>
+            typeof model === "string" ? { id: model, name: model } : model
+          )
+          .filter((model: { id?: string }) => Boolean(model.id)) as {
+            id: string;
+            name?: string;
+            status?: string;
+          }[];
+        setFetchedModels(models);
         setModelMode("fetch");
         // Auto-select current model if in list, otherwise select first
-        const found = data.models.find(
+        const found = models.find(
           (m: { id: string }) => m.id === config.cloudModel
         );
-        if (!found) {
-          setConfig({ ...config, cloudModel: data.models[0].id });
+        if (!found && models[0]) {
+          setConfig({ ...config, cloudModel: models[0].id });
         }
       } else {
         setFetchError(aiT.noModelsFound || "No models found");
@@ -569,6 +594,7 @@ export function AISettingsPanel() {
                     {fetchedModels.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id}
+                        {m.status ? ` · ${m.status === "pre-offline" ? "即将下线" : m.status}` : ""}
                       </option>
                     ))}
                   </select>
@@ -686,14 +712,14 @@ export function AISettingsPanel() {
                     <input
                       type="number"
                       min={0}
-                      max={5}
+                      max={2}
                       value={config.maxRetries}
-                      onChange={(e) => setConfig({ ...config, maxRetries: Math.max(0, Math.min(5, parseInt(e.target.value) || 0)) })}
+                      onChange={(e) => setConfig({ ...config, maxRetries: Math.max(0, Math.min(2, parseInt(e.target.value) || 0)) })}
                       className="w-full sm:flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-foreground outline-none"
                     />
                   </div>
                   <p className="text-[10px] text-muted/70 pl-0 sm:pl-[7.5rem]">
-                    {aiT.maxRetriesHint || "Auto-retry count on API failure (0-5)"}
+                    {aiT.maxRetriesHint || "仅对限流、超时和服务端故障重试（0-2）"}
                   </p>
                 </div>
               )}

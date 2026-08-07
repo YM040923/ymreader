@@ -54,6 +54,7 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 		aiAdmin.GET("/settings", ai.GetSettings)
 		aiAdmin.PUT("/settings", ai.UpdateSettings)
 		aiAdmin.GET("/models", ai.Models)
+		aiAdmin.POST("/models", ai.Models)
 		aiAdmin.DELETE("/usage", ai.ResetUsageStats)
 		aiAdmin.POST("/test", ai.TestConnection)
 		aiAdmin.GET("/prompts", ai.GetPromptTemplates)

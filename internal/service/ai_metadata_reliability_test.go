@@ -101,8 +101,8 @@ func TestTranslateMetadataFieldsUsesCheapStructuredZhipuRequest(t *testing.T) {
 	if thinking["type"] != "disabled" {
 		t.Fatalf("thinking = %#v, want disabled", requestBody["thinking"])
 	}
-	if got := int(requestBody["max_tokens"].(float64)); got > 2000 {
-		t.Fatalf("max_tokens = %d, want <= 2000 for metadata translation", got)
+	if got := int(requestBody["max_tokens"].(float64)); got > 512 {
+		t.Fatalf("max_tokens = %d, want <= 512 for a short metadata translation", got)
 	}
 }
 
@@ -137,5 +137,35 @@ func TestOpenAICompatibleRejectsLengthTruncatedResponse(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("callOpenAICompatible accepted a length-truncated response")
+	}
+}
+
+func TestTranslateMetadataFieldsDoesNotRetryDeterministicProviderError(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"message_zh": "请求中的模型或服务 ID test-model 不存在",
+			},
+		})
+	}))
+	defer server.Close()
+
+	_, err := TranslateMetadataFields(AIConfig{
+		EnableCloudAI: true,
+		CloudProvider: "compatible",
+		CloudAPIKey:   "test-key",
+		CloudAPIURL:   server.URL,
+		CloudModel:    "test-model",
+		MaxRetries:    2,
+	}, map[string]string{"title": "English title"}, "zh-CN")
+	if err == nil {
+		t.Fatal("TranslateMetadataFields unexpectedly succeeded")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("request count = %d, want 1 for deterministic provider error", got)
 	}
 }

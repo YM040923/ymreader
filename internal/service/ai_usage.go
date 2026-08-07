@@ -46,29 +46,33 @@ func GetAIStatus() AIStatus {
 
 // AIUsageRecord 记录单次 AI 调用的 token 使用量
 type AIUsageRecord struct {
-	Timestamp    time.Time `json:"timestamp"`
-	Provider     string    `json:"provider"`
-	Model        string    `json:"model"`
-	PromptTokens int       `json:"promptTokens"`
-	OutputTokens int       `json:"outputTokens"`
-	TotalTokens  int       `json:"totalTokens"`
-	Scenario     string    `json:"scenario"` // translate, summary, tag, chat 等
-	Success      bool      `json:"success"`
-	DurationMs   int64     `json:"durationMs"`
+	Timestamp       time.Time `json:"timestamp"`
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	Protocol        string    `json:"protocol,omitempty"`
+	PromptTokens    int       `json:"promptTokens"`
+	OutputTokens    int       `json:"outputTokens"`
+	ReasoningTokens int       `json:"reasoningTokens"`
+	TotalTokens     int       `json:"totalTokens"`
+	Scenario        string    `json:"scenario"` // translate, summary, tag, chat 等
+	Success         bool      `json:"success"`
+	DurationMs      int64     `json:"durationMs"`
+	ErrorType       string    `json:"errorType,omitempty"`
 }
 
 // AIUsageStats AI 使用量统计汇总
 type AIUsageStats struct {
-	TotalCalls        int             `json:"totalCalls"`
-	SuccessCalls      int             `json:"successCalls"`
-	FailedCalls       int             `json:"failedCalls"`
-	TotalPromptTokens int             `json:"totalPromptTokens"`
-	TotalOutputTokens int             `json:"totalOutputTokens"`
-	TotalTokens       int             `json:"totalTokens"`
-	AvgDurationMs     int64           `json:"avgDurationMs"`
-	ByScenario        map[string]int  `json:"byScenario"`
-	ByProvider        map[string]int  `json:"byProvider"`
-	Records           []AIUsageRecord `json:"records"` // 最近 N 条记录
+	TotalCalls           int             `json:"totalCalls"`
+	SuccessCalls         int             `json:"successCalls"`
+	FailedCalls          int             `json:"failedCalls"`
+	TotalPromptTokens    int             `json:"totalPromptTokens"`
+	TotalOutputTokens    int             `json:"totalOutputTokens"`
+	TotalReasoningTokens int             `json:"totalReasoningTokens"`
+	TotalTokens          int             `json:"totalTokens"`
+	AvgDurationMs        int64           `json:"avgDurationMs"`
+	ByScenario           map[string]int  `json:"byScenario"`
+	ByProvider           map[string]int  `json:"byProvider"`
+	Records              []AIUsageRecord `json:"records"` // 最近 N 条记录
 }
 
 var (
@@ -108,6 +112,7 @@ func GetAIUsageStats() AIUsageStats {
 		}
 		stats.TotalPromptTokens += r.PromptTokens
 		stats.TotalOutputTokens += r.OutputTokens
+		stats.TotalReasoningTokens += r.ReasoningTokens
 		stats.TotalTokens += r.TotalTokens
 		totalDuration += r.DurationMs
 		stats.ByScenario[r.Scenario]++
