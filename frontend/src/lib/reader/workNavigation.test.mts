@@ -58,6 +58,19 @@ assert.deepEqual(
   slicePagesForUnit(physicalPages, work.units[1]),
   ["page-4", "page-5", "page-6", "page-7", "page-8", "page-9"],
 );
+assert.deepEqual(
+  slicePagesForUnit(
+    ["page-0", "page-1", "page-2", "page-3"],
+    {
+      ...work.units[0],
+      comicId: "freshly-extracted-pdf",
+      startPage: 0,
+      pageCount: 0,
+    },
+  ),
+  ["page-0", "page-1", "page-2", "page-3"],
+  "a stale zero Work pageCount must not hide pages returned by the comic pages API",
+);
 assert.equal(clampAbsolutePageToUnit(work.units[1], 2), 4);
 assert.equal(clampAbsolutePageToUnit(work.units[1], 99), 9);
 assert.equal(relativePageForUnit(work.units[1], 7), 3);

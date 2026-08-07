@@ -65,7 +65,11 @@ func SearchKitsu(query, lang string) []ComicMetadata {
 
 		title := attrs.CanonicalTitle
 		if isZh {
-			if t := attrs.Titles["ja_jp"]; t != "" {
+			if t := attrs.Titles["zh_cn"]; t != "" {
+				title = t
+			} else if t := attrs.Titles["zh_tw"]; t != "" {
+				title = t
+			} else if t := attrs.Titles["zh"]; t != "" {
 				title = t
 			}
 		} else {

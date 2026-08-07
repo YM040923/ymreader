@@ -607,7 +607,11 @@ export default function ScraperPage() {
                       {/* 封面 */}
                       <div className="relative h-11 w-8 flex-shrink-0 overflow-hidden rounded-lg border border-border/30 bg-muted/10">
                         <Image
-                          src={item.coverUrl || apiPath(`/api/comics/${item.id}/thumbnail`)}
+                          src={item.coverUrl || (
+                            item.entityType === "work"
+                              ? apiPath(`/api/opds/work-cover/${item.id}`)
+                              : apiPath(`/api/comics/${item.id}/thumbnail`)
+                          )}
                           alt=""
                           fill
                           className="object-cover"
@@ -1027,6 +1031,9 @@ export default function ScraperPage() {
                           className="object-cover"
                           sizes="28px"
                           unoptimized
+                          onError={(event) => {
+                            event.currentTarget.src = apiPath("/api/placeholder/56/80");
+                          }}
                         />
                       </div>
                       <div className="flex h-7 w-7 items-center justify-center rounded bg-accent/10 flex-shrink-0">
@@ -1111,6 +1118,9 @@ export default function ScraperPage() {
                               className="object-cover"
                               sizes="24px"
                               unoptimized
+                              onError={(event) => {
+                                event.currentTarget.src = apiPath("/api/placeholder/48/68");
+                              }}
                             />
                           </div>
                           <div className="flex-1 min-w-0">

@@ -64,7 +64,7 @@ func SearchMangaDex(query, lang string) []ComicMetadata {
 		attrs := manga.Attributes
 
 		// Title
-		title := pickLangValue(attrs.Title, lang)
+		title := pickMangaDexLocalizedValue(attrs.Title, attrs.AltTitles, lang)
 
 		// Description
 		desc := pickLangValue(attrs.Description, lang)
@@ -131,4 +131,37 @@ func SearchMangaDex(query, lang string) []ComicMetadata {
 		})
 	}
 	return results
+}
+
+func pickMangaDexLocalizedValue(primary map[string]string, alternatives []map[string]string, lang string) string {
+	if strings.HasPrefix(strings.ToLower(lang), "zh") {
+		for _, values := range append([]map[string]string{primary}, alternatives...) {
+			if value := pickChineseLangValue(values, lang); value != "" {
+				return value
+			}
+		}
+	}
+	if value := pickLangValue(primary, lang); value != "" {
+		return value
+	}
+	for _, values := range alternatives {
+		if value := pickLangValue(values, lang); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func pickChineseLangValue(values map[string]string, lang string) string {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(lang), "_", "-"))
+	keys := []string{"zh", "zh-hans", "zh-cn", "zh-sg", "zh-hant", "zh-tw", "zh-hk"}
+	if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-hant" {
+		keys = []string{"zh-hant", "zh-tw", "zh-hk", "zh", "zh-hans", "zh-cn", "zh-sg"}
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }

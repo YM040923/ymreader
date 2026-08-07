@@ -32,6 +32,8 @@ export interface ReaderOptions {
   progressTracking: boolean;
   // 无限滚动（webtoon 模式）
   infiniteScroll: boolean;
+  // 长条模式下把后续话直接拼接在当前话后面
+  continuousReading: boolean;
   // 自动翻页间隔（秒），0 表示禁用
   autoPageInterval: number;
   // 显示页面翻译按钮
@@ -60,6 +62,7 @@ export const defaultReaderOptions: ReaderOptions = {
   defaultOverlay: false,
   progressTracking: true,
   infiniteScroll: false,
+  continuousReading: false,
   autoPageInterval: 10,
   showTranslate: true,
   showAIChat: true,

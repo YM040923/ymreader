@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -204,6 +205,7 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		relative string
 		data     []byte
 	}{
+		{id: "opds-physical-ch1", relative: "Adaptive Work/Ch.0001.cbz", data: createImageCBZ(t)},
 		{id: "opds-physical-v10", relative: "Adaptive Work/Volume 10.cbz", data: createImageCBZ(t)},
 		{id: "opds-physical-v2", relative: "Adaptive Work/Volume 2.zip", data: createImageCBZ(t)},
 		{id: "opds-physical-v1", relative: "Adaptive Work/Volume 01.pdf", data: []byte("%PDF-1.4\n%%EOF\n")},
@@ -233,28 +235,54 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 	}
 
 	works, err := loadOPDSWorksFromResponseFixture(user.ID, library.ID)
-	if err != nil || len(works) != 1 || len(works[0].Units) != 3 {
+	if err != nil || len(works) != 1 || len(works[0].Units) != 4 {
 		t.Fatalf("multi-physical fixture works=%d units=%d err=%v", len(works), unitCount(works), err)
+	}
+	catalog := performOPDSBasicRequest(router, "/api/opds/works", user.Username, token)
+	if catalog.Code != http.StatusOK {
+		t.Fatalf("multi-physical Work catalog returned %d: %s", catalog.Code, catalog.Body.String())
+	}
+	catalogBody := catalog.Body.String()
+	workHref := "/api/opds/works/" + works[0].ID
+	if !strings.Contains(catalogBody, `rel="subsection" href="http://example.com`+workHref+`" type="`+service.OPDSAcquisitionMIME+`"`) {
+		t.Fatalf("multi-physical Work must link directly to its acquisition feed: %s", catalogBody)
 	}
 	path := "/api/opds/works/" + works[0].ID
 	response := performOPDSBasicRequest(router, path, user.Username, token)
 	if response.Code != http.StatusOK {
 		t.Fatalf("multi-physical Work feed returned %d: %s", response.Code, response.Body.String())
 	}
+	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, service.OPDSAcquisitionMIME) {
+		t.Fatalf("multi-physical Work feed Content-Type = %q, want acquisition", contentType)
+	}
 	body := response.Body.String()
-	if strings.Count(body, "<entry>") != 3 {
-		t.Fatalf("multi-physical Work should expose three physical acquisitions: %s", body)
+	if strings.Count(body, "<entry>") != 4 {
+		t.Fatalf("multi-physical Work should expose four physical acquisitions: %s", body)
 	}
-	if strings.Contains(body, "/continuous/") || strings.Contains(body, "/api/opds/units/") {
-		t.Fatalf("multi-physical Work exposed virtual or continuous acquisitions: %s", body)
+	if strings.Contains(body, "/continuous/") || !strings.Contains(body, `rel="http://opds-spec.org/acquisition"`) {
+		t.Fatalf("multi-physical Work did not expose direct acquisitions: %s", body)
 	}
-	expectedLinks := []string{
+	if strings.Contains(body, `rel="http://vaemendis.net/opds-pse/stream"`) {
+		t.Fatalf("physical CBZ entries must not advertise a competing PSE stream: %s", body)
+	}
+	for _, title := range []string{
+		"<title>第1话</title>",
+		"<title>Volume 01</title>",
+		"<title>Volume 2</title>",
+		"<title>Volume 10</title>",
+	} {
+		if !strings.Contains(body, title) {
+			t.Fatalf("multi-physical acquisition display title must hide its file extension; missing %s: %s", title, body)
+		}
+	}
+	expectedUnits := []string{
+		"/api/opds/download/opds-physical-ch1/%E7%AC%AC1%E8%AF%9D.cbz",
 		"/api/opds/download/opds-physical-v1/Volume%2001.pdf",
 		"/api/opds/download/opds-physical-v2/Volume%202.zip",
 		"/api/opds/download/opds-physical-v10/Volume%2010.cbz",
 	}
 	lastPosition := -1
-	for _, link := range expectedLinks {
+	for _, link := range expectedUnits {
 		position := strings.Index(body, link)
 		if position < 0 {
 			t.Fatalf("multi-physical Work missing %s: %s", link, body)
@@ -265,8 +293,15 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		lastPosition = position
 	}
 	fullIDs := opdsEntryIDs(t, body)
-	if len(fullIDs) != 3 || fullIDs[0] == fullIDs[1] || fullIDs[1] == fullIDs[2] || fullIDs[0] == fullIDs[2] {
+	if len(fullIDs) != 4 {
 		t.Fatalf("physical acquisition IDs are not unique: %#v", fullIDs)
+	}
+	seenIDs := make(map[string]struct{}, len(fullIDs))
+	for _, id := range fullIDs {
+		if _, exists := seenIDs[id]; exists {
+			t.Fatalf("physical acquisition IDs are not unique: %#v", fullIDs)
+		}
+		seenIDs[id] = struct{}{}
 	}
 	repeated := performOPDSBasicRequest(router, path, user.Username, token)
 	if got := opdsEntryIDs(t, repeated.Body.String()); !equalStrings(got, fullIDs) {
@@ -280,6 +315,17 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		t.Fatalf("pagination changed or duplicated physical Units: full=%#v paged=%#v", fullIDs, pagedIDs)
 	}
 
+	unitDetail := performOPDSBasicRequest(
+		router,
+		"/api/opds/works/"+works[0].ID+"/units/opds-physical-v2",
+		user.Username,
+		token,
+	)
+	if unitDetail.Code != http.StatusOK ||
+		!strings.Contains(unitDetail.Body.String(), `/api/opds/download/opds-physical-v2/Volume%202.zip`) {
+		t.Fatalf("physical Unit detail did not expose the real acquisition: %d %s", unitDetail.Code, unitDetail.Body.String())
+	}
+
 	rangeResponse := performOPDSRequest(
 		router,
 		http.MethodGet,
@@ -290,6 +336,50 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 	)
 	if rangeResponse.Code != http.StatusPartialContent || rangeResponse.Body.Len() != 10 {
 		t.Fatalf("physical Unit range status=%d length=%d", rangeResponse.Code, rangeResponse.Body.Len())
+	}
+
+	localizedDownload := performOPDSBasicRequest(
+		router,
+		"/api/opds/download/opds-physical-ch1/%E7%AC%AC1%E8%AF%9D.cbz",
+		user.Username,
+		token,
+	)
+	if localizedDownload.Code != http.StatusOK {
+		t.Fatalf("localized acquisition download returned %d: %s", localizedDownload.Code, localizedDownload.Body.String())
+	}
+	_, dispositionParams, err := mime.ParseMediaType(localizedDownload.Header().Get("Content-Disposition"))
+	if err != nil || dispositionParams["filename"] != "第1话.cbz" {
+		t.Fatalf("localized acquisition Content-Disposition = %q params=%#v err=%v", localizedDownload.Header().Get("Content-Disposition"), dispositionParams, err)
+	}
+}
+
+func TestStripOPDSDisplayExtensionPreservesChapterNumberDots(t *testing.T) {
+	tests := map[string]string{
+		"Ch.0001 - 第一话.cbz": "Ch.0001 - 第一话",
+		"Ch.0002 - 第二话":     "Ch.0002 - 第二话",
+		"C.003":             "C.003",
+		"第001话.zip":         "第001话",
+		"Volume 01.PDF":     "Volume 01",
+	}
+	for input, expected := range tests {
+		if actual := stripOPDSDisplayExtension(input); actual != expected {
+			t.Fatalf("stripOPDSDisplayExtension(%q) = %q, want %q", input, actual, expected)
+		}
+	}
+}
+
+func TestOPDSDisplayTitleLocalizesChapterWithoutShowingExtension(t *testing.T) {
+	tests := map[string]string{
+		"Ch.0001.cbz":         "第1话",
+		"Ch.0002 - 其实是恶魔.cbz": "第2话 其实是恶魔",
+		"Chapter 0012.zip":    "第12话",
+		"第003话 预告.cbz":        "第3话 预告",
+	}
+	for filename, expected := range tests {
+		title := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+		if actual := opdsDisplayTitle(title); actual != expected {
+			t.Fatalf("opdsDisplayTitle(%q) = %q, want %q", title, actual, expected)
+		}
 	}
 }
 

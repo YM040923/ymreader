@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/service"
-	"github.com/nowen-reader/nowen-reader/internal/store"
 )
 
 func (h *MetadataHandler) Batch(c *gin.Context) {
@@ -74,22 +73,20 @@ func (h *MetadataHandler) Batch(c *gin.Context) {
 func (h *MetadataHandler) TranslateBatch(c *gin.Context) {
 	var body struct {
 		TargetLang string                  `json:"targetLang"`
-		Engine     service.TranslateEngine `json:"engine"` // 可选，指定翻译引擎
+		Engine     service.TranslateEngine `json:"engine"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.TargetLang == "" {
 		c.JSON(400, gin.H{"error": "targetLang is required"})
 		return
 	}
 
-	allComics, err := store.GetAllComicIDsAndFilenames()
+	targets, err := discoverMetadataTargets(c, nil)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to get comics"})
+		c.JSON(500, gin.H{"error": "Failed to get metadata targets"})
 		return
 	}
+	total := len(targets)
 
-	total := len(allComics)
-
-	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -101,69 +98,37 @@ func (h *MetadataHandler) TranslateBatch(c *gin.Context) {
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(jsonData))
 		c.Writer.Flush()
 	}
-
 	sendSSE(gin.H{"type": "start", "total": total})
 
-	translated := 0
-	skipped := 0
-	failed := 0
-
-	for i, comic := range allComics {
-		detail, err := store.GetComicByID(comic.ID)
-		if err != nil || detail == nil {
-			sendSSE(gin.H{"type": "progress", "current": i + 1, "total": total, "status": "skipped"})
-			skipped++
-			continue
-		}
-
-		// 构建待翻译字段
-		fields := map[string]string{}
-		if detail.Title != "" {
-			fields["title"] = detail.Title
-		}
-		if detail.Description != "" {
-			fields["description"] = detail.Description
-		}
-		if detail.Genre != "" {
-			fields["genre"] = detail.Genre
-		}
-
-		if len(fields) == 0 {
-			sendSSE(gin.H{"type": "progress", "current": i + 1, "total": total, "status": "skipped"})
-			skipped++
-			continue
-		}
-
-		// 使用多引擎翻译服务
-		result, err := service.TranslateMetadataFieldsMultiEngine(fields, body.TargetLang, body.Engine)
-		if err != nil {
-			sendSSE(gin.H{
-				"type": "progress", "current": i + 1, "total": total,
-				"status": "failed", "comicId": comic.ID, "error": err.Error(),
-			})
+	translated, skipped, failed := 0, 0, 0
+	for index, target := range targets {
+		progress := metadataProgressEvent(target, index+1, total)
+		result, translateErr := translateMetadataTarget(target, body.TargetLang, body.Engine)
+		if translateErr != nil {
+			progress["status"] = "failed"
+			progress["error"] = translateErr.Error()
+			sendSSE(progress)
 			failed++
 			continue
 		}
-
-		updates := map[string]interface{}{}
-		for k, v := range result.Fields {
-			if v != "" {
-				updates[k] = v
-			}
-		}
-
-		if len(updates) > 0 {
-			_ = store.UpdateComicFields(comic.ID, updates)
-			translated++
-			sendSSE(gin.H{
-				"type": "progress", "current": i + 1, "total": total,
-				"status": "translated", "comicId": comic.ID,
-				"engine": string(result.Engine), "cached": result.Cached,
-			})
-		} else {
+		if result == nil || len(result.Fields) == 0 {
+			progress["status"] = "skipped"
+			sendSSE(progress)
 			skipped++
-			sendSSE(gin.H{"type": "progress", "current": i + 1, "total": total, "status": "skipped"})
+			continue
 		}
+		if applyErr := applyMetadataTranslation(target, result.Fields); applyErr != nil {
+			progress["status"] = "failed"
+			progress["error"] = applyErr.Error()
+			sendSSE(progress)
+			failed++
+			continue
+		}
+		progress["status"] = "translated"
+		progress["engine"] = string(result.Engine)
+		progress["cached"] = result.Cached
+		sendSSE(progress)
+		translated++
 	}
 
 	sendSSE(gin.H{

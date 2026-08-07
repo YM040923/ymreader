@@ -108,13 +108,16 @@ func stripHTML(s string) string {
 }
 
 func pickLangValue(m map[string]string, lang string) string {
-	isZh := strings.HasPrefix(lang, "zh")
-	if isZh {
-		if v := m["zh"]; v != "" {
-			return v
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(lang), "_", "-"))
+	if strings.HasPrefix(normalized, "zh") {
+		keys := []string{"zh", "zh-hans", "zh-cn", "zh-sg", "zh-hant", "zh-tw", "zh-hk"}
+		if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-hant" {
+			keys = []string{"zh-hant", "zh-tw", "zh-hk", "zh", "zh-hans", "zh-cn", "zh-sg"}
 		}
-		if v := m["zh-hk"]; v != "" {
-			return v
+		for _, key := range keys {
+			if v := strings.TrimSpace(m[key]); v != "" {
+				return v
+			}
 		}
 	}
 	if v := m["en"]; v != "" {

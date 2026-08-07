@@ -19,6 +19,7 @@ import {
   Bookmark,
   List,
   MoreHorizontal,
+  Repeat2,
 } from "lucide-react";
 import { useState, useRef, useCallback } from "react";
 import { ComicReadingMode, ReadingDirection } from "@/types/reader";
@@ -37,6 +38,9 @@ interface ReaderToolbarProps {
   readerTheme: ReaderTheme;
   onBack: () => void;
   onPageChange: (page: number) => void;
+  progressPage?: number;
+  progressTotalPages?: number;
+  onProgressChange?: (page: number) => void;
   onModeChange: (mode: ComicReadingMode) => void;
   onDirectionChange: (dir: ReadingDirection) => void;
   onToggleFullscreen: () => void;
@@ -69,6 +73,17 @@ interface ReaderToolbarProps {
   onToggleRealisticFlip?: () => void;
   realisticFlipDisabledReason?: string | null;
   onShowThumbnails?: () => void;
+  chapterCurrent?: number;
+  chapterTotal?: number;
+  canGoPreviousChapter?: boolean;
+  canGoNextChapter?: boolean;
+  onPreviousChapter?: () => void;
+  onNextChapter?: () => void;
+  onShowChapters?: () => void;
+  continuousReading?: boolean;
+  onToggleContinuousReading?: () => void;
+  doubleCoverAlone?: boolean;
+  onToggleDoubleCoverAlone?: () => void;
 }
 
 export default function ReaderToolbar({
@@ -82,6 +97,9 @@ export default function ReaderToolbar({
   readerTheme,
   onBack,
   onPageChange,
+  progressPage,
+  progressTotalPages,
+  onProgressChange,
   onModeChange,
   onDirectionChange,
   onToggleFullscreen,
@@ -104,6 +122,17 @@ export default function ReaderToolbar({
   onToggleRealisticFlip,
   realisticFlipDisabledReason,
   onShowThumbnails,
+  chapterCurrent = 0,
+  chapterTotal = 0,
+  canGoPreviousChapter,
+  canGoNextChapter,
+  onPreviousChapter,
+  onNextChapter,
+  onShowChapters,
+  continuousReading,
+  onToggleContinuousReading,
+  doubleCoverAlone,
+  onToggleDoubleCoverAlone,
 }: ReaderToolbarProps) {
   const t = useTranslation();
   const [showPageInput, setShowPageInput] = useState(false);
@@ -115,14 +144,17 @@ export default function ReaderToolbar({
   const rafRef = useRef<number>(0);
 
   // 拖动中的页码显示值
-  const displayPage = isDragging ? dragValue : currentPage;
+  const progressCurrentPage = progressPage ?? currentPage;
+  const progressPageCount = progressTotalPages ?? totalPages;
+  const changeProgress = onProgressChange ?? onPageChange;
+  const displayPage = isDragging ? dragValue : progressCurrentPage;
 
   // 开始拖动
   const handleSliderStart = useCallback(() => {
     setIsDragging(true);
-    setDragValue(currentPage);
+    setDragValue(progressCurrentPage);
     onInteracting?.(true);
-  }, [currentPage, onInteracting]);
+  }, [progressCurrentPage, onInteracting]);
 
   // 拖动中：只更新预览值，节流触发页面跳转
   const handleSliderInput = useCallback((e: React.FormEvent<HTMLInputElement>) => {
@@ -131,23 +163,23 @@ export default function ReaderToolbar({
     // 使用 rAF 节流，拖动中也实时跳转但不会堆积
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
-      onPageChange(val);
+      changeProgress(val);
     });
-  }, [onPageChange]);
+  }, [changeProgress]);
 
   // 松手：确保最终值准确
   const handleSliderEnd = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    onPageChange(dragValue);
+    changeProgress(dragValue);
     setIsDragging(false);
     onInteracting?.(false);
-  }, [dragValue, onPageChange, onInteracting]);
+  }, [dragValue, changeProgress, onInteracting]);
 
   // 页码跳转
   const handlePageInputSubmit = () => {
     const num = parseInt(pageInputValue, 10);
-    if (!isNaN(num) && num >= 1 && num <= totalPages) {
-      onPageChange(num - 1);
+    if (!isNaN(num) && num >= 1 && num <= progressPageCount) {
+      changeProgress(num - 1);
     }
     setShowPageInput(false);
     setPageInputValue("");
@@ -338,18 +370,18 @@ export default function ReaderToolbar({
 
       {/* Bottom Bar */}
       <div
-        className={`fixed bottom-0 left-0 right-0 z-50 transition-all duration-300 ease-out ${
+        className={`fixed bottom-3 left-1/2 z-50 w-[min(96vw,1180px)] -translate-x-1/2 transition-all duration-300 ease-out ${
           visible
             ? "translate-y-0 opacity-100"
             : "translate-y-full opacity-0 pointer-events-none"
         }`}
       >
-        <div className="reader-toolbar-surface px-3 sm:px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] border-t">
+        <div className="overflow-hidden rounded-[22px] border border-white/[0.10] bg-[#151922]/95 px-3 sm:px-4 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] shadow-[0_18px_70px_rgba(0,0,0,0.48)] backdrop-blur-2xl">
           {/* Page Slider */}
-          <div className="flex items-center gap-3 sm:gap-4 py-2 sm:py-3">
+          <div className="flex items-center gap-3 sm:gap-4 py-2">
             <button
-              onClick={() => onPageChange(Math.max(0, currentPage - 1))}
-              disabled={currentPage === 0}
+              onClick={() => changeProgress(Math.max(0, progressCurrentPage - 1))}
+              disabled={progressCurrentPage === 0}
               className="reader-toolbar-button h-9 w-9 sm:h-8 sm:w-8 shrink-0 disabled:opacity-30"
             >
               <ChevronLeft className="h-5 w-5" />
@@ -359,7 +391,7 @@ export default function ReaderToolbar({
               <input
                 type="range"
                 min={0}
-                max={totalPages - 1}
+                max={Math.max(0, progressPageCount - 1)}
                 value={displayPage}
                 onInput={handleSliderInput}
                 onChange={handleSliderInput}
@@ -372,8 +404,8 @@ export default function ReaderToolbar({
             </div>
 
             <button
-              onClick={() => onPageChange(Math.min(totalPages - 1, currentPage + 1))}
-              disabled={currentPage >= totalPages - 1}
+              onClick={() => changeProgress(Math.min(progressPageCount - 1, progressCurrentPage + 1))}
+              disabled={progressCurrentPage >= progressPageCount - 1}
               className="reader-toolbar-button h-9 w-9 sm:h-8 sm:w-8 shrink-0 disabled:opacity-30"
             >
               <ChevronRight className="h-5 w-5" />
@@ -386,7 +418,7 @@ export default function ReaderToolbar({
                 setShowPageInput(true);
               }}
             >
-              {displayPage + 1} / {totalPages}
+              {displayPage + 1} / {progressPageCount}
             </span>
           </div>
 
@@ -396,11 +428,11 @@ export default function ReaderToolbar({
               <input
                 type="number"
                 min={1}
-                max={totalPages}
+                max={progressPageCount}
                 value={pageInputValue}
                 onChange={(e) => setPageInputValue(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handlePageInputSubmit()}
-                placeholder={`1-${totalPages}`}
+                placeholder={`1-${progressPageCount}`}
                 autoFocus
                 className="w-20 rounded-lg bg-white/[0.08] px-2.5 py-1.5 text-xs text-white text-center font-mono placeholder:text-white/30 outline-none reader-focus-ring"
                 onFocus={() => onInteracting?.(true)}
@@ -415,8 +447,40 @@ export default function ReaderToolbar({
             </div>
           )}
 
+          {/* Chapter navigation */}
+          {chapterTotal > 1 && (
+            <div className="grid grid-cols-[1fr_minmax(9rem,1.35fr)_1fr] items-center gap-2 border-t border-white/[0.07] py-1.5">
+              <button
+                onClick={onPreviousChapter}
+                disabled={!canGoPreviousChapter}
+                className="reader-toolbar-button min-h-10 justify-center gap-1.5 px-2 text-xs font-medium disabled:opacity-30"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                <span>上一话</span>
+              </button>
+              <button
+                onClick={onShowChapters}
+                className="reader-toolbar-button min-h-10 justify-center gap-2 px-3 text-xs font-semibold"
+              >
+                <List className="h-4 w-4" />
+                <span>目录</span>
+                <span className="font-mono text-[11px] reader-text-secondary">
+                  {Math.max(1, chapterCurrent)} / {chapterTotal}
+                </span>
+              </button>
+              <button
+                onClick={onNextChapter}
+                disabled={!canGoNextChapter}
+                className="reader-toolbar-button min-h-10 justify-center gap-1.5 px-2 text-xs font-medium disabled:opacity-30"
+              >
+                <span>下一话</span>
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {/* Mode & Settings */}
-          <div className="flex items-center justify-between border-t reader-divider py-2 sm:py-3">
+          <div className="flex items-center justify-between gap-2 border-t border-white/[0.07] py-1.5">
             {/* Reading Mode */}
             <div className="reader-mode-segment">
               {modeOptions.map((opt) => (
@@ -437,12 +501,41 @@ export default function ReaderToolbar({
 
             {/* Direction Toggle — 长条模式下隐藏（长条模式固定为从上到下，无需切换方向） */}
             <div className="flex items-center gap-1 sm:gap-2">
+              {mode === "double" && onToggleDoubleCoverAlone && (
+                <button
+                  onClick={onToggleDoubleCoverAlone}
+                  className={`reader-mode-segment-item gap-1 sm:gap-1.5 px-2 sm:px-3 ${
+                    doubleCoverAlone ? "reader-toolbar-button-active !text-accent" : ""
+                  }`}
+                  aria-pressed={doubleCoverAlone}
+                  title="双页模式下让首页单独显示"
+                >
+                  <BookOpen className="h-4 w-4" />
+                  <span className="hidden sm:inline">首页独显</span>
+                </button>
+              )}
+              {onToggleContinuousReading && chapterTotal > 1 && (
+                <button
+                  onClick={onToggleContinuousReading}
+                  className={`reader-mode-segment-item gap-1.5 px-2.5 sm:px-3 ${
+                    continuousReading
+                      ? "reader-toolbar-button-active !text-accent"
+                      : ""
+                  }`}
+                  aria-pressed={continuousReading}
+                  title="连续阅读会把下一话直接接在当前话下面"
+                >
+                  <Repeat2 className="h-4 w-4" />
+                  <span>连续阅读</span>
+                </button>
+              )}
               {mode !== "webtoon" && (
               <button
                 onClick={() => {
                   const next = direction === "ltr" ? "rtl" : "ltr";
                   onDirectionChange(next);
                 }}
+                title={direction === "rtl" ? t.readerOptions.rtl : t.readerOptions.ltr}
                 className={`reader-mode-segment-item gap-1 sm:gap-1.5 px-2 sm:px-3 ${
                   direction === "rtl"
                     ? "reader-toolbar-button-active !text-amber-400"
@@ -450,7 +543,9 @@ export default function ReaderToolbar({
                 }`}
               >
                 <ArrowLeftRight className="h-4 w-4" />
-                <span className="hidden sm:inline">{direction === "rtl" ? t.readerToolbar.rtl : t.readerToolbar.ltr}</span>
+                <span className="text-[11px] sm:text-xs">
+                  {direction === "rtl" ? t.readerOptions.rtl : t.readerOptions.ltr}
+                </span>
               </button>
               )}
 

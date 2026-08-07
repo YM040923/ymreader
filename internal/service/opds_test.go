@@ -399,6 +399,34 @@ func TestOPDSDownloadPathIncludesEscapedBasename(t *testing.T) {
 	}
 }
 
+func TestGenerateNavigationFeedLinksEachUnitToItsDetailFeed(t *testing.T) {
+	xml := GenerateNavigationFeed(NavigationFeedOptions{
+		BaseURL: "http://example.test",
+		Title:   "Demo Work",
+		FeedID:  "http://example.test/api/opds/works/demo",
+		Items: []OPDSNavigationItem{{
+			ID:        "unit-1",
+			Title:     "第 001 话",
+			Href:      "/api/opds/works/demo/units/unit-1",
+			CoverHref: "/api/opds/unit-cover/comic-1?page=0",
+		}},
+		Pagination: OPDSPagination{
+			SelfHref:     "/api/opds/works/demo",
+			TotalResults: 1,
+			ItemsPerPage: 100,
+		},
+	})
+	if !strings.Contains(xml, `rel="subsection"`) {
+		t.Fatalf("navigation feed missing subsection link: %s", xml)
+	}
+	if !strings.Contains(xml, `/api/opds/works/demo/units/unit-1`) {
+		t.Fatalf("navigation feed missing unit detail link: %s", xml)
+	}
+	if strings.Contains(xml, `rel="http://opds-spec.org/acquisition"`) {
+		t.Fatalf("navigation feed must not expose acquisition links directly: %s", xml)
+	}
+}
+
 func assertValidXML(t *testing.T, value string) {
 	t.Helper()
 	decoder := xml.NewDecoder(strings.NewReader(value))

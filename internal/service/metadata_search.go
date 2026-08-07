@@ -46,7 +46,7 @@ func SearchMetadata(query string, sources []string, lang string, contentType ...
 	}
 
 	// 按标题与搜索关键词的匹配度排序，优先返回最相关的结果
-	sortByRelevance(all, query)
+	sortByRelevance(all, query, lang)
 
 	return all
 }

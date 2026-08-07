@@ -45,6 +45,18 @@ import {
   relativePageForUnit,
   slicePagesForUnit,
 } from "@/lib/reader/workNavigation";
+import {
+  anchorFromContinuousPage,
+  anchorFromUnitPage,
+  buildContinuousPages,
+  continuousIndexForAnchor,
+  getContinuousUnitProgress,
+  isAtBackwardBoundary,
+  isAtForwardBoundary,
+  locateContinuousPage,
+  shouldAutoAdvanceChapter,
+  type ReadingAnchor,
+} from "@/lib/reader/continuousReading";
 
 // 跨卷导航信息
 type SeriesVolumeInfo = WorkUnit;
@@ -213,6 +225,11 @@ export default function ReaderPage() {
   const [seriesVolumes, setSeriesVolumes] = useState<SeriesVolumeInfo[]>([]);
   const [seriesName, setSeriesName] = useState<string>("");
   const [showChapterDrawer, setShowChapterDrawer] = useState(false);
+  const [continuousPagesByUnit, setContinuousPagesByUnit] = useState<Record<string, string[]>>({});
+  const [continuousActiveUnitId, setContinuousActiveUnitId] = useState("");
+  const routeUnitIdRef = useRef("");
+  const pendingContinuousAnchorRef = useRef<ReadingAnchor | null>(null);
+  const currentChapterRef = useRef<HTMLButtonElement | null>(null);
   // 无感跳转过渡提示
   const [volumeTransitionHint, setVolumeTransitionHint] = useState<string | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -353,11 +370,156 @@ export default function ReaderPage() {
   }, [toolbarVisible, currentPage, showOptionsPanel, toolbarInteracting, immersiveMode]);
 
   // 系列导航辅助函数
+  const continuousReadingEnabled = readerOpts.continuousReading;
+  const continuousScrollEnabled =
+    effectiveMode === "webtoon" && continuousReadingEnabled;
+  const navigationUnitId =
+    continuousScrollEnabled && continuousActiveUnitId
+      ? continuousActiveUnitId
+      : activeUnit?.id;
   const currentVolumeIdx = seriesVolumes.findIndex(
+    (volume) => volume.id === navigationUnitId,
+  );
+  const continuousStartIdx = seriesVolumes.findIndex(
     (volume) => volume.id === activeUnit?.id,
   );
   const prevVolume = currentVolumeIdx > 0 ? seriesVolumes[currentVolumeIdx - 1] : null;
   const nextVolume = currentVolumeIdx >= 0 && currentVolumeIdx < seriesVolumes.length - 1 ? seriesVolumes[currentVolumeIdx + 1] : null;
+  const continuousUnits = useMemo(
+    () => continuousStartIdx >= 0 ? seriesVolumes.slice(continuousStartIdx) : [],
+    [continuousStartIdx, seriesVolumes],
+  );
+  const continuousPages = useMemo(
+    () => buildContinuousPages(continuousUnits, continuousPagesByUnit),
+    [continuousPagesByUnit, continuousUnits],
+  );
+  const readerPages =
+    continuousScrollEnabled && continuousPages.length > 0
+      ? continuousPages.map((page) => page.url)
+      : pages;
+  const getCurrentReadingAnchor = useCallback((): ReadingAnchor | null => {
+    if (continuousScrollEnabled) {
+      return anchorFromContinuousPage(continuousPages, currentPage);
+    }
+    if (activeUnit) {
+      return anchorFromUnitPage(activeUnit, currentPage);
+    }
+    return null;
+  }, [
+    activeUnit,
+    continuousPages,
+    continuousScrollEnabled,
+    currentPage,
+  ]);
+  const setReaderPage = useCallback((page: number, totalPages: number) => {
+    const clamped = Math.max(0, Math.min(Math.max(0, totalPages - 1), page));
+    setCurrentPage(clamped);
+    currentPageRef.current = clamped;
+  }, []);
+  const enterContinuousAtAnchor = useCallback((anchor: ReadingAnchor | null) => {
+    if (!anchor) return;
+    setContinuousActiveUnitId(anchor.unitId);
+    pendingContinuousAnchorRef.current = anchor;
+    const index = continuousIndexForAnchor(continuousPages, anchor);
+    if (index >= 0) {
+      pendingContinuousAnchorRef.current = null;
+      setReaderPage(index, continuousPages.length);
+    }
+  }, [continuousPages, setReaderPage]);
+  const leaveContinuousAtAnchor = useCallback((anchor: ReadingAnchor | null) => {
+    if (!anchor) return;
+    const unit = seriesVolumes.find((candidate) => candidate.id === anchor.unitId);
+    if (!unit) return;
+    setContinuousActiveUnitId(unit.id);
+    setReaderPage(anchor.relativePage, Math.max(1, unit.pageCount));
+    if (readerNavigation.workId) {
+      router.replace(
+        buildUnitReaderPath(readerNavigation.workId, unit, anchor.absolutePage),
+      );
+    }
+  }, [
+    readerNavigation.workId,
+    router,
+    seriesVolumes,
+    setReaderPage,
+  ]);
+
+  useEffect(() => {
+    if (!continuousScrollEnabled || !pendingContinuousAnchorRef.current) return;
+    const index = continuousIndexForAnchor(
+      continuousPages,
+      pendingContinuousAnchorRef.current,
+    );
+    if (index < 0) return;
+    pendingContinuousAnchorRef.current = null;
+    setReaderPage(index, continuousPages.length);
+  }, [continuousPages, continuousScrollEnabled, setReaderPage]);
+
+  useEffect(() => {
+    if (!activeUnit || routeUnitIdRef.current === activeUnit.id) return;
+    routeUnitIdRef.current = activeUnit.id;
+    setContinuousActiveUnitId(activeUnit.id);
+  }, [activeUnit]);
+
+  useEffect(() => {
+    if (!activeUnit || pages.length === 0) return;
+    setContinuousPagesByUnit((current) => ({
+      ...current,
+      [activeUnit.id]: pages,
+    }));
+    if (!continuousActiveUnitId) {
+      setContinuousActiveUnitId(activeUnit.id);
+    }
+  }, [activeUnit, continuousActiveUnitId, pages]);
+
+  useEffect(() => {
+    if (!continuousScrollEnabled || currentVolumeIdx < 0) return;
+    let cancelled = false;
+    const candidates = seriesVolumes.slice(currentVolumeIdx, currentVolumeIdx + 3);
+
+    Promise.all(candidates.map(async (unit) => {
+      if (continuousPagesByUnit[unit.id]) return null;
+      if (unit.comicId === comicId && physicalPages.length > 0) {
+        return [unit.id, slicePagesForUnit(physicalPages, unit)] as const;
+      }
+      const response = await fetch(apiPath(`/api/comics/${unit.comicId}/pages`));
+      if (!response.ok) return null;
+      const data = await response.json();
+      const unitPhysicalPages = (data.pages || []).map((page: { url: string }) => page.url);
+      return [unit.id, slicePagesForUnit(unitPhysicalPages, unit)] as const;
+    })).then((loaded) => {
+      if (cancelled) return;
+      const additions = loaded.filter(
+        (item): item is readonly [string, string[]] => Boolean(item),
+      );
+      if (additions.length === 0) return;
+      setContinuousPagesByUnit((current) => ({
+        ...current,
+        ...Object.fromEntries(additions),
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    comicId,
+    continuousPagesByUnit,
+    continuousScrollEnabled,
+    currentVolumeIdx,
+    physicalPages,
+    seriesVolumes,
+  ]);
+
+  useEffect(() => {
+    if (!showChapterDrawer) return;
+    requestAnimationFrame(() => {
+      currentChapterRef.current?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+  }, [showChapterDrawer, navigationUnitId]);
 
   // 无感跨卷跳转
   const handleBoundaryReached = useCallback((dir: "next" | "prev") => {
@@ -395,6 +557,12 @@ export default function ReaderPage() {
     t.series.prevVolume,
   ]);
 
+  const handleReaderBoundaryReached = useCallback((dir: "next" | "prev") => {
+    if (shouldAutoAdvanceChapter(readerOpts.continuousReading, effectiveMode)) {
+      handleBoundaryReached(dir);
+    }
+  }, [effectiveMode, handleBoundaryReached, readerOpts.continuousReading]);
+
   // Keyboard navigation
   // Keyboard navigation
   const handleKeyDown = useCallback(
@@ -418,17 +586,27 @@ export default function ReaderPage() {
 
       if (isForward || e.key === "ArrowDown" || e.key === " ") {
         e.preventDefault();
-        if (currentPage >= pages.length - 1) {
+        if (isAtForwardBoundary(
+          effectiveMode,
+          currentPage,
+          pages.length,
+          readerOpts.doubleCoverAlone,
+        )) {
           finishSessionRef.current?.();
-          handleBoundaryReached("next");
+          handleReaderBoundaryReached("next");
         } else {
           setCurrentPage((p) => { const n = Math.min(pages.length - 1, p + step); currentPageRef.current = n; return n; });
         }
       } else if (isBack || e.key === "ArrowUp") {
         e.preventDefault();
-        if (currentPage <= 0) {
+        if (isAtBackwardBoundary(
+          effectiveMode,
+          currentPage,
+          pages.length,
+          readerOpts.doubleCoverAlone,
+        )) {
           finishSessionRef.current?.();
-          handleBoundaryReached("prev");
+          handleReaderBoundaryReached("prev");
         } else {
           setCurrentPage((p) => { const n = Math.max(0, p - step); currentPageRef.current = n; return n; });
         }
@@ -461,7 +639,23 @@ export default function ReaderPage() {
         setShowShortcutsHelp((v) => !v);
       }
     },
-    [direction, mode, effectiveMode, pages.length, isFullscreen, router, showInfoPanel, showOptionsPanel, currentPage, handleBoundaryReached, immersiveMode, showThumbnails, showShortcutsHelp, readerNavigation.workId]
+    [
+      direction,
+      mode,
+      effectiveMode,
+      pages.length,
+      readerOpts.doubleCoverAlone,
+      isFullscreen,
+      router,
+      showInfoPanel,
+      showOptionsPanel,
+      currentPage,
+      handleReaderBoundaryReached,
+      immersiveMode,
+      showThumbnails,
+      showShortcutsHelp,
+      readerNavigation.workId,
+    ]
   );
 
   useEffect(() => {
@@ -483,14 +677,24 @@ export default function ReaderPage() {
       setTimeout(() => { wheelThrottleRef.current = false; }, 300);
       const step = effectiveMode === "double" ? 2 : 1;
       if (delta > 0) {
-        if (currentPage >= pages.length - 1) {
-          handleBoundaryReached("next");
+        if (isAtForwardBoundary(
+          effectiveMode,
+          currentPage,
+          pages.length,
+          readerOpts.doubleCoverAlone,
+        )) {
+          handleReaderBoundaryReached("next");
         } else {
           setCurrentPage((p) => { const n = Math.min(pages.length - 1, p + step); currentPageRef.current = n; return n; });
         }
       } else {
-        if (currentPage <= 0) {
-          handleBoundaryReached("prev");
+        if (isAtBackwardBoundary(
+          effectiveMode,
+          currentPage,
+          pages.length,
+          readerOpts.doubleCoverAlone,
+        )) {
+          handleReaderBoundaryReached("prev");
         } else {
           setCurrentPage((p) => { const n = Math.max(0, p - step); currentPageRef.current = n; return n; });
         }
@@ -498,7 +702,17 @@ export default function ReaderPage() {
     };
     window.addEventListener("wheel", handleWheel, { passive: true });
     return () => window.removeEventListener("wheel", handleWheel);
-  }, [mode, effectiveMode, currentPage, pages.length, showInfoPanel, showOptionsPanel, toolbarInteracting, handleBoundaryReached]);
+  }, [
+    mode,
+    effectiveMode,
+    currentPage,
+    pages.length,
+    readerOpts.doubleCoverAlone,
+    showInfoPanel,
+    showOptionsPanel,
+    toolbarInteracting,
+    handleReaderBoundaryReached,
+  ]);
 
   // Fullscreen
   const toggleFullscreen = useCallback(() => {
@@ -525,12 +739,56 @@ export default function ReaderPage() {
 
   const handlePageChange = useCallback(
     (page: number) => {
-      const clamped = Math.max(0, Math.min(pages.length - 1, page));
+      const clamped = Math.max(0, Math.min(readerPages.length - 1, page));
       setCurrentPage(clamped);
       currentPageRef.current = clamped;
+      if (continuousScrollEnabled) {
+        const context = locateContinuousPage(continuousPages, clamped);
+        if (context && context.unitId !== continuousActiveUnitId) {
+          setContinuousActiveUnitId(context.unitId);
+          const unit = seriesVolumes.find((candidate) => candidate.id === context.unitId);
+          if (unit && readerNavigation.workId) {
+            window.history.replaceState(
+              window.history.state,
+              "",
+              buildUnitReaderPath(readerNavigation.workId, unit, context.absolutePage),
+            );
+          }
+        }
+      }
     },
-    [pages.length]
+    [
+      continuousActiveUnitId,
+      continuousPages,
+      continuousScrollEnabled,
+      readerNavigation.workId,
+      readerPages.length,
+      seriesVolumes,
+    ],
   );
+
+  const continuousProgressContext = continuousScrollEnabled
+    ? getContinuousUnitProgress(continuousPages, currentPage)
+    : null;
+  const toolbarProgressPage = continuousProgressContext?.page ?? currentPage;
+  const toolbarProgressTotal = continuousProgressContext?.totalPages ?? pages.length;
+  const handleToolbarProgressChange = useCallback((page: number) => {
+    if (!continuousProgressContext) {
+      handlePageChange(page);
+      return;
+    }
+    const globalIndex = continuousPages.findIndex(
+      (entry) =>
+        entry.unitId === continuousProgressContext.unitId
+        && entry.relativePage === page,
+    );
+    handlePageChange(globalIndex >= 0 ? globalIndex : currentPage);
+  }, [
+    continuousPages,
+    continuousProgressContext,
+    currentPage,
+    handlePageChange,
+  ]);
 
   // 自动翻页
   useEffect(() => {
@@ -555,45 +813,68 @@ export default function ReaderPage() {
 
   // 选项面板 onChange 处理
   const handleOptionsChange = useCallback((partial: Partial<typeof readerOpts>) => {
+    const anchor = getCurrentReadingAnchor();
+    let nextMode = partial.mode ?? mode;
+    if (partial.direction === "ttb" || partial.infiniteScroll === true) {
+      nextMode = "webtoon";
+    } else if (
+      partial.infiniteScroll === false
+      || (partial.direction !== undefined && mode === "webtoon")
+    ) {
+      nextMode = readerOpts.mode === "webtoon" ? "single" : readerOpts.mode;
+    }
+    const wasContinuous = continuousScrollEnabled;
+    const willContinuous =
+      nextMode === "webtoon"
+      && (partial.continuousReading ?? readerOpts.continuousReading);
+
     updateReaderOpts(partial);
-    // 同步到当前阅读器状态
-    if (partial.mode !== undefined) setMode(partial.mode);
-    if (partial.direction !== undefined) {
-      setDirection(partial.direction);
-      // “从上到下”自动启用无极滚动/webtoon模式
-      if (partial.direction === "ttb") {
-        setMode("webtoon");
-      } else if (readerOpts.direction === "ttb") {
-        // 从 ttb 切回水平方向，恢复单页模式
-        setMode(readerOpts.mode === "webtoon" ? "single" : readerOpts.mode);
-      }
+    setMode(nextMode);
+    if (partial.direction !== undefined) setDirection(partial.direction);
+    if (wasContinuous && !willContinuous) {
+      leaveContinuousAtAnchor(anchor);
+    } else if (!wasContinuous && willContinuous) {
+      enterContinuousAtAnchor(anchor);
     }
-    if (partial.infiniteScroll !== undefined) {
-      setMode(partial.infiniteScroll ? "webtoon" : (readerOpts.mode === "webtoon" ? "single" : readerOpts.mode));
+  }, [
+    continuousScrollEnabled,
+    enterContinuousAtAnchor,
+    getCurrentReadingAnchor,
+    leaveContinuousAtAnchor,
+    mode,
+    readerOpts.continuousReading,
+    readerOpts.mode,
+    updateReaderOpts,
+  ]);
+
+  const handleModeChange = useCallback((nextMode: ComicReadingMode) => {
+    handleOptionsChange({
+      mode: nextMode,
+      infiniteScroll: nextMode === "webtoon",
+      direction: nextMode === "webtoon"
+        ? "ttb" as ReadingDirection
+        : (readerOpts.direction === "ttb" ? "ltr" : readerOpts.direction),
+    });
+  }, [handleOptionsChange, readerOpts.direction]);
+
+  const handleDirectionChange = useCallback((nextDirection: ReadingDirection) => {
+    if (nextDirection === "ttb") {
+      handleOptionsChange({
+        direction: nextDirection,
+        infiniteScroll: true,
+        mode: "webtoon",
+      });
+      return;
     }
-  }, [updateReaderOpts, readerOpts.mode]);
+    const nextMode = mode === "webtoon" ? "single" : mode;
+    handleOptionsChange({
+      direction: nextDirection,
+      infiniteScroll: false,
+      mode: nextMode,
+    });
+  }, [handleOptionsChange, mode]);
 
-  // 工具栏 mode/direction 变更也同步到选项
-  const handleModeChange = useCallback((m: ComicReadingMode) => {
-    setMode(m);
-    updateReaderOpts({ mode: m, infiniteScroll: m === "webtoon", direction: m === "webtoon" ? "ttb" as ReadingDirection : (readerOpts.direction === "ttb" ? "ltr" : readerOpts.direction) });
-  }, [updateReaderOpts]);
-
-  const handleDirectionChange = useCallback((d: ReadingDirection) => {
-    setDirection(d);
-    if (d === "ttb") {
-      // 从上到下 = 无极滚动 webtoon 模式
-      setMode("webtoon");
-      updateReaderOpts({ direction: d, infiniteScroll: true, mode: "webtoon" });
-    } else {
-      // 水平方向：如果之前是 ttb/webtoon，恢复单页
-      const newMode = mode === "webtoon" ? "single" : mode;
-      setMode(newMode);
-      updateReaderOpts({ direction: d, infiniteScroll: false, mode: newMode });
-    }
-  }, [updateReaderOpts, mode]);
-
-  // 跳转到漫画详情页（先保存进度）
+  // ???????????????
   const handleOpenComicDetail = useCallback(async () => {
     await finishSessionRef.current?.();
     if (readerNavigation.workId) {
@@ -818,7 +1099,7 @@ export default function ReaderPage() {
         <RealisticBookView
           pages={pages}
           currentPage={currentPage}
-          totalPages={pages.length}
+          totalPages={readerPages.length}
           direction={direction === "rtl" ? "rtl" : "ltr"}
           readerTheme={readerTheme}
           fitMode={readerOpts.fitMode}
@@ -849,7 +1130,7 @@ export default function ReaderPage() {
           containerWidth={containerWidthStyle}
           preloadCount={readerOpts.preloadCount}
           comicId={comicId}
-          onBoundaryReached={handleBoundaryReached}
+          onBoundaryReached={handleReaderBoundaryReached}
           imageFilter={imageFilter}
         />
       ) : effectiveMode === "double" ? (
@@ -865,14 +1146,14 @@ export default function ReaderPage() {
           containerWidth={containerWidthStyle}
           preloadCount={readerOpts.preloadCount}
           comicId={comicId}
-          onBoundaryReached={handleBoundaryReached}
+          onBoundaryReached={handleReaderBoundaryReached}
           coverAlone={readerOpts.doubleCoverAlone}
           noGap={readerOpts.doublePageNoGap}
           imageFilter={imageFilter}
         />
       ) : (
         <WebtoonView
-          pages={pages}
+          pages={readerPages}
           currentPage={currentPage}
           onPageChange={handlePageChange}
           onTapCenter={handleTapCenter}
@@ -881,7 +1162,7 @@ export default function ReaderPage() {
           containerWidth={containerWidthStyle}
           preloadCount={readerOpts.preloadCount}
           comicId={comicId}
-          onBoundaryReached={handleBoundaryReached}
+          onBoundaryReached={handleReaderBoundaryReached}
           nextVolumeTitle={nextVolume?.title}
           imageFilter={imageFilter}
         />
@@ -897,52 +1178,15 @@ export default function ReaderPage() {
         </div>
       )}
 
-      {/* 系列卷导航指示器（工具栏可见时在底部显示） */}
-      {seriesVolumes.length > 1 && toolbarVisible && (
-        <div className="fixed bottom-20 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/80 px-3.5 py-2 backdrop-blur-xl border border-white/[0.06] shadow-lg shadow-black/30">
-          {prevVolume && (
-            <button
-              onClick={() => router.replace(
-                buildUnitReaderPath(readerNavigation.workId, prevVolume),
-              )}
-              className="text-xs text-white/70 hover:text-white transition-colors"
-              title={t.series.prevVolume}
-            >
-              ← #{prevVolume.sortIndex + 1}
-            </button>
-          )}
-          <span className="text-xs font-medium text-accent">
-            {seriesName}
-            {currentVolumeIdx >= 0 && ` (${currentVolumeIdx + 1}/${seriesVolumes.length})`}
-          </span>
-          {nextVolume && (
-            <button
-              onClick={() => router.replace(
-                buildUnitReaderPath(readerNavigation.workId, nextVolume),
-              )}
-              className="text-xs text-white/70 hover:text-white transition-colors"
-              title={t.series.nextVolume}
-            >
-              #{nextVolume.sortIndex + 1} →
-            </button>
-          )}
-          {/* 章节抽屉入口 */}
-          <button
-            onClick={() => setShowChapterDrawer(true)}
-            className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors"
-            title={t.series.volumes}
-          >
-            <List className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
       {/* Toolbar */}
       <ReaderToolbar
         visible={toolbarVisible}
         title={title}
         currentPage={currentPage}
         totalPages={pages.length}
+        progressPage={toolbarProgressPage}
+        progressTotalPages={toolbarProgressTotal}
+        onProgressChange={handleToolbarProgressChange}
         mode={mode}
         direction={direction}
         isFullscreen={isFullscreen}
@@ -980,6 +1224,29 @@ export default function ReaderPage() {
             canUseRealisticFlip={canUseRealisticFlip}
             onToggleRealisticFlip={() => setRealisticFlipSessionOverride((v) => v === null ? !preferredRealisticFlip : !v)}
             realisticFlipDisabledReason={realisticFlipDisabledReason}
+            chapterCurrent={currentVolumeIdx + 1}
+            chapterTotal={seriesVolumes.length}
+            canGoPreviousChapter={Boolean(prevVolume)}
+            canGoNextChapter={Boolean(nextVolume)}
+            onPreviousChapter={() => handleBoundaryReached("prev")}
+            onNextChapter={() => handleBoundaryReached("next")}
+            onShowChapters={() => setShowChapterDrawer(true)}
+            continuousReading={readerOpts.continuousReading}
+            onToggleContinuousReading={() => {
+              const anchor = getCurrentReadingAnchor();
+              const next = !readerOpts.continuousReading;
+              updateReaderOpts({ continuousReading: next });
+              if (effectiveMode !== "webtoon") return;
+              if (next) {
+                enterContinuousAtAnchor(anchor);
+              } else {
+                leaveContinuousAtAnchor(anchor);
+              }
+            }}
+            doubleCoverAlone={readerOpts.doubleCoverAlone}
+            onToggleDoubleCoverAlone={() => updateReaderOpts({
+              doubleCoverAlone: !readerOpts.doubleCoverAlone,
+            })}
       />
 
       {/* Page number indicator (页码指示器可见性控制) */}
@@ -1109,6 +1376,7 @@ export default function ReaderPage() {
                 return (
                   <button
                     key={vol.id}
+                    ref={isCurrent ? currentChapterRef : undefined}
                     onClick={async () => {
                       setShowChapterDrawer(false);
                       if (!isCurrent) {

@@ -121,6 +121,7 @@ export function DetailPanel({
   const [showEngineMenu, setShowEngineMenu] = useState(false);
   const [translateEngine, setTranslateEngine] = useState<string>("");
   const [lastTranslateEngine, setLastTranslateEngine] = useState<string>("");
+  const [metadataTranslateError, setMetadataTranslateError] = useState("");
 
   // 封面管理
   const [coverKey, setCoverKey] = useState(() => Date.now());
@@ -456,8 +457,12 @@ export function DetailPanel({
     if (metadataTranslating) return;
     setMetadataTranslating(true);
     setShowEngineMenu(false);
+    setMetadataTranslateError("");
     try {
-      const res = await fetch(apiPath(`/api/comics/${comicTargetId}/translate-metadata`), {
+      const translatePath = isWork
+        ? `/api/works/${encodeURIComponent(item.id)}/translate-metadata`
+        : `/api/comics/${encodeURIComponent(item.id)}/translate-metadata`;
+      const res = await fetch(apiPath(translatePath), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetLang: locale, engine: engine || translateEngine || "" }),
@@ -467,8 +472,13 @@ export function DetailPanel({
         if (data.engine) setLastTranslateEngine(data.engine);
         onRefresh();
         loadLibrary();
+      } else {
+        const data = await res.json().catch(() => null);
+        setMetadataTranslateError(data?.error || "翻译失败");
       }
-    } catch { /* ignore */ } finally { setMetadataTranslating(false); }
+    } catch {
+      setMetadataTranslateError("翻译请求失败");
+    } finally { setMetadataTranslating(false); }
   };
 
   // ── 封面管理 ──
@@ -976,6 +986,19 @@ export function DetailPanel({
             <DetailInlineEditField label="出版社" value={item.publisher || ""} type="text" placeholder="输入出版社" saving={metaSaving} onSave={(v) => handleSaveMetaField("publisher", v)} />
             <DetailInlineEditField label="语言" value={item.language || ""} type="text" placeholder="如：zh, ja, en" saving={metaSaving} onSave={(v) => handleSaveMetaField("language", v)} />
             <DetailInlineEditField label="简介" value={item.description || ""} type="textarea" placeholder="输入简介..." saving={metaSaving} onSave={(v) => handleSaveMetaField("description", v)} />
+            <button
+              type="button"
+              data-testid="metadata-edit-translate"
+              onClick={() => handleTranslateMetadata()}
+              disabled={metadataTranslating}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium text-accent transition-colors hover:bg-accent/15 disabled:opacity-50"
+            >
+              {metadataTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Languages className="h-3.5 w-3.5" />}
+              {metadataTranslating ? "翻译中..." : "翻译当前作品元数据"}
+            </button>
+            {metadataTranslateError && (
+              <div className="text-[10px] text-red-400">{metadataTranslateError}</div>
+            )}
           </div>
         ) : (
           /* 元数据信息（只读模式） */

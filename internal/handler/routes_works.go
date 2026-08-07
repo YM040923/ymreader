@@ -7,6 +7,7 @@ import (
 
 func registerWorkRoutes(api *gin.RouterGroup) {
 	handler := NewWorkHandler()
+	metadata := NewMetadataHandler()
 	works := api.Group("/works")
 	works.Use(middleware.AuthRequired())
 	{
@@ -25,6 +26,7 @@ func registerWorkRoutes(api *gin.RouterGroup) {
 		works.PUT("/:id/metadata", handler.UpdateMetadata)
 		works.POST("/:id/scrape-metadata", middleware.ScraperRequired(), handler.ScrapeMetadata)
 		works.POST("/:id/apply-metadata", middleware.ScraperRequired(), handler.ApplyScrapedMetadata)
+		works.POST("/:id/translate-metadata", middleware.AdminRequired(), metadata.TranslateWork)
 		works.POST("/:id/ai-recognize", middleware.ScraperRequired(), handler.AIRecognize)
 		works.DELETE("/:id", handler.Delete)
 		works.GET("/:id", handler.Get)

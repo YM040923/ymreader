@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ const (
 var (
 	opdsVirtualCBZSlots       = make(chan struct{}, 2)
 	opdsVirtualCBZCleanupOnce sync.Once
+	opdsEnglishChapterPattern = regexp.MustCompile(`(?i)^(?:ch(?:apter)?)[.\s_-]*0*([0-9]+)(?:\s*[-_]\s*|\s+)?(.*)$`)
+	opdsChineseChapterPattern = regexp.MustCompile(`^第0*([0-9]+)话(?:\s*[-_]\s*|\s+)?(.*)$`)
 )
 
 type opdsWorkIndexCacheEntry struct {
@@ -181,6 +184,61 @@ func (h *OPDSHandler) WorkDetail(c *gin.Context) {
 	c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Work not found"))
 }
 
+// WorkUnitDetail returns a strict acquisition feed for one physical or
+// virtual unit inside a multi-unit Work.
+func (h *OPDSHandler) WorkUnitDetail(c *gin.Context) {
+	items, err := loadOPDSWorks(c)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get works"))
+		return
+	}
+	workID := c.Param("id")
+	unitKey := c.Param("unitId")
+	for _, item := range items {
+		work := item.Work
+		if work.ID != workID {
+			continue
+		}
+		for _, unit := range work.Units {
+			if unitKey != unit.ID && unitKey != unit.ComicID {
+				continue
+			}
+			comic, ok := getOPDSPublication(unit.ComicID)
+			if !ok {
+				c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Unit source not found"))
+				return
+			}
+			var row service.OPDSComic
+			if _, physical := service.OPDSAcquisitionMIMEForFilename(comic.Filename); physical {
+				row = physicalOPDSComicRow(comic, []service.WorkUnit{unit})
+				displayTitle := opdsDisplayTitle(row.Title)
+				row.Title = displayTitle
+				row.AcquisitionHref = opdsDownloadAliasPath(comic.ID, opdsAcquisitionFilename(displayTitle, comic.Filename))
+			} else {
+				row = virtualOPDSUnitRow(comic, unit)
+			}
+			baseURL := getBaseURL(c)
+			xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
+				BaseURL: baseURL,
+				Title:   work.Title + " · " + row.Title,
+				FeedID:  opdsFeedID(baseURL, c),
+				Comics:  []service.OPDSComic{row},
+				Pagination: service.OPDSPagination{
+					SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/units/" + url.PathEscape(unitKey),
+					TotalResults: 1,
+					ItemsPerPage: 1,
+					StartIndex:   0,
+				},
+				FeedType: service.OPDSAcquisitionMIME,
+			})
+			setOPDSPrivateResponseHeaders(c)
+			c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
+			return
+		}
+	}
+	c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Unit not found"))
+}
+
 func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 	items, err := loadOPDSWorks(c)
 	if err != nil {
@@ -197,6 +255,14 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 		for _, unit := range work.Units {
 			unitsByComic[unit.ComicID] = append(unitsByComic[unit.ComicID], unit)
 		}
+		physicalComicCount := 0
+		for comicID := range unitsByComic {
+			if comic, ok := getOPDSPublication(comicID); ok {
+				if _, physical := service.OPDSAcquisitionMIMEForFilename(comic.Filename); physical {
+					physicalComicCount++
+				}
+			}
+		}
 		publishedPhysicalComics := make(map[string]struct{}, len(unitsByComic))
 		for _, unit := range work.Units {
 			comic, ok := getOPDSPublication(unit.ComicID)
@@ -209,10 +275,18 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 					continue
 				}
 				publishedPhysicalComics[comic.ID] = struct{}{}
-				rows = append(rows, physicalOPDSComicRow(comic, unitsByComic[comic.ID]))
+				row := physicalOPDSComicRow(comic, unitsByComic[comic.ID])
+				if physicalComicCount > 1 {
+					row.SuppressStream = true
+					displayTitle := opdsDisplayTitle(row.Title)
+					row.Title = displayTitle
+					row.AcquisitionHref = opdsDownloadAliasPath(comic.ID, opdsAcquisitionFilename(displayTitle, comic.Filename))
+				}
+				rows = append(rows, row)
 				continue
 			}
-			rows = append(rows, virtualOPDSUnitRow(comic, unit))
+			row := virtualOPDSUnitRow(comic, unit)
+			rows = append(rows, row)
 		}
 		page, pageSize := parseOPDSPagination(c)
 		total := len(rows)
@@ -227,15 +301,17 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			rows = rows[start:end]
 		}
 		baseURL := getBaseURL(c)
+		feedType := service.OPDSAcquisitionMIME
 		xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
 			BaseURL:    baseURL,
 			Title:      work.Title,
 			FeedID:     opdsFeedID(baseURL, c),
 			Comics:     rows,
 			Pagination: buildOPDSPagination(c, page, pageSize, total),
+			FeedType:   feedType,
 		})
 		setOPDSPrivateResponseHeaders(c)
-		c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
+		c.Data(http.StatusOK, feedType, []byte(xml))
 		return true
 	}
 	return false
@@ -252,6 +328,7 @@ func physicalOPDSComicRow(comic *store.ComicListItem, units []service.WorkUnit) 
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(comic.Filename), filepath.Ext(comic.Filename))
 	}
+	title = stripOPDSDisplayExtension(title)
 	year := 0
 	if comic.Year != nil {
 		year = *comic.Year
@@ -288,6 +365,51 @@ func physicalOPDSComicRow(comic *store.ComicListItem, units []service.WorkUnit) 
 		LastReadAt:   lastReadAt,
 		CoverHref:    "/api/opds/cover/" + url.PathEscape(comic.ID),
 	}
+}
+
+func stripOPDSDisplayExtension(title string) string {
+	trimmed := strings.TrimSpace(title)
+	lower := strings.ToLower(trimmed)
+	for _, extension := range []string{
+		".cbz", ".cbr", ".cb7", ".cbt", ".zip", ".rar", ".7z", ".pdf", ".epub",
+	} {
+		if strings.HasSuffix(lower, extension) {
+			return strings.TrimSpace(trimmed[:len(trimmed)-len(extension)])
+		}
+	}
+	return trimmed
+}
+
+func opdsDisplayTitle(title string) string {
+	base := stripOPDSDisplayExtension(title)
+	if matches := opdsEnglishChapterPattern.FindStringSubmatch(base); len(matches) == 3 {
+		number := strings.TrimLeft(matches[1], "0")
+		if number == "" {
+			number = "0"
+		}
+		base = "第" + number + "话"
+		if subtitle := strings.TrimSpace(matches[2]); subtitle != "" {
+			base += " " + subtitle
+		}
+	} else if matches := opdsChineseChapterPattern.FindStringSubmatch(base); len(matches) == 3 {
+		number := strings.TrimLeft(matches[1], "0")
+		if number == "" {
+			number = "0"
+		}
+		base = "第" + number + "话"
+		if subtitle := strings.TrimSpace(matches[2]); subtitle != "" {
+			base += " " + subtitle
+		}
+	}
+	return base
+}
+
+func opdsAcquisitionFilename(displayTitle, originalFilename string) string {
+	extension := strings.ToLower(filepath.Ext(originalFilename))
+	if extension == "" {
+		return displayTitle
+	}
+	return displayTitle + extension
 }
 
 func virtualOPDSUnitRow(comic *store.ComicListItem, unit service.WorkUnit) service.OPDSComic {
@@ -950,14 +1072,31 @@ func (h *OPDSHandler) Download(c *gin.Context) {
 		return
 	}
 	contentType, _ := service.OPDSAcquisitionMIMEForFilename(comic.Filename)
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(comic.Filename)})
+	downloadName := opdsDownloadResponseFilename(c.Param("filename"), comic.Filename)
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": downloadName})
 	c.Header("Content-Disposition", disposition)
 	c.Header("Content-Type", contentType)
 	c.Header("Accept-Ranges", "bytes")
 	c.Header("X-Accel-Buffering", "no")
 	c.Header("X-Content-Type-Options", "nosniff")
 	setOPDSPrivateResponseHeaders(c)
-	http.ServeContent(c.Writer, c.Request, filepath.Base(comic.Filename), info.ModTime(), file)
+	http.ServeContent(c.Writer, c.Request, downloadName, info.ModTime(), file)
+}
+
+func opdsDownloadResponseFilename(requested, original string) string {
+	fallback := filepath.Base(strings.TrimSpace(original))
+	requested = strings.TrimSpace(requested)
+	if requested == "" ||
+		requested != filepath.Base(requested) ||
+		strings.ContainsAny(requested, `/\`) ||
+		!strings.EqualFold(filepath.Ext(requested), filepath.Ext(fallback)) {
+		return fallback
+	}
+	return requested
+}
+
+func opdsDownloadAliasPath(comicID, filename string) string {
+	return "/api/opds/download/" + url.PathEscape(comicID) + "/" + url.PathEscape(filepath.Base(filename))
 }
 
 // GET /api/opds/stream/:id?page={pageNumber}&width={maxWidth}

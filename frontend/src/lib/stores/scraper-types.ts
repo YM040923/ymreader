@@ -15,6 +15,7 @@ export interface ProgressItem {
   title?: string;
   workTitle?: string;
   entityType?: "work" | "comic";
+  entityId?: string;
   libraryId?: string;
   step?: string;
   status?: string;

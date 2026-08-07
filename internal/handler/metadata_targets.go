@@ -155,7 +155,20 @@ func metadataProgressEvent(target metadataTarget, current, total int) gin.H {
 		"entityType": target.EntityType, "entityId": target.EntityID, "title": target.Title,
 	}
 	if target.EntityType == "work" {
-		event["comicId"] = target.EntityID
+		comicID := ""
+		if target.Work != nil {
+			comicID = target.Work.RepresentativeComicID
+			if comicID == "" {
+				ids := service.PhysicalComicIDs(*target.Work)
+				if len(ids) > 0 {
+					comicID = ids[0]
+				}
+			}
+			if target.Work.CoverURL != "" {
+				event["coverUrl"] = target.Work.CoverURL
+			}
+		}
+		event["comicId"] = comicID
 		event["filename"] = target.Filename
 	} else {
 		event["comicId"] = target.EntityID

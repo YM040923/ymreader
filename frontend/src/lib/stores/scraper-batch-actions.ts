@@ -24,6 +24,7 @@ function normalizeProgressItem(
   const displayTitle =
     data.workTitle ||
     data.title ||
+    knownTitles.get(data.entityId || "") ||
     knownTitles.get(data.comicId) ||
     state.libraryItems.find((item) => item.id === data.comicId)?.title ||
     data.filename;

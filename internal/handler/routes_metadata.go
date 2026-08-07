@@ -121,6 +121,8 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 		opdsGroup.HEAD("/works", opds.Works)
 		opdsGroup.GET("/works/:id", opds.WorkDetail)
 		opdsGroup.HEAD("/works/:id", opds.WorkDetail)
+		opdsGroup.GET("/works/:id/units/:unitId", opds.WorkUnitDetail)
+		opdsGroup.HEAD("/works/:id/units/:unitId", opds.WorkUnitDetail)
 		opdsGroup.GET("/units/:id/download", opds.UnitDownload)
 		opdsGroup.HEAD("/units/:id/download", opds.UnitDownload)
 		opdsGroup.GET("/series", opds.Series)

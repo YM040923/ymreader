@@ -66,9 +66,15 @@ export function slicePagesForUnit<T>(
 ): T[] {
   if (!unit) return pages;
   const start = Math.max(0, Math.min(pages.length, unit.startPage));
+  // Comic page extraction and Work loading run in parallel. A newly scanned
+  // PDF/archive can therefore return real pages while the Work snapshot still
+  // carries pageCount=0. Treat zero as "unknown", not as an empty chapter.
+  if (unit.pageCount <= 0) {
+    return pages.slice(start);
+  }
   const end = Math.max(
     start,
-    Math.min(pages.length, unit.startPage + Math.max(0, unit.pageCount)),
+    Math.min(pages.length, unit.startPage + unit.pageCount),
   );
   return pages.slice(start, end);
 }

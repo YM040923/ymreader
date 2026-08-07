@@ -54,6 +54,7 @@ type OPDSComic struct {
 	AcquisitionHref     string
 	AcquisitionType     string
 	StreamHref          string
+	SuppressStream      bool
 }
 
 type OPDSWork struct {
@@ -86,6 +87,24 @@ type OPDSAcquisitionFeedOptions struct {
 	Title      string
 	FeedID     string
 	Comics     []OPDSComic
+	Pagination OPDSPagination
+	FeedType   string
+}
+
+type OPDSNavigationItem struct {
+	ID        string
+	Title     string
+	Href      string
+	CoverHref string
+	Summary   string
+	UpdatedAt string
+}
+
+type NavigationFeedOptions struct {
+	BaseURL    string
+	Title      string
+	FeedID     string
+	Items      []OPDSNavigationItem
 	Pagination OPDSPagination
 }
 
@@ -355,6 +374,10 @@ func GenerateOpenSearchDescription(baseURL string) string {
 // GenerateAcquisitionFeed creates a paginated OPDS 1.2 acquisition feed.
 func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 	now := time.Now().UTC().Format(time.RFC3339)
+	feedType := opts.FeedType
+	if feedType == "" {
+		feedType = OPDSAcquisitionMIME
+	}
 	entries := make([]atomEntry, 0, len(opts.Comics))
 	for _, comic := range opts.Comics {
 		mimeType, canAcquire := OPDSAcquisitionMIMEForFilename(comic.Filename)
@@ -364,7 +387,8 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 		if comic.AcquisitionHref != "" {
 			canAcquire = true
 		}
-		canStream := OPDSPSESupported(comic.Filename, comic.ComicType, comic.PageCount)
+		canStream := !comic.SuppressStream &&
+			OPDSPSESupported(comic.Filename, comic.ComicType, comic.PageCount)
 		if !canAcquire && !canStream {
 			continue
 		}
@@ -476,14 +500,72 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 		ItemsPerPage: &itemsPerPage,
 		StartIndex:   &startIndex,
 		Links: []atomLink{
-			{Rel: "self", Href: absoluteOPDSURL(opts.BaseURL, opts.Pagination.SelfHref), Type: OPDSAcquisitionMIME},
+			{Rel: "self", Href: absoluteOPDSURL(opts.BaseURL, opts.Pagination.SelfHref), Type: feedType},
 			{Rel: "start", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds"), Type: OPDSNavigationMIME},
 			{Rel: "search", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/search.xml"), Type: OpenSearchMIME},
 		},
 		Entries: entries,
 	}
-	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, OPDSAcquisitionMIME)
+	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, feedType)
 
+	return marshalOPDSXML(feed)
+}
+
+// GenerateNavigationFeed creates a strict OPDS navigation feed. Entries only
+// advertise subsection links; actual acquisitions are exposed by the linked
+// detail feed. This shape is accepted by clients that do not parse mixed
+// navigation/acquisition feeds.
+func GenerateNavigationFeed(opts NavigationFeedOptions) string {
+	now := time.Now().UTC().Format(time.RFC3339)
+	entries := make([]atomEntry, 0, len(opts.Items))
+	for _, item := range opts.Items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = "Untitled"
+		}
+		cover := item.CoverHref
+		if cover == "" {
+			cover = "/api/opds/cover/" + url.PathEscape(item.ID)
+		}
+		links := []atomLink{
+			{Rel: "subsection", Href: absoluteOPDSURL(opts.BaseURL, item.Href), Type: OPDSAcquisitionMIME},
+			{Rel: "http://opds-spec.org/image", Href: absoluteOPDSURL(opts.BaseURL, cover)},
+			{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, cover)},
+		}
+		entry := atomEntry{
+			Title:   title,
+			ID:      "urn:nowen:navigation:" + item.ID,
+			Updated: validAtomDate(item.UpdatedAt, now),
+			Links:   links,
+		}
+		if summary := strings.TrimSpace(item.Summary); summary != "" {
+			entry.Summary = &atomContent{Type: "text", Text: summary}
+		}
+		entries = append(entries, entry)
+	}
+	total := opts.Pagination.TotalResults
+	itemsPerPage := opts.Pagination.ItemsPerPage
+	startIndex := opts.Pagination.StartIndex
+	feed := atomFeed{
+		XMLNS:        opdsNS,
+		OPDS:         opdsCatalogNS,
+		DCTerms:      dctermsNS,
+		OpenSearch:   openSearchNS,
+		ID:           opts.FeedID,
+		Title:        opts.Title,
+		Updated:      now,
+		Author:       &atomAuthor{Name: "NowenReader", URI: opts.BaseURL},
+		TotalResults: &total,
+		ItemsPerPage: &itemsPerPage,
+		StartIndex:   &startIndex,
+		Links: []atomLink{
+			{Rel: "self", Href: absoluteOPDSURL(opts.BaseURL, opts.Pagination.SelfHref), Type: OPDSNavigationMIME},
+			{Rel: "start", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds"), Type: OPDSNavigationMIME},
+			{Rel: "search", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/search.xml"), Type: OpenSearchMIME},
+		},
+		Entries: entries,
+	}
+	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, OPDSNavigationMIME)
 	return marshalOPDSXML(feed)
 }
 

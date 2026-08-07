@@ -24,24 +24,7 @@ func SearchAniListNovel(query, lang string) []ComicMetadata {
 }
 
 func searchAniListWithType(query, lang, mediaType, sourceName string) []ComicMetadata {
-	gql := fmt.Sprintf(`query ($search: String) {
-		Page(page: 1, perPage: 10) {
-			media(search: $search, type: %s, sort: SEARCH_MATCH) {`, mediaType) + `
-				id
-				title { romaji english native }
-				description(asHtml: false)
-				genres
-				startDate { year }
-				countryOfOrigin
-				staff(sort: RELEVANCE, perPage: 5) {
-					edges { role node { name { full } } }
-				}
-				coverImage { large }
-				volumes
-				meanScore
-			}
-		}
-	}` + "}"
+	gql := buildAniListQuery(mediaType)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"query":     gql,
@@ -132,7 +115,6 @@ func searchAniListWithType(query, lang, mediaType, sourceName string) []ComicMet
 			genre = TranslateGenre(genre, lang)
 		}
 
-		// countryOfOrigin → language（AniList 返回的是国家代码如 "JP", "CN", "KR"）
 		mediaLang := ""
 		if m.CountryOfOrigin != nil {
 			switch strings.ToUpper(*m.CountryOfOrigin) {
@@ -162,7 +144,6 @@ func searchAniListWithType(query, lang, mediaType, sourceName string) []ComicMet
 			Source:      sourceName,
 		})
 
-		// Add rating if available (AniList meanScore is 0-100)
 		if m.MeanScore != nil && *m.MeanScore > 0 {
 			maxVal := float64(100)
 			results[len(results)-1].ExternalRating = m.MeanScore
@@ -171,4 +152,25 @@ func searchAniListWithType(query, lang, mediaType, sourceName string) []ComicMet
 		}
 	}
 	return results
+}
+
+func buildAniListQuery(mediaType string) string {
+	return fmt.Sprintf(`query ($search: String) {
+		Page(page: 1, perPage: 10) {
+			media(search: $search, type: %s, sort: SEARCH_MATCH) {`, mediaType) + `
+				id
+				title { romaji english native }
+				description(asHtml: false)
+				genres
+				startDate { year }
+				countryOfOrigin
+				staff(sort: RELEVANCE, perPage: 5) {
+					edges { role node { name { full } } }
+				}
+				coverImage { large }
+				volumes
+				meanScore
+			}
+		}
+	}`
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-func sortByRelevance(results []ComicMetadata, query string) {
+func sortByRelevance(results []ComicMetadata, query string, languages ...string) {
 	if len(results) <= 1 {
 		return
 	}
@@ -12,6 +12,7 @@ func sortByRelevance(results []ComicMetadata, query string) {
 	queryClean := strings.ToLower(strings.TrimSpace(CleanTitle(query)))
 
 	// 多级匹配评分算法
+	preferChinese := len(languages) > 0 && strings.HasPrefix(strings.ToLower(languages[0]), "zh")
 	score := func(m ComicMetadata) int {
 		titleLower := strings.ToLower(strings.TrimSpace(m.Title))
 		titleClean := strings.ToLower(strings.TrimSpace(CleanTitle(m.Title)))
@@ -93,6 +94,25 @@ func sortByRelevance(results []ComicMetadata, query string) {
 			}
 		}
 
+		if preferChinese {
+			if containsCJK(m.Title) {
+				bestScore += 30
+			}
+			if containsCJK(m.Description) {
+				bestScore += 20
+			}
+			if containsCJK(m.Genre) {
+				bestScore += 8
+			}
+			switch m.Source {
+			case "bangumi", "bangumi_novel":
+				bestScore += 18
+			case "mangadex":
+				bestScore += 8
+			case "mangaupdates", "kitsu":
+				bestScore -= 5
+			}
+		}
 		return bestScore
 	}
 
@@ -104,6 +124,15 @@ func sortByRelevance(results []ComicMetadata, query string) {
 			}
 		}
 	}
+}
+
+func containsCJK(value string) bool {
+	for _, r := range value {
+		if r >= '\u3400' && r <= '\u9fff' {
+			return true
+		}
+	}
+	return false
 }
 
 // ============================================================
