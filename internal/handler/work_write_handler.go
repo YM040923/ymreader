@@ -163,7 +163,7 @@ func (h *WorkHandler) UpdateCover(c *gin.Context) {
 		return
 	}
 	target := targets[0].Work
-	if body.CoverComicID == "" {
+	if body.CoverComicID == "" && strings.TrimSpace(body.URL) == "" {
 		body.CoverComicID = target.CoverComicID
 	}
 	if err := store.UpdateWorkCover(target.MetadataHostType, target.MetadataHostID, body.CoverComicID, strings.TrimSpace(body.URL), body.CoverAspectRatio); err != nil {

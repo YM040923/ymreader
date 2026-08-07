@@ -235,15 +235,16 @@ func UpdateWorkCover(hostType, hostID, coverComicID, coverURL string, aspectRati
 		if coverURL != "" {
 			source = "remote"
 		}
+		cleanComicID := strings.TrimSpace(coverComicID)
+		cleanURL := strings.TrimSpace(coverURL)
+		if cleanURL != "" {
+			cleanComicID = ""
+		}
 		update := LogicalWorkCoverUpdate{
-			CoverSource: &source,
-			CoverLocked: &locked,
-		}
-		if coverComicID != "" {
-			update.CoverComicID = &coverComicID
-		}
-		if coverURL != "" {
-			update.CoverURL = &coverURL
+			CoverSource:  &source,
+			CoverLocked:  &locked,
+			CoverComicID: &cleanComicID,
+			CoverURL:     &cleanURL,
 		}
 		if aspectRatio > 0 {
 			update.CoverAspectRatio = &aspectRatio

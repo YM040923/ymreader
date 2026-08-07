@@ -100,17 +100,41 @@ func (h *MetadataHandler) BatchSelected(c *gin.Context) {
 func (h *MetadataHandler) ClearMetadata(c *gin.Context) {
 	var body struct {
 		ComicIDs []string `json:"comicIds"`
+		Targets  []struct {
+			ID         string `json:"id"`
+			EntityType string `json:"entityType"`
+		} `json:"targets"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || len(body.ComicIDs) == 0 {
-		c.JSON(400, gin.H{"error": "comicIds array required"})
+	if err := c.ShouldBindJSON(&body); err != nil || (len(body.ComicIDs) == 0 && len(body.Targets) == 0) {
+		c.JSON(400, gin.H{"error": "comicIds or targets required"})
+		return
+	}
+
+	selections := make([]metadataTargetSelection, 0, len(body.ComicIDs)+len(body.Targets))
+	for _, id := range body.ComicIDs {
+		selections = append(selections, metadataTargetSelection{ID: id, EntityType: "comic"})
+	}
+	for _, target := range body.Targets {
+		selections = append(selections, metadataTargetSelection{ID: target.ID, EntityType: target.EntityType})
+	}
+	targets, err := discoverMetadataTargets(c, selections)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to resolve metadata targets"})
 		return
 	}
 
 	cleared := 0
-	for _, id := range body.ComicIDs {
-		err := store.UpdateComicFields(id, map[string]interface{}{
+	for _, target := range targets {
+		if target.EntityType == "work" {
+			if err := store.ClearLogicalWorkMetadata(target.EntityID); err == nil {
+				cleared++
+			}
+			continue
+		}
+		err := store.UpdateComicFields(target.EntityID, map[string]interface{}{
 			"author":         "",
 			"publisher":      "",
+			"year":           nil,
 			"description":    "",
 			"genre":          "",
 			"language":       "",
@@ -122,6 +146,7 @@ func (h *MetadataHandler) ClearMetadata(c *gin.Context) {
 		}
 	}
 
+	resetWorkCatalogCache()
 	c.JSON(200, gin.H{"success": true, "cleared": cleared})
 }
 

@@ -13,6 +13,10 @@ const detailPanel = readFileSync(
   new URL("../src/components/scraper/DetailPanel.tsx", import.meta.url),
   "utf8",
 );
+const libraryActions = readFileSync(
+  new URL("../src/lib/stores/library-actions.ts", import.meta.url),
+  "utf8",
+);
 
 assert.match(types, /entityId\?:\s*string/);
 assert.match(page, /\/api\/placeholder\/\d+\/\d+/);
@@ -22,5 +26,11 @@ assert.match(
   /isWork\s*\?\s*`\/api\/works\/\$\{encodeURIComponent\(item\.id\)\}\/translate-metadata`/,
 );
 assert.match(detailPanel, /data-testid="metadata-edit-translate"/);
+assert.match(libraryActions, /targets:\s*selectedItems\.map/);
+assert.match(detailPanel, /bindWorkCoverToComic/);
+assert.match(
+  detailPanel,
+  /\/api\/works\/\$\{encodeURIComponent\(item\.id\)\}\/cover/,
+);
 
 console.log("scraper cover tests passed");

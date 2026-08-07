@@ -62,6 +62,39 @@ func TestWorkWriteAPIAppliesSeriesHostAndEveryPhysicalComic(t *testing.T) {
 	}
 }
 
+func TestWorkCoverSwitchFromRemoteURLToComicClearsRemoteURL(t *testing.T) {
+	r := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	cookie := registerAndLogin(t, r)
+	createWorkTestLibrary(t, "cover-switch-lib", "Cover Switch", "private")
+	createWorkTestComics(t, "cover-switch-lib", []workTestComic{
+		{ID: "cover-switch-1", Path: "作品/第一话.cbz", Title: "第一话"},
+		{ID: "cover-switch-2", Path: "作品/第二话.cbz", Title: "第二话"},
+	})
+	work := fetchSingleWorkForTest(t, r, cookie, "")
+
+	response := performAuthedRequest(r, http.MethodPut, "/api/works/"+work.ID+"/cover",
+		map[string]interface{}{"url": "https://example.test/remote.jpg"}, cookie)
+	if response.Code != http.StatusOK {
+		t.Fatalf("set remote cover status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = performAuthedRequest(r, http.MethodPut, "/api/works/"+work.ID+"/cover",
+		map[string]interface{}{"coverComicId": "cover-switch-2"}, cookie)
+	if response.Code != http.StatusOK {
+		t.Fatalf("switch cover status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	logical, err := store.GetLogicalWork(work.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logical.CoverComicID != "cover-switch-2" || logical.CoverURL != "" || logical.CoverSource != "comic" {
+		t.Fatalf("cover source was not switched cleanly: %#v", logical)
+	}
+}
+
 func TestWorkWriteAPISupportsComicMetadataHostAndImmediateCustomOrder(t *testing.T) {
 	r := setupTestRouter(t)
 	if err := store.RunMigrations(); err != nil {

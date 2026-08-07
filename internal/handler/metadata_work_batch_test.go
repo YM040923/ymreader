@@ -173,6 +173,63 @@ func TestMetadataTargetMissingUsesLogicalWorkState(t *testing.T) {
 	}
 }
 
+func TestClearMetadataClearsLogicalWorkTarget(t *testing.T) {
+	r := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	cookie := registerAndLogin(t, r)
+	createWorkTestLibrary(t, "clear-work", "Clear Work", "private")
+	createWorkTestComics(t, "clear-work", []workTestComic{
+		{ID: "clear-unit-1", Path: "Clear Me/Chapter 001.cbz", Title: "Chapter 001"},
+		{ID: "clear-unit-2", Path: "Clear Me/Chapter 002.cbz", Title: "Chapter 002"},
+	})
+	result, err := store.GetAllComics(store.ComicListOptions{
+		ContentType: "comic", LibraryIDs: []string{"clear-work"}, FilterLibraryIDs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{})
+	if err := service.PersistAndApplyLogicalWorks(works); err != nil {
+		t.Fatal(err)
+	}
+	workID := works[0].ID
+	source, author, publisher, description, language, genre, status := "bangumi", "Author", "Publisher", "Description", "en", "Action", "ongoing"
+	year := 2026
+	locked := true
+	if err := store.UpdateLogicalWorkMetadata(workID, store.LogicalWorkMetadataUpdate{
+		Author: &author, Publisher: &publisher, Year: &year, Description: &description,
+		Language: &language, Genre: &genre, Status: &status,
+		MetadataSource: &source, MetadataLocked: &locked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	coverURL := "https://example.test/cover.jpg"
+	if err := store.UpdateLogicalWorkCover(workID, store.LogicalWorkCoverUpdate{
+		CoverURL: &coverURL, CoverSource: &source, CoverLocked: &locked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resetWorkCatalogCache()
+
+	response := performAuthedRequest(r, http.MethodPost, "/api/metadata/clear", map[string]interface{}{
+		"targets": []map[string]string{{"id": workID, "entityType": "work"}},
+	}, cookie)
+	if response.Code != http.StatusOK {
+		t.Fatalf("clear status=%d body=%s", response.Code, response.Body.String())
+	}
+	work, err := store.GetLogicalWork(workID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.Author != "" || work.Publisher != "" || work.Year != nil || work.Description != "" ||
+		work.Language != "" || work.Genre != "" || work.Status != "" || work.MetadataSource != "" ||
+		work.MetadataLocked || work.CoverURL != "" || work.CoverSource != "" || work.CoverLocked {
+		t.Fatalf("logical Work metadata was not cleared: %#v", work)
+	}
+}
+
 func TestComicMetadataSearchQueryUsesOnlyWorkTitleAndAuthor(t *testing.T) {
 	target := metadataTarget{
 		EntityType: "work",

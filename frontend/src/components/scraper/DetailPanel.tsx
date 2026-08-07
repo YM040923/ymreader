@@ -81,6 +81,23 @@ export function DetailPanel({
     });
   };
 
+  const bindWorkCoverToComic = async (): Promise<boolean> => {
+    if (!isWork) return true;
+    const res = await fetch(apiPath(`/api/works/${encodeURIComponent(item.id)}/cover`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coverComicId: comicTargetId }),
+    });
+    return res.ok;
+  };
+
+  const setWorkCoverFromUrl = async (url: string): Promise<Response> =>
+    fetch(apiPath(`/api/works/${encodeURIComponent(item.id)}/cover`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState(item.title);
   const [titleSaving, setTitleSaving] = useState(false);
@@ -490,7 +507,7 @@ export function DetailPanel({
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch(apiPath(`/api/comics/${comicTargetId}/cover`), { method: "POST", body: formData });
-      if (res.ok) {
+      if (res.ok && await bindWorkCoverToComic()) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
         setCoverKey(Date.now());
@@ -510,11 +527,13 @@ export function DetailPanel({
     if (!coverUrlInput.trim()) return;
     setCoverLoading(true);
     try {
-      const res = await fetch(apiPath(`/api/comics/${comicTargetId}/cover`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: coverUrlInput.trim() }),
-      });
+      const res = isWork
+        ? await setWorkCoverFromUrl(coverUrlInput.trim())
+        : await fetch(apiPath(`/api/comics/${comicTargetId}/cover`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: coverUrlInput.trim() }),
+          });
       if (res.ok) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
@@ -540,7 +559,7 @@ export function DetailPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset: true }),
       });
-      if (res.ok) {
+      if (res.ok && await bindWorkCoverToComic()) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
         setCoverKey(Date.now());
@@ -593,7 +612,7 @@ export function DetailPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pageIndex }),
       });
-      if (res.ok) {
+      if (res.ok && await bindWorkCoverToComic()) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
         setCoverKey(Date.now());
@@ -616,7 +635,7 @@ export function DetailPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ embeddedImageIndex }),
       });
-      if (res.ok) {
+      if (res.ok && await bindWorkCoverToComic()) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
         setCoverKey(Date.now());
@@ -640,7 +659,7 @@ export function DetailPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ useFirstPage: true }),
       });
-      if (res.ok) {
+      if (res.ok && await bindWorkCoverToComic()) {
         invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
         invalidateComicsCache();
         setCoverKey(Date.now());
@@ -674,11 +693,13 @@ export function DetailPanel({
         const results = data.results || [];
         for (const r of results) {
           if (r.coverUrl) {
-            const coverRes = await fetch(apiPath(`/api/comics/${comicTargetId}/cover`), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: r.coverUrl }),
-            });
+            const coverRes = isWork
+              ? await setWorkCoverFromUrl(r.coverUrl)
+              : await fetch(apiPath(`/api/comics/${comicTargetId}/cover`), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ url: r.coverUrl }),
+                });
             if (coverRes.ok) {
               invalidateSwCache(`/api/comics/${comicTargetId}/thumbnail`);
               invalidateComicsCache();

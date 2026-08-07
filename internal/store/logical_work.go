@@ -449,6 +449,46 @@ func UpdateLogicalWorkCover(id string, update LogicalWorkCoverUpdate) error {
 	return nil
 }
 
+func ClearLogicalWorkMetadata(id string) error {
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
+	result, err := db.Exec(`
+		UPDATE "LogicalWork"
+		SET "author" = '',
+		    "publisher" = '',
+		    "year" = NULL,
+		    "description" = '',
+		    "language" = '',
+		    "genre" = '',
+		    "status" = '',
+		    "metadataSource" = '',
+		    "metadataLocked" = 0,
+		    "externalRating" = NULL,
+		    "externalRatingMax" = NULL,
+		    "externalRatingSource" = '',
+		    "externalRatingUpdatedAt" = NULL,
+		    "coverSource" = '',
+		    "coverComicId" = NULL,
+		    "coverPage" = NULL,
+		    "coverUrl" = '',
+		    "coverAspectRatio" = 0,
+		    "coverLocked" = 0,
+		    "scrapeStatus" = '',
+		    "lastScrapedAt" = NULL,
+		    "scrapeError" = '',
+		    "updatedAt" = ?
+		WHERE "id" = ?
+	`, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func GetLogicalWorkTags(workID string) ([]Tag, error) {
 	rows, err := db.Query(`
 		SELECT t."id", t."name", t."color"

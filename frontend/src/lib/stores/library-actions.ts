@@ -224,11 +224,20 @@ export async function startBatchSelected() {
 export async function clearSelectedMetadata() {
   const state = getState();
   if (state.selectedIds.size === 0) return;
+  const selectedItems = state.libraryItems.filter((item) =>
+    state.selectedIds.has(item.id),
+  );
+  if (selectedItems.length === 0) return;
   try {
     const res = await fetch(apiPath("/api/metadata/clear"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comicIds: Array.from(state.selectedIds) }),
+      body: JSON.stringify({
+        targets: selectedItems.map((item) => ({
+          id: item.id,
+          entityType: item.entityType,
+        })),
+      }),
     });
     if (res.ok) {
       getState().selectedIds = new Set();
