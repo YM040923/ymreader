@@ -127,17 +127,22 @@ func (h *AIHandler) TestConnection(c *gin.Context) {
 		return
 	}
 
-	result, err := service.CallCloudLLM(cfg, "You are a helpful assistant.", "Reply with exactly: OK", &service.LLMCallOptions{
-		Scenario:  "test",
-		MaxTokens: 10,
-	})
+	result, err := service.TranslateMetadataFields(cfg, map[string]string{
+		"title":       "The Apothecary Diaries",
+		"description": "A palace mystery story.",
+	}, "zh-CN")
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	if strings.TrimSpace(result["title"]) == "" {
+		c.JSON(500, gin.H{"error": "AI returned an empty structured translation"})
+		return
+	}
 
 	c.JSON(200, gin.H{
-		"success": true,
-		"reply":   result,
+		"success":     true,
+		"reply":       result["title"],
+		"translation": result,
 	})
 }

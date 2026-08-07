@@ -26,6 +26,10 @@ type LLMCallOptions struct {
 	Temperature *float64
 	// 图片列表（多模态）
 	Images []ImageContent
+	// 要求兼容接口返回 JSON 对象。
+	JSONMode bool
+	// 关闭提供商的深度思考模式，适用于翻译等低复杂度任务。
+	DisableThinking bool
 }
 
 // CallCloudLLM 调用 LLM，支持重试和 token 统计。
@@ -176,7 +180,7 @@ func callCloudLLMOnce(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCa
 	case "google":
 		return callGemini(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images)
 	default:
-		return callOpenAICompatible(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images)
+		return callOpenAICompatibleWithOptions(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temp, opts.Images, opts)
 	}
 }
 
@@ -185,6 +189,10 @@ func callCloudLLMOnce(cfg AIConfig, systemPrompt, userPrompt string, opts *LLMCa
 // ============================================================
 
 func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent) (string, tokenUsage, error) {
+	return callOpenAICompatibleWithOptions(cfg, apiURL, systemPrompt, userPrompt, maxTokens, temperature, images, nil)
+}
+
+func callOpenAICompatibleWithOptions(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent, opts *LLMCallOptions) (string, tokenUsage, error) {
 	reqURL := apiURL + "/chat/completions"
 
 	// 构建 messages
@@ -228,12 +236,19 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 		})
 	}
 
-	body, _ := json.Marshal(map[string]interface{}{
+	requestBody := map[string]interface{}{
 		"model":       cfg.CloudModel,
 		"messages":    messages,
 		"max_tokens":  maxTokens,
 		"temperature": temperature,
-	})
+	}
+	if opts != nil && opts.JSONMode && supportsOpenAIJSONMode(cfg.CloudProvider) {
+		requestBody["response_format"] = map[string]string{"type": "json_object"}
+	}
+	if opts != nil && opts.DisableThinking && cfg.CloudProvider == "zhipu" {
+		requestBody["thinking"] = map[string]string{"type": "disabled"}
+	}
+	body, _ := json.Marshal(requestBody)
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	req, _ := http.NewRequest("POST", reqURL, strings.NewReader(string(body)))
@@ -257,7 +272,8 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 
 	var data struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -283,7 +299,19 @@ func callOpenAICompatible(cfg AIConfig, apiURL, systemPrompt, userPrompt string,
 		OutputTokens: data.Usage.CompletionTokens,
 		TotalTokens:  data.Usage.TotalTokens,
 	}
+	if data.Choices[0].FinishReason == "length" {
+		return "", usage, fmt.Errorf("LLM response was truncated by the output token limit")
+	}
 	return data.Choices[0].Message.Content, usage, nil
+}
+
+func supportsOpenAIJSONMode(provider string) bool {
+	switch provider {
+	case "openai", "zhipu", "deepseek":
+		return true
+	default:
+		return false
+	}
 }
 
 // ============================================================
