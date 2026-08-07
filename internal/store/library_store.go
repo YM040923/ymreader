@@ -685,9 +685,25 @@ func GetLibraryWorkCounts(libraryID string) (workCount int, unitCount int, fileC
 	}
 	fileCount = unitCount
 	if workCount == 0 && unitCount > 0 {
-		// Old databases may not have persisted LogicalWork rows yet. Keep the
-		// count non-zero without pretending every chapter is a separate work.
-		workCount = 1
+		// Old databases may not have persisted LogicalWork rows yet. Count the
+		// top-level relative-path roots so chapter files under one folder still
+		// represent one visible work while standalone archives remain distinct.
+		err = db.QueryRow(`
+			WITH normalized AS (
+				SELECT TRIM(REPLACE(COALESCE(NULLIF("relativePath", ''), "filename"), '\', '/'), '/') AS path
+				FROM "Comic"
+				WHERE "libraryId" = ? AND ("contentType" = 'comic' OR "type" = 'comic')
+			)
+			SELECT COUNT(DISTINCT CASE
+				WHEN INSTR(path, '/') > 0 THEN SUBSTR(path, 1, INSTR(path, '/') - 1)
+				ELSE path
+			END)
+			FROM normalized
+			WHERE path != ''
+		`, libraryID).Scan(&workCount)
+		if err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	return workCount, unitCount, fileCount, nil
 }

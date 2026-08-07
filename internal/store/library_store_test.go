@@ -2,18 +2,57 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/model"
 )
 
+func TestGetLibraryWorkCountsFallsBackToDistinctRootsBeforeLogicalWorksPersist(t *testing.T) {
+	setupTestDB(t)
+	if err := RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	lib := &model.Library{
+		ID: "work-count-fallback", Name: "Work count fallback", Type: "comic",
+		RootPath: "/test/work-count-fallback", Enabled: true,
+	}
+	if err := CreateLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		id, path string
+	}{
+		{"fallback-a-1", "作品A/第001话.cbz"},
+		{"fallback-a-2", "作品A/第002话.cbz"},
+		{"fallback-b", "作品B.zip"},
+	} {
+		if _, err := DB().Exec(`
+			INSERT INTO "Comic" (
+				"id", "filename", "title", "type", "contentType", "libraryId",
+				"relativePath", "addedAt", "updatedAt"
+			) VALUES (?, ?, ?, 'comic', 'comic', ?, ?, ?, ?)
+		`, row.id, row.path, row.path, lib.ID, row.path, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workCount, unitCount, fileCount, err := GetLibraryWorkCounts(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workCount != 2 || unitCount != 3 || fileCount != 3 {
+		t.Fatalf("counts=(%d,%d,%d), want (2,3,3)", workCount, unitCount, fileCount)
+	}
+}
+
 func TestLibraryCRUD(t *testing.T) {
 	setupTestDB(t)
-	
+
 	// Run migrations to create tables
 	if err := RunMigrations(); err != nil {
 		t.Fatalf("RunMigrations failed: %v", err)
 	}
-	
+
 	// Test Create Library
 	lib := &model.Library{
 		Name:     "Test Library",
@@ -21,16 +60,16 @@ func TestLibraryCRUD(t *testing.T) {
 		RootPath: "/test/path",
 		Enabled:  true,
 	}
-	
+
 	err := CreateLibrary(lib)
 	if err != nil {
 		t.Fatalf("Failed to create library: %v", err)
 	}
-	
+
 	if lib.ID == "" {
 		t.Fatal("Library ID should not be empty after creation")
 	}
-	
+
 	// Test Get Library by ID
 	fetched, err := GetLibraryByID(lib.ID)
 	if err != nil {
@@ -42,14 +81,14 @@ func TestLibraryCRUD(t *testing.T) {
 	if fetched.Name != "Test Library" {
 		t.Errorf("Expected name 'Test Library', got '%s'", fetched.Name)
 	}
-	
+
 	// Test Update Library
 	fetched.Name = "Updated Library"
 	err = UpdateLibrary(fetched)
 	if err != nil {
 		t.Fatalf("Failed to update library: %v", err)
 	}
-	
+
 	updated, err := GetLibraryByID(lib.ID)
 	if err != nil {
 		t.Fatalf("Failed to get updated library: %v", err)
@@ -57,7 +96,7 @@ func TestLibraryCRUD(t *testing.T) {
 	if updated.Name != "Updated Library" {
 		t.Errorf("Expected name 'Updated Library', got '%s'", updated.Name)
 	}
-	
+
 	// Test Get All Libraries
 	libraries, err := GetAllLibraries()
 	if err != nil {
@@ -66,13 +105,13 @@ func TestLibraryCRUD(t *testing.T) {
 	if len(libraries) == 0 {
 		t.Fatal("Should have at least one library")
 	}
-	
+
 	// Test Delete Library
 	err = DeleteLibrary(lib.ID)
 	if err != nil {
 		t.Fatalf("Failed to delete library: %v", err)
 	}
-	
+
 	deleted, err := GetLibraryByID(lib.ID)
 	if err != nil {
 		t.Fatalf("Failed to check deleted library: %v", err)
@@ -84,12 +123,12 @@ func TestLibraryCRUD(t *testing.T) {
 
 func TestUserLibraryAccess(t *testing.T) {
 	setupTestDB(t)
-	
+
 	// Run migrations to create tables
 	if err := RunMigrations(); err != nil {
 		t.Fatalf("RunMigrations failed: %v", err)
 	}
-	
+
 	// First create a test user
 	testUser := &model.User{
 		ID:       "test-user-123",
@@ -97,12 +136,12 @@ func TestUserLibraryAccess(t *testing.T) {
 		Password: "hashedpassword",
 		Role:     "user",
 	}
-	
+
 	err := CreateUser(testUser)
 	if err != nil {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
-	
+
 	// Create a test library
 	lib := &model.Library{
 		Name:     "Access Test Library",
@@ -110,33 +149,33 @@ func TestUserLibraryAccess(t *testing.T) {
 		RootPath: "/test/access",
 		Enabled:  true,
 	}
-	
+
 	err = CreateLibrary(lib)
 	if err != nil {
 		t.Fatalf("Failed to create library: %v", err)
 	}
 	defer DeleteLibrary(lib.ID)
-	
+
 	// Test Set User Library Access
 	err = SetUserLibraryAccess(testUser.ID, []LibraryAccessReq{{LibraryID: lib.ID, CanView: true}})
 	if err != nil {
 		t.Fatalf("Failed to set user library access: %v", err)
 	}
-	
+
 	// Test Get User Library Access
 	accesses, err := GetUserLibraryAccess(testUser.ID)
 	if err != nil {
 		t.Fatalf("Failed to get user library access: %v", err)
 	}
-	
+
 	if len(accesses) != 1 {
 		t.Errorf("Expected 1 access record, got %d", len(accesses))
 	}
-	
+
 	if accesses[0].LibraryID != lib.ID {
 		t.Errorf("Expected library ID '%s', got '%s'", lib.ID, accesses[0].LibraryID)
 	}
-	
+
 	// Test User Can View Library
 	canView, err := UserCanViewLibrary(testUser.ID, lib.ID)
 	if err != nil {
@@ -145,7 +184,7 @@ func TestUserLibraryAccess(t *testing.T) {
 	if !canView {
 		t.Error("User should be able to view the library")
 	}
-	
+
 	// Test User Cannot View Other Library
 	canViewOther, err := UserCanViewLibrary(testUser.ID, "non-existent-library")
 	if err != nil {
@@ -158,12 +197,12 @@ func TestUserLibraryAccess(t *testing.T) {
 
 func TestAdminLibraryAccess(t *testing.T) {
 	setupTestDB(t)
-	
+
 	// Run migrations to create tables
 	if err := RunMigrations(); err != nil {
 		t.Fatalf("RunMigrations failed: %v", err)
 	}
-	
+
 	// Create admin user
 	adminUser := &model.User{
 		ID:       "admin-user-123",
@@ -171,12 +210,12 @@ func TestAdminLibraryAccess(t *testing.T) {
 		Password: "hashedpassword",
 		Role:     "admin",
 	}
-	
+
 	err := CreateUser(adminUser)
 	if err != nil {
 		t.Fatalf("Failed to create admin user: %v", err)
 	}
-	
+
 	// Create a test library
 	lib := &model.Library{
 		Name:     "Admin Test Library",
@@ -184,13 +223,13 @@ func TestAdminLibraryAccess(t *testing.T) {
 		RootPath: "/test/admin",
 		Enabled:  true,
 	}
-	
+
 	err = CreateLibrary(lib)
 	if err != nil {
 		t.Fatalf("Failed to create library: %v", err)
 	}
 	defer DeleteLibrary(lib.ID)
-	
+
 	// Admin should be able to view any library without explicit access
 	canView, err := UserCanViewLibrary(adminUser.ID, lib.ID)
 	if err != nil {
@@ -199,13 +238,13 @@ func TestAdminLibraryAccess(t *testing.T) {
 	if !canView {
 		t.Error("Admin should be able to view any library")
 	}
-	
+
 	// Admin should get all enabled libraries
 	libraryIDs, err := GetUserAccessibleLibraryIDs(adminUser.ID)
 	if err != nil {
 		t.Fatalf("Failed to get admin accessible libraries: %v", err)
 	}
-	
+
 	found := false
 	for _, id := range libraryIDs {
 		if id == lib.ID {
@@ -217,6 +256,3 @@ func TestAdminLibraryAccess(t *testing.T) {
 		t.Error("Admin should have access to all enabled libraries")
 	}
 }
-
-
-
