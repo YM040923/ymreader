@@ -33,6 +33,21 @@ type opdsPSEPageCall struct {
 	err    error
 }
 
+func ConvertOPDSImageToJPEG(data []byte) ([]byte, error) {
+	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+		return data, nil
+	}
+	source, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	if err := jpeg.Encode(&output, source, &jpeg.Options{Quality: opdsPSEJPEGQuality}); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
 var (
 	opdsPSEPageCallsMu  sync.Mutex
 	opdsPSEPageCalls    = make(map[string]*opdsPSEPageCall)

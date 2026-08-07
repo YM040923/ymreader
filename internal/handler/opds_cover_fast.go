@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"os"
@@ -66,6 +67,29 @@ func (h *OPDSHandler) PublicWorkCoverFast(c *gin.Context) {
 func (h *OPDSHandler) renderPersistedWorkCover(c *gin.Context, work *store.LogicalWork, public bool) {
 	cachePath := filepath.Join(config.GetThumbnailsDir(), archive.WorkCoverCacheName(work.ID))
 	if info, statErr := os.Stat(cachePath); statErr == nil && !info.IsDir() && info.Size() > 0 {
+		if public {
+			data, readErr := opdsCoverReadFile(cachePath)
+			if readErr == nil && len(data) > 0 {
+				if jpegData, convertErr := service.ConvertOPDSImageToJPEG(data); convertErr == nil {
+					data = jpegData
+				}
+				etag := fmt.Sprintf(`"%x"`, dataHash(data))
+				c.Header("Cache-Control", "public, max-age=86400, immutable")
+				c.Header("ETag", etag)
+				c.Header("Content-Type", "image/jpeg")
+				c.Header("Content-Length", strconv.Itoa(len(data)))
+				if c.GetHeader("If-None-Match") == etag {
+					c.Status(http.StatusNotModified)
+					return
+				}
+				if c.Request.Method == http.MethodHead {
+					c.Status(http.StatusOK)
+					return
+				}
+				c.Data(http.StatusOK, "image/jpeg", data)
+				return
+			}
+		}
 		etag := fmt.Sprintf(`"%s-%s"`,
 			strconv.FormatInt(info.ModTime().UnixNano(), 36),
 			strconv.FormatInt(info.Size(), 36),
@@ -109,6 +133,10 @@ func (h *OPDSHandler) renderPersistedWorkCover(c *gin.Context, work *store.Logic
 			if ok {
 				thumbnail, mimeType, _, thumbErr := service.GetComicThumbnail(comic.ID)
 				if thumbErr == nil && len(thumbnail) > 0 {
+					if jpegData, convertErr := service.ConvertOPDSImageToJPEG(thumbnail); convertErr == nil {
+						thumbnail = jpegData
+						mimeType = "image/jpeg"
+					}
 					h.renderOPDSImage(c, thumbnail, mimeType, 86400)
 					return
 				}
@@ -120,4 +148,9 @@ func (h *OPDSHandler) renderPersistedWorkCover(c *gin.Context, work *store.Logic
 	}
 
 	c.JSON(http.StatusNotFound, gin.H{"error": "Work cover unavailable"})
+}
+
+func dataHash(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:12]
 }

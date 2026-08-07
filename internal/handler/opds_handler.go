@@ -103,6 +103,17 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get libraries"))
 		return
 	}
+	works, worksErr := loadOPDSWorks(c)
+	if worksErr != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get works"))
+		return
+	}
+	coverByLibrary := make(map[string]string, len(libraryIDs))
+	for _, item := range works {
+		if _, exists := coverByLibrary[item.Work.LibraryID]; !exists {
+			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID)
+		}
+	}
 	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+2)
 	for _, libraryID := range libraryIDs {
 		library, libraryErr := store.GetLibraryByID(libraryID)
@@ -110,10 +121,11 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 			continue
 		}
 		items = append(items, service.OPDSNavigationItem{
-			ID:      "library-" + library.ID,
-			Title:   library.Name,
-			Href:    "/api/opds/libraries/" + url.PathEscape(library.ID),
-			Summary: "浏览该书库中的漫画",
+			ID:        "library-" + library.ID,
+			Title:     library.Name,
+			Href:      "/api/opds/libraries/" + url.PathEscape(library.ID),
+			CoverHref: coverByLibrary[library.ID],
+			Summary:   "浏览该书库中的漫画",
 		})
 	}
 	items = append(items,
@@ -997,6 +1009,10 @@ func (h *OPDSHandler) PublicCover(c *gin.Context) {
 	if err != nil || len(thumbnail) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Thumbnail unavailable"})
 		return
+	}
+	if jpegData, convertErr := service.ConvertOPDSImageToJPEG(thumbnail); convertErr == nil {
+		thumbnail = jpegData
+		mimeType = "image/jpeg"
 	}
 	h.renderOPDSImage(c, thumbnail, mimeType, 86400)
 }
