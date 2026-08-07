@@ -118,6 +118,28 @@ func TestBuildWorksFromComicListCollapsesSectionDirectories(t *testing.T) {
 	}
 }
 
+func TestBuildWorksFromComicListCollapsesArbitraryArchivesInsideExtrasDirectory(t *testing.T) {
+	items := []store.ComicListItem{
+		{ID: "chapter", Title: "败犬女主太多了 Ch.0020", Filename: "败犬女主太多了/Ch.0020.cbz", LibraryID: "lib", RelativePath: "败犬女主太多了/Ch.0020.cbz"},
+		{ID: "extra601", Title: "Extras Archive.601", Filename: "败犬女主太多了/Extras/Archive.601.cbz", LibraryID: "lib", RelativePath: "败犬女主太多了/Extras/Archive.601.cbz"},
+		{ID: "extra602", Title: "Extras Archive.602", Filename: "败犬女主太多了/Extras/Archive.602.cbz", LibraryID: "lib", RelativePath: "败犬女主太多了/Extras/Archive.602.cbz"},
+		{ID: "volume", Title: "败犬女主太多了 Vol.001", Filename: "败犬女主太多了/Vol.001.cbz", LibraryID: "lib", RelativePath: "败犬女主太多了/Vol.001.cbz"},
+	}
+
+	works := BuildWorksFromComicList(items, WorkBuildOptions{})
+	if len(works) != 1 || works[0].RootPath != "败犬女主太多了" {
+		t.Fatalf("nested Extras archives escaped their parent work: %#v", works)
+	}
+	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{
+		"Ch.0020",
+		"Extras / Archive.601",
+		"Extras / Archive.602",
+		"Vol.001",
+	}) {
+		t.Fatalf("labels=%#v", got)
+	}
+}
+
 func TestBuildWorksFromComicListRootPDFGetsFullTextUnit(t *testing.T) {
 	items := []store.ComicListItem{{
 		ID: "pdf1", Title: "大医凌然", Filename: "大医凌然.pdf",

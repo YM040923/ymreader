@@ -1043,6 +1043,10 @@ func splitWorkRoot(rel, title string) (root, itemLabel string, standaloneFile bo
 		if strings.EqualFold(strings.TrimSpace(stem), strings.TrimSpace(parentParts[len(parentParts)-1])) {
 			return strings.Join(parentParts, "/"), "全文", true
 		}
+		if rootParts := trimSectionParents(parentParts); len(rootParts) < len(parentParts) {
+			labelParts := append(append([]string(nil), parentParts[len(rootParts):]...), stem)
+			return strings.Join(rootParts, "/"), strings.Join(labelParts, " / "), false
+		}
 		if archiveNameLooksLikeUnit(stem, parentParts[len(parentParts)-1]) {
 			rootParts := trimSectionParents(parentParts)
 			labelParts := append(append([]string(nil), parentParts[len(rootParts):]...), stem)
