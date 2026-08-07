@@ -28,12 +28,48 @@ func (h *WorkHandler) ScrapeMetadata(c *gin.Context) {
 	if body.Lang == "" {
 		body.Lang = "zh"
 	}
-	body.Sources = filterSeriesMetadataSources(body.Sources, "comic")
-	results := service.SearchMetadata(body.Query, body.Sources, body.Lang, "comic")
+	// 锁定刮削源类型：漫画库固定漫画源，小说库固定小说源，混合库按作品成员多数判断。
+	// 请求的 contentType 不能覆盖服务端判断，避免国漫/小说被错误刮削成漫画源导致英文/错乱。
+	workContentType := detectWorkScrapeContentType(targets[0])
+	body.Sources = filterSeriesMetadataSources(body.Sources, workContentType)
+	results := service.SearchMetadata(body.Query, body.Sources, body.Lang, workContentType)
 	if results == nil {
 		results = []service.ComicMetadata{}
 	}
 	c.JSON(http.StatusOK, gin.H{"results": results, "detectedContentType": "comic"})
+}
+
+// detectWorkScrapeContentType 根据作品所属书库类型锁定刮削源类型。
+// 漫画库 -> comic，小说库 -> novel，混合库按作品成员类型多数判断，默认 comic。
+func detectWorkScrapeContentType(target workWriteTarget) string {
+	if target.Work.LibraryID != "" {
+		if lib, err := store.GetLibraryByID(target.Work.LibraryID); err == nil && lib != nil {
+			switch lib.Type {
+			case "novel":
+				return "novel"
+			case "mixed":
+				// 混合库：按成员漫画/小说数量判断
+				novels := 0
+				comics := 0
+				for _, id := range target.ComicIDs {
+					if comic, e := store.GetComicByID(id); e == nil && comic != nil {
+						if comic.ComicType == "novel" || (comic.ComicType == "" && service.IsNovelFilename(comic.Filename)) {
+							novels++
+						} else {
+							comics++
+						}
+					}
+				}
+				if len(target.ComicIDs) > 0 && novels > comics {
+					return "novel"
+				}
+				return "comic"
+			case "comic":
+				return "comic"
+			}
+		}
+	}
+	return "comic"
 }
 
 func (h *WorkHandler) ApplyScrapedMetadata(c *gin.Context) {

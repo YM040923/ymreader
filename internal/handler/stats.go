@@ -197,6 +197,40 @@ func (h *StatsHandler) GetHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": stats.History, "total": len(stats.History)})
 }
 
+// DeleteHistory removes reading history for one or more works/comics and resets
+// their reading progress. This is a hard delete from the ReadingSession table,
+// unlike clearing status which only hides the entry.
+func (h *StatsHandler) DeleteHistory(c *gin.Context) {
+	var body struct {
+		ComicIDs []string `json:"comicIds"`
+		All      bool     `json:"all"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	uid := getUserID(c)
+	if body.All {
+		deleted, err := store.DeleteAllReadingHistory(uid)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "deleted": deleted})
+		return
+	}
+	if len(body.ComicIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "comicIds or all is required"})
+		return
+	}
+	deleted, err := store.DeleteReadingHistoryByComicIDs(body.ComicIDs, uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "deleted": deleted})
+}
+
 func wantsWorkStats(c *gin.Context) bool {
 	return strings.EqualFold(strings.TrimSpace(c.Query("view")), "work")
 }

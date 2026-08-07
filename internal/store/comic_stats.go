@@ -1016,3 +1016,77 @@ func GetYearlyReadingReport(year int, userID ...string) (*YearlyReadingReport, e
 
 	return report, nil
 }
+
+// ============================================================
+// 阅读历史彻底删除
+// ============================================================
+
+// DeleteReadingHistoryByComicIDs 从数据库彻底删除指定漫画的阅读会话记录，
+// 并重置对应的阅读进度与状态（lastReadPage=0, lastReadAt=NULL, readingStatus=''）。
+// 与 SetUserReadingStatus("") 的区别：这里会真正删除 ReadingSession 行，而不是仅隐藏。
+func DeleteReadingHistoryByComicIDs(comicIDs []string, userID string) (int, error) {
+	if len(comicIDs) == 0 {
+		return 0, nil
+	}
+	ids := uniqueStrings(comicIDs)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	deleted := 0
+	for _, comicID := range ids {
+		res, dErr := tx.Exec(`DELETE FROM "ReadingSession" WHERE "comicId" = ? AND "userId" = ?`, comicID, userID)
+		if dErr != nil {
+			return 0, dErr
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			deleted += int(n)
+		}
+		// 重置全局与该用户的阅读进度
+		if userID != "" {
+			_, _ = tx.Exec(`
+				INSERT INTO "UserComicState" ("userId", "comicId", "lastReadPage", "lastReadAt", "readingStatus")
+				VALUES (?, ?, 0, NULL, '')
+				ON CONFLICT("userId", "comicId") DO UPDATE SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = ''
+			`, userID, comicID)
+		}
+		_, _ = tx.Exec(`UPDATE "Comic" SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '' WHERE "id" = ?`, comicID)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// DeleteAllReadingHistory 彻底删除当前用户的全部阅读会话记录并重置所有阅读进度。
+func DeleteAllReadingHistory(userID string) (int, error) {
+	if userID == "" {
+		return 0, fmt.Errorf("userID is required")
+	}
+	res, err := db.Exec(`DELETE FROM "ReadingSession" WHERE "userId" = ?`, userID)
+	if err != nil {
+		return 0, err
+	}
+	deleted, _ := res.RowsAffected()
+	_, _ = db.Exec(`UPDATE "UserComicState" SET "lastReadPage" = 0, "lastReadAt" = NULL, "readingStatus" = '' WHERE "userId" = ?`, userID)
+	return int(deleted), nil
+}
+
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}

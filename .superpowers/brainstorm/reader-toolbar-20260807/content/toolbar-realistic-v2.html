@@ -1,0 +1,51 @@
+<h2>这次只比较“真实阅读画面里的下栏”</h2>
+<p class="subtitle">背景使用实际阅读器截图；上方漫画画面保持不变，只改底部上一话、进度、目录、下一话和阅读模式区域。</p>
+
+<div class="cards" style="grid-template-columns:1fr;gap:24px">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#17181a">
+      <div style="position:relative;aspect-ratio:16/8.5;border-radius:14px;overflow:hidden;background:#222 url('reader-background.png') center 28%/cover no-repeat">
+        <div style="position:absolute;left:0;right:0;bottom:0;padding:12px 18px 15px;background:linear-gradient(to bottom,rgba(22,24,27,.04),rgba(22,24,27,.96) 35%);color:#fff">
+          <div style="display:flex;align-items:center;gap:12px;font-size:11px;color:#b9bec6"><span>8 / 12</span><div style="height:3px;flex:1;background:#555b64;border-radius:9px"><div style="width:62%;height:100%;background:#f4f5f6;border-radius:9px"></div></div></div>
+          <div style="display:grid;grid-template-columns:1fr 1.1fr 1fr;gap:8px;margin-top:10px">
+            <div style="padding:9px;text-align:center;border:1px solid #4b4f55;border-radius:10px;color:#c6cbd2">‹ 上一话</div>
+            <div style="padding:9px;text-align:center;border:1px solid #646a73;border-radius:10px;background:#30343a;font-weight:600">☷ 目录&nbsp; <span style="font-weight:400;color:#b9bec6">1 / 50</span></div>
+            <div style="padding:9px;text-align:center;border:1px solid #4b4f55;border-radius:10px;color:#f2f3f5">下一话 ›</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px;font-size:11px"><div style="display:flex;gap:14px;color:#bfc4ca"><span>单页</span><span>双页</span><span style="color:#fff;border-bottom:2px solid #fff;padding-bottom:5px">长条</span></div><div style="display:flex;gap:16px;color:#c8ccd2"><span>↻ 连续阅读</span><span>☀</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A · 漫画融入式下栏</h3><p>不是一整块面板，而是从漫画底部渐变出来；按钮保持实体边框，既能看清又不会像半透明浮层。</p></div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#17181a">
+      <div style="position:relative;aspect-ratio:16/8.5;border-radius:14px;overflow:hidden;background:#222 url('reader-background.png') center 28%/cover no-repeat">
+        <div style="position:absolute;left:0;right:0;bottom:0;padding:11px 18px 14px;background:rgba(25,27,30,.97);color:#fff;border-top:1px solid rgba(255,255,255,.12)">
+          <div style="height:3px;background:#454b55;border-radius:9px"><div style="width:62%;height:100%;background:#6f8cff;border-radius:9px"></div></div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px">
+            <div style="padding:8px 12px;border-radius:9px;color:#bac0c8;border:1px solid #3c4149">‹ 上一话</div>
+            <div style="padding:8px 16px;border-radius:9px;background:#6f8cff;color:white;font-weight:600">☷ 目录&nbsp; 1 / 50</div>
+            <div style="padding:8px 12px;border-radius:9px;color:#f2f3f5;border:1px solid #3c4149">下一话 ›</div>
+          </div>
+          <div style="display:flex;justify-content:center;gap:18px;margin-top:9px;font-size:11px;color:#aeb4bd"><span>单页</span><span>双页</span><span style="color:#8fa7ff">长条</span><span>↻ 连续阅读</span><span>☀</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B · 固定实体控制栏</h3><p>完全不透明、与页面底部固定贴合，进度条最长，目录置中，所有按钮永远可点；适合公网阅读和手机端。</p></div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#17181a">
+      <div style="position:relative;aspect-ratio:16/8.5;border-radius:14px;overflow:hidden;background:#222 url('reader-background.png') center 28%/cover no-repeat">
+        <div style="position:absolute;left:0;right:0;bottom:0;padding:9px 18px 12px;background:linear-gradient(to bottom,rgba(19,21,23,.15),rgba(19,21,23,.92));color:#fff">
+          <div style="display:flex;align-items:center;gap:14px"><span style="font-size:11px;color:#d2d6dc">‹ 上一话</span><div style="height:3px;flex:1;background:#666d78;border-radius:8px"><div style="width:62%;height:100%;background:#fff;border-radius:8px"></div></div><span style="font-size:11px;color:#d2d6dc">下一话 ›</span></div>
+          <div style="display:flex;justify-content:center;margin-top:9px"><span style="padding:8px 18px;border-radius:9px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);font-size:11px;font-weight:600">☷ 目录&nbsp; 1 / 50</span></div>
+          <div style="display:flex;justify-content:center;gap:18px;margin-top:8px;font-size:10px;color:#d0d4da"><span>单页</span><span>双页</span><span>长条</span><span>↻ 连续阅读</span><span>☀</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>C · 极简渐变导航条</h3><p>最大限度保留漫画画面，只使用底部渐变保证文字可读；适合追求沉浸感，但按钮对比度略低。</p></div>
+  </div>
+</div>

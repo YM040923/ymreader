@@ -62,6 +62,7 @@ func registerContentRoutes(api *gin.RouterGroup) {
 	historyRead.Use(middleware.AuthRequired())
 	{
 		historyRead.GET("", stats.GetHistory)
+		historyRead.DELETE("", stats.DeleteHistory)
 	}
 	readingActivity := api.Group("/reading")
 	readingActivity.Use(middleware.AuthRequired())
