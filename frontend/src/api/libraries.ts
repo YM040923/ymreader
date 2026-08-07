@@ -24,6 +24,9 @@ export interface Library {
   createdAt: string;
   updatedAt: string;
   comicCount: number;
+  workCount?: number;
+  unitCount?: number;
+  fileCount?: number;
   canManage?: boolean;
 }
 
@@ -42,6 +45,12 @@ export interface LibraryScrapeResult {
   success: number;
   failed: number;
   skipped: number;
+}
+
+export interface LibraryScrapeTarget {
+  id: string;
+  title: string;
+  coverUrl?: string;
 }
 
 export interface UserLibraryAccess {
@@ -203,6 +212,13 @@ export async function scrapeLibrary(id: string): Promise<LibraryScrapeResult> {
     method: "POST",
   });
   return safeJson(res);
+}
+
+export async function fetchLibraryScrapeTargets(id: string): Promise<LibraryScrapeTarget[]> {
+  const params = new URLSearchParams({ libraryId: id, metaFilter: "missing" });
+  const res = await fetch(apiPath(`/api/works?${params}`));
+  const data = await safeJson<{ works?: LibraryScrapeTarget[] }>(res);
+  return data.works || [];
 }
 
 // 扫描当前用户拥有管理权限的书库（管理员与 canManage 用户均可调用）。

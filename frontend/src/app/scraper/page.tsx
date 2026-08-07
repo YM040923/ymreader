@@ -1038,7 +1038,9 @@ export default function ScraperPage() {
                         {!currentProgress.step && <Clock className="h-3.5 w-3.5 text-muted animate-pulse" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-foreground truncate">{currentProgress.filename}</div>
+                        <div className="text-xs font-medium text-foreground truncate">
+                          {currentProgress.displayTitle || currentProgress.workTitle || currentProgress.title || currentProgress.filename}
+                        </div>
                         <div className="text-[10px] text-muted">
                           {currentProgress.step === "recognize" && (scraperT.stepRecognize || "AI 识别漫画内容...")}
                           {currentProgress.step === "parse" && (scraperT.stepParse || "AI 解析文件名...")}
@@ -1112,7 +1114,9 @@ export default function ScraperPage() {
                             />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-xs font-medium text-foreground truncate">{item.matchTitle || item.filename}</div>
+                            <div className="text-xs font-medium text-foreground truncate">
+                              {item.displayTitle || item.workTitle || item.title || item.matchTitle || item.filename}
+                            </div>
                             <div className="flex items-center gap-1 mt-0.5">
                               {item.source && (
                                 <span className="rounded bg-accent/10 px-1 py-0.5 text-[9px] text-accent">{item.source}</span>

@@ -1,3 +1,4 @@
+import { fetchLibraryScrapeTargets } from "@/api/libraries";
 import { apiPath } from "@/lib/base-path";
 /**
  * 刮削状态管理 — 刮削批处理 Actions
@@ -6,9 +7,104 @@ import { apiPath } from "@/lib/base-path";
  */
 
 import { getState, notify } from "./scraper-core";
-import type { BatchMode, ScrapeScope, CompletedItem } from "./scraper-types";
+import type {
+  BatchMode,
+  ScrapeScope,
+  CompletedItem,
+  ProgressItem,
+} from "./scraper-types";
 
 let abortController: AbortController | null = null;
+
+function normalizeProgressItem(
+  data: ProgressItem,
+  knownTitles: Map<string, string> = new Map(),
+): ProgressItem {
+  const state = getState();
+  const displayTitle =
+    data.workTitle ||
+    data.title ||
+    knownTitles.get(data.comicId) ||
+    state.libraryItems.find((item) => item.id === data.comicId)?.title ||
+    data.filename;
+
+  return {
+    ...data,
+    displayTitle,
+    libraryId: data.libraryId || state.currentProgress?.libraryId,
+  };
+}
+
+async function consumeBatchResponse(
+  res: Response,
+  knownTitles: Map<string, string> = new Map(),
+) {
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(errData.error || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Empty scrape response");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        const state = getState();
+        if (data.type === "complete") {
+          state.batchDone = data;
+          notify();
+          continue;
+        }
+        if (data.type !== "progress") continue;
+
+        const progress = normalizeProgressItem(data, knownTitles);
+        state.currentProgress = progress;
+        if (
+          progress.status === "success" ||
+          progress.status === "failed" ||
+          progress.status === "skipped"
+        ) {
+          state.completedItems = [
+            ...state.completedItems,
+            { ...progress, id: `${progress.comicId}-${Date.now()}` },
+          ];
+        }
+        notify();
+      } catch {
+        /* skip malformed SSE event */
+      }
+    }
+  }
+}
+
+function setTaskError(error: Error, title = "刮削任务", libraryId?: string) {
+  const state = getState();
+  state.batchDone = { type: "complete", success: 0, failed: 1, total: 1 };
+  state.completedItems = [{
+    type: "progress",
+    current: 0,
+    total: 1,
+    comicId: "",
+    filename: title,
+    displayTitle: title,
+    libraryId,
+    status: "failed",
+    message: error.message,
+    id: `error-${Date.now()}`,
+  } as CompletedItem];
+  notify();
+}
 
 export function setBatchMode(mode: BatchMode) {
   const state = getState();
@@ -82,76 +178,94 @@ export async function startBatch() {
     const res = await fetch(apiPath(endpoint), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: state.scrapeScope, lang, updateTitle: state.updateTitle, skipCover: state.skipCover }),
+      body: JSON.stringify({
+        mode: state.scrapeScope,
+        lang,
+        updateTitle: state.updateTitle,
+        skipCover: state.skipCover,
+      }),
       signal: abort.signal,
     });
+    await consumeBatchResponse(res);
+  } catch (err) {
+    if ((err as Error).name !== "AbortError") {
+      setTaskError(err as Error);
+    }
+  } finally {
+    const current = getState();
+    current.batchRunning = false;
+    abortController = null;
+    notify();
+    loadStats();
+  }
+}
 
-    // 处理非SSE错误响应（如AI未配置返回400）
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({ error: "Request failed" }));
-      const s = getState();
-      s.batchDone = { type: "complete", success: 0, failed: 0, total: 0 };
-      s.completedItems = [{
-        type: "progress",
-        current: 0,
-        total: 0,
-        comicId: "",
-        filename: "",
-        status: "failed",
-        message: errData.error || `HTTP ${res.status}`,
-        id: `error-${Date.now()}`,
-      } as CompletedItem];
+export async function startLibraryScrape(libraryId: string, libraryTitle: string) {
+  const state = getState();
+  if (state.batchRunning) return;
+
+  state.batchRunning = true;
+  state.currentProgress = {
+    type: "progress",
+    current: 0,
+    total: 0,
+    comicId: "",
+    filename: libraryTitle,
+    displayTitle: libraryTitle,
+    libraryId,
+    entityType: "work",
+    step: "search",
+    status: "running",
+  };
+  state.batchDone = null;
+  state.completedItems = [];
+  state.showResults = true;
+  notify();
+
+  const abort = new AbortController();
+  abortController = abort;
+  const lang = navigator.language.startsWith("zh") ? "zh" : "en";
+
+  try {
+    const targets = await fetchLibraryScrapeTargets(libraryId);
+    const knownTitles = new Map(targets.map((target) => [target.id, target.title]));
+    if (targets.length === 0) {
+      const current = getState();
+      current.currentProgress = null;
+      current.batchDone = { type: "complete", total: 0, success: 0, failed: 0 };
       notify();
       return;
     }
 
-    const reader = res.body?.getReader();
-    if (!reader) return;
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const current = getState();
+    current.currentProgress = {
+      ...current.currentProgress!,
+      total: targets.length,
+    };
+    notify();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const data = JSON.parse(line.slice(6));
-          const s = getState();
-          if (data.type === "complete") {
-            s.batchDone = data;
-            notify();
-          } else if (data.type === "progress") {
-            s.currentProgress = data;
-            if (
-              data.status === "success" ||
-              data.status === "failed" ||
-              data.status === "skipped"
-            ) {
-              s.completedItems = [
-                ...s.completedItems,
-                { ...data, id: `${data.comicId}-${Date.now()}` },
-              ];
-            }
-            notify();
-          }
-        } catch {
-          /* skip */
-        }
-      }
-    }
+    const res = await fetch(apiPath("/api/metadata/batch-selected"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targets: targets.map((target) => ({ id: target.id, entityType: "work" })),
+        comicIds: targets.map((target) => target.id),
+        lang,
+        updateTitle: state.updateTitle,
+        mode: state.batchMode,
+        skipCover: state.skipCover,
+      }),
+      signal: abort.signal,
+    });
+    await consumeBatchResponse(res, knownTitles);
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
-      getState().batchDone = { type: "complete", success: 0, failed: 0, total: 0 };
-      notify();
+      setTaskError(err as Error, libraryTitle, libraryId);
+      throw err;
     }
   } finally {
-    const s = getState();
-    s.batchRunning = false;
+    const current = getState();
+    current.batchRunning = false;
     abortController = null;
     notify();
     loadStats();

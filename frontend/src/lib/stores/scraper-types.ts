@@ -11,6 +11,11 @@ export interface ProgressItem {
   total: number;
   comicId: string;
   filename: string;
+  displayTitle?: string;
+  title?: string;
+  workTitle?: string;
+  entityType?: "work" | "comic";
+  libraryId?: string;
   step?: string;
   status?: string;
   source?: string;

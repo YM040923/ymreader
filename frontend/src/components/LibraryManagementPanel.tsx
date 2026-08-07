@@ -33,11 +33,12 @@ import {
   previewLibraryOwnership,
   reconcileLibraryOwnership,
   scanLibrary,
-  scrapeLibrary,
   type Library as LibraryType,
   type LibraryOwnershipPreview,
 } from "@/api/libraries";
 import { FolderBrowser } from "@/components/FolderBrowser";
+import { useScraperStore } from "@/hooks/useScraperStore";
+import { startLibraryScrape } from "@/lib/stores/scraper-batch-actions";
 
 type NormalizedStatus = "scan-on" | "scan-off" | "access-public" | "access-private" | "last-scanned" | "last-unscanned" | "enabled" | "disabled";
 
@@ -61,14 +62,14 @@ function StatusChip({ status }: { status: NormalizedStatus }) {
   );
 }
 
-function VaultCardShell({ active, disabled, className = "", children }: { active?: boolean; disabled?: boolean; className?: string; children: React.ReactNode }) {
+function VaultCardShell({ active, disabled, menuOpen, className = "", children }: { active?: boolean; disabled?: boolean; menuOpen?: boolean; className?: string; children: React.ReactNode }) {
   return (
     <div
-      className={`group relative overflow-hidden rounded-[22px] border bg-card/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+      className={`group relative rounded-[22px] border bg-card/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg ${
         active
           ? "border-accent/50 ring-1 ring-accent/20"
           : "border-border/70"
-      } ${disabled ? "opacity-70" : ""} ${className}`}
+      } ${menuOpen ? "z-40 overflow-visible" : "overflow-hidden"} ${disabled ? "opacity-70" : ""} ${className}`}
     >
       <div className="pointer-events-none absolute inset-x-10 -top-24 h-44 rounded-full bg-accent/10 blur-3xl opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
       {children}
@@ -151,6 +152,7 @@ function useTypePalette(type: string) {
 }
 export function LibraryManagementPanel() {
   const { user: currentUser } = useAuth();
+  const { batchRunning, currentProgress } = useScraperStore();
   const [libraries, setLibraries] = useState<LibraryType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -170,7 +172,6 @@ export function LibraryManagementPanel() {
   const [editScanEnabled, setEditScanEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [scanningId, setScanningId] = useState<string | null>(null);
-  const [scrapingId, setScrapingId] = useState<string | null>(null);
 
   const [deletingTarget, setDeletingTarget] = useState<LibraryType | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -366,6 +367,7 @@ export function LibraryManagementPanel() {
   };
 
   const handleScan = async (id: string) => {
+    if (scanningId !== null || batchRunning) return;
     try {
       setScanningId(id);
       const result = await scanLibrary(id);
@@ -379,17 +381,14 @@ export function LibraryManagementPanel() {
     }
   };
 
-  const handleScrape = async (id: string) => {
-    try {
-      setScrapingId(id);
-      const result = await scrapeLibrary(id);
-      showMessage(`刮削完成：成功 ${result.success}，失败 ${result.failed}，跳过 ${result.skipped}，共 ${result.total}`);
-      await fetchLibraryList();
-    } catch (err) {
-      showMessage(err instanceof Error ? `刮削失败: ${err.message}` : "刮削失败", true);
-    } finally {
-      setScrapingId(null);
-    }
+  const handleScrape = (library: LibraryType) => {
+    if (scanningId !== null || batchRunning || library.type === "novel") return;
+    showMessage(`已启动「${library.name}」的统一刮削任务`);
+    void startLibraryScrape(library.id, library.name)
+      .then(() => fetchLibraryList())
+      .catch((err) => {
+        showMessage(err instanceof Error ? `刮削失败: ${err.message}` : "刮削失败", true);
+      });
   };
 
   const handleDelete = async () => {
@@ -733,8 +732,15 @@ export function LibraryManagementPanel() {
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {filteredLibraries.map((lib) => {
             const statuses = getStatuses(lib);
+            const scrapeRunning = batchRunning && currentProgress?.libraryId === lib.id;
             return (
-              <VaultCardShell key={lib.id} active={editingId === lib.id} disabled={!lib.enabled} className={useTypePalette(lib.type).glow}>
+              <VaultCardShell
+                key={lib.id}
+                active={editingId === lib.id}
+                disabled={!lib.enabled}
+                menuOpen={openMenuId === lib.id}
+                className={useTypePalette(lib.type).glow}
+              >
                 <MoreMenu>
                   <button
                     type="button"
@@ -749,7 +755,8 @@ export function LibraryManagementPanel() {
                   {openMenuId === lib.id && (
                     <div className="absolute right-0 top-11 z-30 w-48 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-xl">
                       <button
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-card-hover hover:text-foreground"
+                        disabled={scanningId !== null || batchRunning}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-card-hover hover:text-foreground disabled:opacity-50"
                         onClick={(e) => {
                           e.stopPropagation();
                           setOpenMenuId(null);
@@ -760,15 +767,15 @@ export function LibraryManagementPanel() {
                       </button>
                       {lib.type !== "novel" && (
                         <button
-                          disabled={scrapingId === lib.id}
+                          disabled={scanningId !== null || batchRunning}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-card-hover hover:text-foreground disabled:opacity-50"
                           onClick={(e) => {
                             e.stopPropagation();
                             setOpenMenuId(null);
-                            handleScrape(lib.id);
+                            handleScrape(lib);
                           }}
                         >
-                          {scrapingId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />} 立即刮削
+                          {scrapeRunning ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />} 立即刮削
                         </button>
                       )}
                       <button
@@ -958,33 +965,54 @@ export function LibraryManagementPanel() {
                       ))}
                     </div>
 
-                    <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm text-muted sm:grid-cols-4">
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] uppercase tracking-wide text-muted/70">内容数</div>
-                        <div className="text-base font-semibold text-foreground">{lib.comicCount ?? 0}</div>
+                    {lib.type === "novel" ? (
+                      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm text-muted sm:grid-cols-4">
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">内容数</div>
+                          <div className="text-base font-semibold text-foreground">{lib.comicCount ?? 0}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">上次扫描</div>
+                          <div className="font-medium text-foreground">{formatDate(lib.lastScanAt)}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">上次新增</div>
+                          <div className="text-base font-semibold text-foreground">{lib.lastScanAdded ?? 0}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">文件数</div>
+                          <div className="text-base font-semibold text-foreground">{lib.fileCount ?? lib.lastScanTotal ?? 0}</div>
+                        </div>
                       </div>
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] uppercase tracking-wide text-muted/70">上次扫描</div>
-                        <div className="font-medium text-foreground">{formatDate(lib.lastScanAt)}</div>
+                    ) : (
+                      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-3 text-sm text-muted sm:grid-cols-4">
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">作品数</div>
+                          <div className="text-base font-semibold text-foreground">{lib.workCount ?? lib.comicCount ?? 0}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">章节/卷数</div>
+                          <div className="text-base font-semibold text-foreground">{lib.unitCount ?? lib.comicCount ?? 0}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">文件数</div>
+                          <div className="text-base font-semibold text-foreground">{lib.fileCount ?? lib.lastScanTotal ?? 0}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] uppercase tracking-wide text-muted/70">新增作品</div>
+                          <div className="text-base font-semibold text-foreground">{lib.lastScanAdded ?? 0}</div>
+                        </div>
                       </div>
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] uppercase tracking-wide text-muted/70">上次新增</div>
-                        <div className="text-base font-semibold text-foreground">{lib.lastScanAdded ?? 0}</div>
-                      </div>
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] uppercase tracking-wide text-muted/70">文件数</div>
-                        <div className="text-base font-semibold text-foreground">{lib.lastScanTotal ?? 0}</div>
-                      </div>
-                    </div>
+                    )}
 
                     <div className="mt-5 flex flex-wrap items-center gap-2">
-                      <InlineButton variant="primary" onClick={() => handleScan(lib.id)} disabled={scanningId === lib.id}>
+                      <InlineButton variant="primary" onClick={() => handleScan(lib.id)} disabled={scanningId !== null || batchRunning}>
                         {scanningId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
                         立即扫描
                       </InlineButton>
                       {lib.type !== "novel" && (
-                        <InlineButton variant="soft" onClick={() => handleScrape(lib.id)} disabled={scrapingId === lib.id}>
-                          {scrapingId === lib.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                        <InlineButton variant="soft" onClick={() => handleScrape(lib)} disabled={scanningId !== null || batchRunning}>
+                          {scrapeRunning ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
                           立即刮削
                         </InlineButton>
                       )}
