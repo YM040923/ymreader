@@ -66,7 +66,7 @@ assert.match(
   "each card must derive scrape state from the shared task",
 );
 
-for (const label of ["作品数", "章节/卷数", "文件数", "新增作品"]) {
+for (const label of ["作品数", "章节/卷数", "文件数", "新增文件"]) {
   assert.match(libraryPanel, new RegExp(label), `comic cards must show ${label}`);
 }
 for (const action of ["立即扫描", "编辑书库", "禁用书库", "启用书库", "删除书库"]) {

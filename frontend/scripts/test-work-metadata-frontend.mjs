@@ -8,6 +8,7 @@ const librariesApi = read("../src/api/libraries.ts");
 const libraryPanel = read("../src/components/LibraryManagementPanel.tsx");
 const scraperTypes = read("../src/lib/stores/scraper-types.ts");
 const libraryActions = read("../src/lib/stores/library-actions.ts");
+const batchActions = read("../src/lib/stores/scraper-batch-actions.ts");
 
 assert.match(
   scraperTypes,
@@ -15,15 +16,10 @@ assert.match(
   "LibraryItem must identify whether its id belongs to a Work or Comic",
 );
 
-assert.match(
+assert.doesNotMatch(
   librariesApi,
-  /export interface LibraryScrapeResult\s*\{[\s\S]*total:\s*number;[\s\S]*success:\s*number;[\s\S]*failed:\s*number;[\s\S]*skipped:\s*number;/,
-  "libraries API must expose the library scrape result shape",
-);
-assert.match(
-  librariesApi,
-  /apiPath\(`\/api\/admin\/libraries\/\$\{id\}\/scrape`\)/,
-  "libraries API must call the per-library manual scrape endpoint",
+  /scrapeLibrary/,
+  "the frontend must not keep a second synchronous library scrape client",
 );
 
 assert.match(
@@ -38,14 +34,19 @@ assert.match(
 );
 
 assert.match(
-  libraryPanel,
-  /const \[scrapingId,\s*setScrapingId\] = useState<string \| null>\(null\)/,
-  "library scrape must have state independent from scanning",
+  batchActions,
+  /export async function startLibraryScrape\(/,
+  "library scraping must use the shared metadata task",
+);
+assert.match(
+  batchActions,
+  /apiPath\("\/api\/metadata\/batch-selected"\)/,
+  "the shared metadata task must use batch-selected",
 );
 assert.match(
   libraryPanel,
-  /await scrapeLibrary\(id\)/,
-  "library management must invoke the manual scrape API",
+  /startLibraryScrape/,
+  "library management must invoke the shared metadata task",
 );
 assert.match(
   libraryPanel,
@@ -54,8 +55,13 @@ assert.match(
 );
 assert.match(
   libraryPanel,
-  /刮削完成：成功 \$\{result\.success\}，失败 \$\{result\.failed\}，跳过 \$\{result\.skipped\}，共 \$\{result\.total\}/,
-  "library management must report the scrape result counts",
+  /scanningId !== null \|\| batchRunning/,
+  "scanning and shared scraping must be mutually exclusive",
+);
+assert.match(
+  libraryPanel,
+  /删除书库/,
+  "library management must keep the delete action",
 );
 
 console.log("Work metadata frontend integration tests passed.");
