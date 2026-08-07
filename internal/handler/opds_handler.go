@@ -111,7 +111,7 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 	coverByLibrary := make(map[string]string, len(libraryIDs))
 	for _, item := range works {
 		if _, exists := coverByLibrary[item.Work.LibraryID]; !exists {
-			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=jpeg2"
+			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=feed3"
 		}
 	}
 	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+2)
@@ -123,7 +123,7 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 		items = append(items, service.OPDSNavigationItem{
 			ID:        "library-" + library.ID,
 			Title:     library.Name,
-			Href:      "/api/opds/libraries/" + url.PathEscape(library.ID),
+			Href:      "/api/opds/libraries/" + url.PathEscape(library.ID) + "?v=feed3",
 			CoverHref: coverByLibrary[library.ID],
 			Summary:   "浏览该书库中的漫画",
 		})
@@ -208,7 +208,11 @@ func (h *OPDSHandler) Library(c *gin.Context) {
 	items = filterOPDSWorkItems(items, func(item opdsWorkCatalogItem) bool {
 		return item.Work.LibraryID == libraryID
 	})
-	h.renderWorkItems(c, library.Name, items)
+	feedCoverHref := ""
+	if len(items) > 0 {
+		feedCoverHref = "/api/opds/public-work-cover/" + url.PathEscape(items[0].Work.ID) + "?v=feed3"
+	}
+	h.renderWorkItemsWithCover(c, library.Name, feedCoverHref, items)
 }
 
 func (h *OPDSHandler) renderWorkNavigationFeed(c *gin.Context, title string) {
@@ -234,6 +238,10 @@ func (h *OPDSHandler) renderFilteredWorkNavigationFeed(c *gin.Context, title, mo
 }
 
 func (h *OPDSHandler) renderWorkItems(c *gin.Context, title string, items []opdsWorkCatalogItem) {
+	h.renderWorkItemsWithCover(c, title, "", items)
+}
+
+func (h *OPDSHandler) renderWorkItemsWithCover(c *gin.Context, title, feedCoverHref string, items []opdsWorkCatalogItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		if title == "Recently Added" && items[i].AddedAt != items[j].AddedAt {
 			return items[i].AddedAt > items[j].AddedAt
@@ -257,7 +265,7 @@ func (h *OPDSHandler) renderWorkItems(c *gin.Context, title string, items []opds
 		works = append(works, item.OPDSWork())
 	}
 	baseURL := getBaseURL(c)
-	xml := service.GenerateWorkNavigationFeed(baseURL, title, opdsFeedID(baseURL, c), works, buildOPDSPagination(c, page, pageSize, total))
+	xml := service.GenerateWorkNavigationFeedWithCover(baseURL, title, opdsFeedID(baseURL, c), feedCoverHref, works, buildOPDSPagination(c, page, pageSize, total))
 	setOPDSPrivateResponseHeaders(c)
 	c.Data(http.StatusOK, service.OPDSNavigationMIME, []byte(xml))
 }
@@ -305,10 +313,11 @@ func (h *OPDSHandler) WorkUnitDetail(c *gin.Context) {
 			}
 			baseURL := getBaseURL(c)
 			xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
-				BaseURL: baseURL,
-				Title:   work.Title + " · " + row.Title,
-				FeedID:  opdsFeedID(baseURL, c),
-				Comics:  []service.OPDSComic{row},
+				BaseURL:       baseURL,
+				Title:         work.Title + " · " + row.Title,
+				FeedID:        opdsFeedID(baseURL, c),
+				FeedCoverHref: "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
+				Comics:        []service.OPDSComic{row},
 				Pagination: service.OPDSPagination{
 					SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/units/" + url.PathEscape(unitKey),
 					TotalResults: 1,
@@ -388,12 +397,13 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 		baseURL := getBaseURL(c)
 		feedType := service.OPDSAcquisitionMIME
 		xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
-			BaseURL:    baseURL,
-			Title:      work.Title,
-			FeedID:     opdsFeedID(baseURL, c),
-			Comics:     rows,
-			Pagination: buildOPDSPagination(c, page, pageSize, total),
-			FeedType:   feedType,
+			BaseURL:       baseURL,
+			Title:         work.Title,
+			FeedID:        opdsFeedID(baseURL, c),
+			FeedCoverHref: "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
+			Comics:        rows,
+			Pagination:    buildOPDSPagination(c, page, pageSize, total),
+			FeedType:      feedType,
 		})
 		setOPDSPrivateResponseHeaders(c)
 		c.Data(http.StatusOK, feedType, []byte(xml))

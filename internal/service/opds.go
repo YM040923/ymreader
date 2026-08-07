@@ -84,12 +84,13 @@ type OPDSPagination struct {
 }
 
 type OPDSAcquisitionFeedOptions struct {
-	BaseURL    string
-	Title      string
-	FeedID     string
-	Comics     []OPDSComic
-	Pagination OPDSPagination
-	FeedType   string
+	BaseURL       string
+	Title         string
+	FeedID        string
+	FeedCoverHref string
+	Comics        []OPDSComic
+	Pagination    OPDSPagination
+	FeedType      string
 }
 
 type OPDSNavigationItem struct {
@@ -127,6 +128,8 @@ type atomFeed struct {
 	ID           string      `xml:"id"`
 	Title        string      `xml:"title"`
 	Updated      string      `xml:"updated"`
+	Icon         string      `xml:"icon,omitempty"`
+	Logo         string      `xml:"logo,omitempty"`
 	Author       *atomAuthor `xml:"author,omitempty"`
 	Links        []atomLink  `xml:"link"`
 	TotalResults *int        `xml:"opensearch:totalResults,omitempty"`
@@ -281,6 +284,10 @@ func GenerateSeriesNavigationFeed(opts OPDSSeriesFeedOptions) string {
 
 // GenerateWorkNavigationFeed creates an OPDS navigation feed for logical works.
 func GenerateWorkNavigationFeed(baseURL, title, feedID string, works []OPDSWork, pagination OPDSPagination) string {
+	return GenerateWorkNavigationFeedWithCover(baseURL, title, feedID, "", works, pagination)
+}
+
+func GenerateWorkNavigationFeedWithCover(baseURL, title, feedID, feedCoverHref string, works []OPDSWork, pagination OPDSPagination) string {
 	now := time.Now().UTC().Format(time.RFC3339)
 	feedUpdated := ""
 	entries := make([]atomEntry, 0, len(works))
@@ -306,7 +313,7 @@ func GenerateWorkNavigationFeed(baseURL, title, feedID string, works []OPDSWork,
 				})
 			}
 		} else {
-			href := absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID)
+			href := absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID+"?v=feed3")
 			links = append(links, atomLink{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME})
 		}
 		if item.CoverHref != "" {
@@ -369,6 +376,10 @@ func GenerateWorkNavigationFeed(baseURL, title, feedID string, works []OPDSWork,
 			{Rel: "search", Href: absoluteOPDSURL(baseURL, "/api/opds/search.xml"), Type: OpenSearchMIME},
 		},
 		Entries: entries,
+	}
+	if feedCoverHref != "" {
+		feed.Icon = absoluteOPDSURL(baseURL, feedCoverHref)
+		feed.Logo = feed.Icon
 	}
 	appendOPDSPaginationLinks(&feed, baseURL, pagination, OPDSNavigationMIME)
 	return marshalOPDSXML(feed)
@@ -523,6 +534,10 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 			{Rel: "search", Href: absoluteOPDSURL(opts.BaseURL, "/api/opds/search.xml"), Type: OpenSearchMIME},
 		},
 		Entries: entries,
+	}
+	if opts.FeedCoverHref != "" {
+		feed.Icon = absoluteOPDSURL(opts.BaseURL, opts.FeedCoverHref)
+		feed.Logo = feed.Icon
 	}
 	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, feedType)
 
