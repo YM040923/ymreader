@@ -12,7 +12,6 @@ import {
   Shuffle,
   BookOpen,
 } from "lucide-react";
-import DesktopSidebar from "@/components/DesktopSidebar";
 import DashboardTopBar from "@/components/DashboardTopBar";
 import { ContinueReading } from "@/components/ContinueReading";
 import ServerActivityPanel from "@/components/ServerActivityPanel";
@@ -68,9 +67,7 @@ export default function Home() {
       {/* 背景氛围渐变 — 蓝紫光晕 */}
       <div className="dashboard-ambient-bg fixed inset-0 pointer-events-none z-0" />
 
-      <DesktopSidebar />
-
-      <div className="lg:ml-[220px] xl:ml-[240px] relative z-10">
+      <div className="relative z-10">
         <DashboardTopBar
           onUpload={canManage ? () => setUploadDialogOpen(true) : undefined}
           uploading={uploading}

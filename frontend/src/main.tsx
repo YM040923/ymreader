@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, useLocation, useParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, useLocation, useParams } from "react-router-dom";
 import "@/app/globals.css";
 
 import { ThemeProvider } from "@/lib/theme-context";
@@ -14,6 +14,7 @@ import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/Toast";
+import DesktopSidebar from "@/components/DesktopSidebar";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import PageProgressBar from "@/components/PageProgressBar";
 import { LibraryTypeCompatibilityGuard } from "@/components/LibraryTypeCompatibilityGuard";
@@ -80,32 +81,54 @@ function ReaderRoute() {
   return <Reader />;
 }
 
-/** 路由过渡动画包装器 —— 每次 pathname 变化时触发 fade-in */
-function AnimatedRoutes() {
+/** 只替换当前路由内容，外层导航框架保持挂载。 */
+function AnimatedOutlet() {
   const location = useLocation();
   return (
     <div key={location.pathname} className="animate-page-enter overflow-x-hidden">
-      <Routes location={location}>
-        <Route path="/" element={<Home />} />
-        <Route path="/books" element={<BooksPage />} />
-        <Route path="/work/:id" element={<WorkDetail />} />
-        <Route path="/comic/:id" element={<ComicDetailRoute />} />
-        <Route path="/reader/:id" element={<ReaderRoute />} />
-        <Route path="/novel/:id" element={<NovelReader />} />
-        <Route path="/series/:id" element={<SeriesDetail />} />
-        <Route path="/recommendations" element={<Recommendations />} />
-        <Route path="/stats" element={<AdminRoute><Stats /></AdminRoute>} />
-        <Route path="/logs" element={<AdminRoute><Logs /></AdminRoute>} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/scraper" element={<AdminRoute><Scraper /></AdminRoute>} />
-        <Route path="/tag-manager" element={<AdminRoute><TagManager /></AdminRoute>} />
-        <Route path="/data-admin" element={<AdminRoute><DataAdmin /></AdminRoute>} />
-        <Route path="/data-qa" element={<AdminRoute><DataQA /></AdminRoute>} />
-        <Route path="/dev/book-flip" element={<BookFlipDevPage />} />
-        <Route path="*" element={<Navigate to="/books" replace />} />
-      </Routes>
+      <Outlet />
     </div>
+  );
+}
+
+function PersistentShellLayout() {
+  return (
+    <div className="min-h-screen overflow-x-hidden">
+      <DesktopSidebar />
+      <div className="min-h-screen lg:ml-[220px] xl:ml-[240px]">
+        <AnimatedOutlet />
+      </div>
+    </div>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route element={<PersistentShellLayout />}>
+        <Route index element={<Home />} />
+        <Route path="books" element={<BooksPage />} />
+        <Route path="recommendations" element={<Recommendations />} />
+        <Route path="stats" element={<AdminRoute><Stats /></AdminRoute>} />
+        <Route path="logs" element={<AdminRoute><Logs /></AdminRoute>} />
+        <Route path="settings" element={<Settings />} />
+        <Route path="history" element={<History />} />
+        <Route path="scraper" element={<AdminRoute><Scraper /></AdminRoute>} />
+        <Route path="tag-manager" element={<AdminRoute><TagManager /></AdminRoute>} />
+        <Route path="data-admin" element={<AdminRoute><DataAdmin /></AdminRoute>} />
+        <Route path="data-qa" element={<AdminRoute><DataQA /></AdminRoute>} />
+      </Route>
+
+      <Route element={<AnimatedOutlet />}>
+        <Route path="work/:id" element={<WorkDetail />} />
+        <Route path="comic/:id" element={<ComicDetailRoute />} />
+        <Route path="reader/:id" element={<ReaderRoute />} />
+        <Route path="novel/:id" element={<NovelReader />} />
+        <Route path="series/:id" element={<SeriesDetail />} />
+        <Route path="dev/book-flip" element={<BookFlipDevPage />} />
+        <Route path="*" element={<Navigate to="/books" replace />} />
+      </Route>
+    </Routes>
   );
 }
 
@@ -122,7 +145,7 @@ function App() {
                   <LibraryTypeCompatibilityGuard />
                   <PageProgressBar />
                   <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div></div>}>
-                    <AnimatedRoutes />
+                    <AppRoutes />
                   </React.Suspense>
                   <MobileBottomNav />
                 </AuthGuard>
