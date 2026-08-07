@@ -36,18 +36,102 @@ interface ThumbnailStats {
 
 interface BatchProgress {
   type: string;
-  index?: number;
+  current?: number;
   total?: number;
-  percent?: number;
   title?: string;
   comicId?: string;
   status?: string;
   success?: number;
+  translated?: number;
   failed?: number;
   skipped?: number;
   source?: string;
   error?: string;
   reason?: string;
+}
+
+function progressPercent(progress: BatchProgress): number {
+  if (!progress.total || !progress.current) return 0;
+  return Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)));
+}
+
+function parseBatchSSEEvent(block: string): BatchProgress | null {
+  const data = block
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+
+  if (!data) return null;
+
+  let event: unknown;
+  try {
+    event = JSON.parse(data);
+  } catch {
+    throw new Error("批处理返回了无法解析的 SSE 事件");
+  }
+
+  if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") {
+    throw new Error("批处理返回了格式错误的 SSE 事件");
+  }
+  return event as BatchProgress;
+}
+
+async function consumeBatchSSE(
+  response: Response,
+  terminalType: "complete" | "done",
+  onProgress: (event: BatchProgress) => void,
+): Promise<BatchProgress> {
+  if (!response.ok) {
+    const text = (await response.text().catch(() => "")).trim();
+    let detail = text;
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      detail = parsed?.error || parsed?.message || text;
+    } catch {
+      // Keep the original response text.
+    }
+    throw new Error(detail || `批处理请求失败（HTTP ${response.status}）`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("批处理响应没有可读取的数据流");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const consumeBlock = (block: string): BatchProgress | null => {
+    const event = parseBatchSSEEvent(block);
+    if (!event) return null;
+    if (event.type === terminalType) return event;
+    if (event.type === "start" || event.type === "progress") {
+      if (event.type === "progress") onProgress(event);
+      return null;
+    }
+    throw new Error(`批处理返回了未知的 SSE 事件：${event.type}`);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+
+    for (const block of blocks) {
+      const terminal = consumeBlock(block);
+      if (terminal) return terminal;
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const terminal = consumeBlock(buffer);
+    if (terminal) return terminal;
+  }
+
+  throw new Error(`SSE 流在收到 ${terminalType} 完成事件前中断`);
 }
 
 interface BrowseDirResponse {
@@ -141,12 +225,14 @@ export function SiteSettingsPanel() {
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
   const [batchDone, setBatchDone] = useState<BatchProgress | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Batch translate metadata states
   const [translateRunning, setTranslateRunning] = useState(false);
   const [translateProgress, setTranslateProgress] = useState<BatchProgress | null>(null);
   const [translateDone, setTranslateDone] = useState<BatchProgress | null>(null);
+  const [translateError, setTranslateError] = useState<string | null>(null);
   const translateAbortRef = useRef<AbortController | null>(null);
   const [batchTranslateEngine, setBatchTranslateEngine] = useState("");
   const [availableEngines, setAvailableEngines] = useState<{id: string; name: string; available: boolean; speed: string; quality: string; configured: boolean}[]>([]);
@@ -389,6 +475,7 @@ export function SiteSettingsPanel() {
     setBatchRunning(true);
     setBatchProgress(null);
     setBatchDone(null);
+    setBatchError(null);
     const abort = new AbortController();
     abortRef.current = abort;
 
@@ -400,33 +487,12 @@ export function SiteSettingsPanel() {
         signal: abort.signal,
       });
 
-      const reader = res.body?.getReader();
-      if (!reader) return;
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "done") {
-              setBatchDone(data);
-            } else {
-              setBatchProgress(data);
-            }
-          } catch { /* skip */ }
-        }
-      }
+      setBatchDone(await consumeBatchSSE(res, "complete", setBatchProgress));
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        setBatchDone({ type: "done", success: 0, failed: 0, skipped: 0, total: 0 });
+        setBatchProgress(null);
+        setBatchDone(null);
+        setBatchError(err instanceof Error ? err.message : "批量刮削失败");
       }
     } finally {
       setBatchRunning(false);
@@ -443,6 +509,7 @@ export function SiteSettingsPanel() {
     setTranslateRunning(true);
     setTranslateProgress(null);
     setTranslateDone(null);
+    setTranslateError(null);
     const abort = new AbortController();
     translateAbortRef.current = abort;
 
@@ -455,33 +522,13 @@ export function SiteSettingsPanel() {
         signal: abort.signal,
       });
 
-      const reader = res.body?.getReader();
-      if (!reader) return;
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === "done") {
-              setTranslateDone(data);
-            } else {
-              setTranslateProgress(data);
-            }
-          } catch { /* skip */ }
-        }
-      }
+      const result = await consumeBatchSSE(res, "done", setTranslateProgress);
+      setTranslateDone({ ...result, success: result.translated ?? 0 });
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        setTranslateDone({ type: "done", success: 0, failed: 0, skipped: 0, total: 0 });
+        setTranslateProgress(null);
+        setTranslateDone(null);
+        setTranslateError(err instanceof Error ? err.message : "批量翻译失败");
       }
     } finally {
       setTranslateRunning(false);
@@ -985,6 +1032,13 @@ export function SiteSettingsPanel() {
           </div>
         )}
 
+        {batchError && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{batchError}</span>
+          </div>
+        )}
+
         {/* Progress */}
         {batchRunning && batchProgress && (
           <div className="space-y-2">
@@ -992,7 +1046,7 @@ export function SiteSettingsPanel() {
             <div className="relative h-2 w-full rounded-full bg-border overflow-hidden">
               <div
                 className="absolute inset-y-0 left-0 rounded-full bg-accent transition-all duration-300"
-                style={{ width: `${batchProgress.percent || 0}%` }}
+                style={{ width: `${progressPercent(batchProgress)}%` }}
               />
             </div>
             <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -1000,7 +1054,7 @@ export function SiteSettingsPanel() {
                 {batchProgress.title || batchProgress.comicId}
               </span>
               <span className="text-foreground font-medium shrink-0 text-right">
-                {(batchProgress.index ?? 0) + 1}/{batchProgress.total} ({batchProgress.percent}%)
+                {batchProgress.current ?? 0}/{batchProgress.total ?? 0} ({progressPercent(batchProgress)}%)
               </span>
             </div>
             <button
@@ -1021,9 +1075,9 @@ export function SiteSettingsPanel() {
               {siteT?.batchComplete || "Batch metadata fetch complete"}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-              <span className="text-green-400">
-                {siteT?.batchSuccess || "Success"}: {batchDone.success}
-              </span>
+                <span className="text-green-400">
+                  {siteT?.batchSuccess || "Success"}: {batchDone.success ?? 0}
+                </span>
               {(batchDone.failed ?? 0) > 0 && (
                 <span className="text-red-400">
                   {siteT?.batchFailed || "Failed"}: {batchDone.failed}
@@ -1084,13 +1138,20 @@ export function SiteSettingsPanel() {
           </button>
         )}
 
+        {translateError && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{translateError}</span>
+          </div>
+        )}
+
         {/* Progress */}
         {translateRunning && translateProgress && (
           <div className="space-y-2">
             <div className="relative h-2 w-full rounded-full bg-border overflow-hidden">
               <div
                 className="absolute inset-y-0 left-0 rounded-full bg-accent transition-all duration-300"
-                style={{ width: `${translateProgress.percent || 0}%` }}
+                style={{ width: `${progressPercent(translateProgress)}%` }}
               />
             </div>
             <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -1098,7 +1159,7 @@ export function SiteSettingsPanel() {
                 {translateProgress.title}
               </span>
               <span className="text-foreground font-medium shrink-0 text-right">
-                {(translateProgress.index ?? 0) + 1}/{translateProgress.total} ({translateProgress.percent}%)
+                {translateProgress.current ?? 0}/{translateProgress.total ?? 0} ({progressPercent(translateProgress)}%)
               </span>
             </div>
             <button
@@ -1119,9 +1180,9 @@ export function SiteSettingsPanel() {
               {siteT?.batchTranslateComplete || "Batch translation complete"}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-              <span className="text-green-400">
-                {siteT?.batchSuccess || "Success"}: {translateDone.success}
-              </span>
+                <span className="text-green-400">
+                  {siteT?.batchSuccess || "Success"}: {translateDone.success ?? 0}
+                </span>
               {(translateDone.failed ?? 0) > 0 && (
                 <span className="text-red-400">
                   {siteT?.batchFailed || "Failed"}: {translateDone.failed}
