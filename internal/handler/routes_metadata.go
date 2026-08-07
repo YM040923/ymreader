@@ -107,6 +107,12 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 
 	// OPDS 1.2 protocol — browser session, Bearer API key, or scoped Basic API key.
 	opds := NewOPDSHandler()
+	api.GET("/opds/public-work-cover/:id", opds.PublicWorkCoverFast)
+	api.HEAD("/opds/public-work-cover/:id", opds.PublicWorkCoverFast)
+	api.GET("/opds/public-cover/:id", opds.PublicCover)
+	api.HEAD("/opds/public-cover/:id", opds.PublicCover)
+	api.GET("/opds/public-unit-cover/:id", opds.PublicUnitCover)
+	api.HEAD("/opds/public-unit-cover/:id", opds.PublicUnitCover)
 	opdsGroup := api.Group("/opds")
 	opdsGroup.Use(suppressOPDSHeadResponseBody(), middleware.OPDSAuthRequired())
 	{
@@ -120,6 +126,8 @@ func registerMetadataRoutes(api *gin.RouterGroup) {
 		opdsGroup.HEAD("/favorites", opds.Favorites)
 		opdsGroup.GET("/works", opds.Works)
 		opdsGroup.HEAD("/works", opds.Works)
+		opdsGroup.GET("/libraries/:id", opds.Library)
+		opdsGroup.HEAD("/libraries/:id", opds.Library)
 		opdsGroup.GET("/works/:id", opds.WorkDetail)
 		opdsGroup.HEAD("/works/:id", opds.WorkDetail)
 		opdsGroup.GET("/works/:id/units/:unitId", opds.WorkUnitDetail)

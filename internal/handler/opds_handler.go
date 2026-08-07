@@ -35,6 +35,7 @@ var (
 	opdsVirtualCBZSlots       = make(chan struct{}, 2)
 	opdsVirtualCBZCleanupOnce sync.Once
 	opdsEnglishChapterPattern = regexp.MustCompile(`(?i)^(?:ch(?:apter)?)[.\s_-]*0*([0-9]+)(?:\s*[-_]\s*|\s+)?(.*)$`)
+	opdsEnglishVolumePattern  = regexp.MustCompile(`(?i)^(?:vol(?:ume)?)[.\s_-]*0*([0-9]+)(?:\s*[-_]\s*|\s+)?(.*)$`)
 	opdsChineseChapterPattern = regexp.MustCompile(`^第0*([0-9]+)话(?:\s*[-_]\s*|\s+)?(.*)$`)
 )
 
@@ -97,8 +98,42 @@ func firstForwardedValue(value string) string {
 
 // GET /api/opds
 func (h *OPDSHandler) Root(c *gin.Context) {
+	libraryIDs, err := getOPDSDownloadableComicLibraryIDs(c)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get libraries"))
+		return
+	}
+	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+2)
+	for _, libraryID := range libraryIDs {
+		library, libraryErr := store.GetLibraryByID(libraryID)
+		if libraryErr != nil || library == nil {
+			continue
+		}
+		items = append(items, service.OPDSNavigationItem{
+			ID:      "library-" + library.ID,
+			Title:   library.Name,
+			Href:    "/api/opds/libraries/" + url.PathEscape(library.ID),
+			Summary: "浏览该书库中的漫画",
+		})
+	}
+	items = append(items,
+		service.OPDSNavigationItem{ID: "recent", Title: "最近添加", Href: "/api/opds/recent", Summary: "最近加入书库的漫画"},
+		service.OPDSNavigationItem{ID: "favorites", Title: "收藏", Href: "/api/opds/favorites", Summary: "已收藏的漫画"},
+	)
+	baseURL := getBaseURL(c)
 	setOPDSPrivateResponseHeaders(c)
-	xml := service.GenerateRootCatalog(getBaseURL(c))
+	xml := service.GenerateNavigationFeed(service.NavigationFeedOptions{
+		BaseURL: baseURL,
+		Title:   "NowenReader",
+		FeedID:  opdsFeedID(baseURL, c),
+		Items:   items,
+		Pagination: service.OPDSPagination{
+			SelfHref:     "/api/opds",
+			TotalResults: len(items),
+			ItemsPerPage: len(items),
+			StartIndex:   0,
+		},
+	})
 	c.Data(http.StatusOK, service.OPDSNavigationMIME, []byte(xml))
 }
 
@@ -129,6 +164,41 @@ func (h *OPDSHandler) Works(c *gin.Context) {
 	h.renderWorkNavigationFeed(c, "Works")
 }
 
+// GET /api/opds/libraries/:id
+func (h *OPDSHandler) Library(c *gin.Context) {
+	libraryID := c.Param("id")
+	allowed, err := getOPDSDownloadableComicLibraryIDs(c)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get libraries"))
+		return
+	}
+	found := false
+	for _, id := range allowed {
+		if id == libraryID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Library not found"))
+		return
+	}
+	library, err := store.GetLibraryByID(libraryID)
+	if err != nil || library == nil {
+		c.Data(http.StatusNotFound, "text/plain; charset=utf-8", []byte("Library not found"))
+		return
+	}
+	items, err := loadOPDSWorks(c)
+	if err != nil {
+		c.Data(http.StatusInternalServerError, "text/plain; charset=utf-8", []byte("Failed to get works"))
+		return
+	}
+	items = filterOPDSWorkItems(items, func(item opdsWorkCatalogItem) bool {
+		return item.Work.LibraryID == libraryID
+	})
+	h.renderWorkItems(c, library.Name, items)
+}
+
 func (h *OPDSHandler) renderWorkNavigationFeed(c *gin.Context, title string) {
 	h.renderFilteredWorkNavigationFeed(c, title, "")
 }
@@ -148,8 +218,12 @@ func (h *OPDSHandler) renderFilteredWorkNavigationFeed(c *gin.Context, title, mo
 			return workContainsSearch(item.Work, query)
 		})
 	}
+	h.renderWorkItems(c, title, items)
+}
+
+func (h *OPDSHandler) renderWorkItems(c *gin.Context, title string, items []opdsWorkCatalogItem) {
 	sort.SliceStable(items, func(i, j int) bool {
-		if mode == "recent" && items[i].AddedAt != items[j].AddedAt {
+		if title == "Recently Added" && items[i].AddedAt != items[j].AddedAt {
 			return items[i].AddedAt > items[j].AddedAt
 		}
 		return naturalWorkLess(items[i].Work.Title, items[j].Work.Title)
@@ -211,9 +285,9 @@ func (h *OPDSHandler) WorkUnitDetail(c *gin.Context) {
 			var row service.OPDSComic
 			if _, physical := service.OPDSAcquisitionMIMEForFilename(comic.Filename); physical {
 				row = physicalOPDSComicRow(comic, []service.WorkUnit{unit})
-				displayTitle := opdsDisplayTitle(row.Title)
+				displayTitle := opdsDisplayTitleForWork(row.Title, work.Title)
 				row.Title = displayTitle
-				row.AcquisitionHref = opdsDownloadAliasPath(comic.ID, opdsAcquisitionFilename(displayTitle, comic.Filename))
+				row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID)
 			} else {
 				row = virtualOPDSUnitRow(comic, unit)
 			}
@@ -277,10 +351,9 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 				publishedPhysicalComics[comic.ID] = struct{}{}
 				row := physicalOPDSComicRow(comic, unitsByComic[comic.ID])
 				if physicalComicCount > 1 {
-					row.SuppressStream = true
-					displayTitle := opdsDisplayTitle(row.Title)
+					displayTitle := opdsDisplayTitleForWork(row.Title, work.Title)
 					row.Title = displayTitle
-					row.AcquisitionHref = opdsDownloadAliasPath(comic.ID, opdsAcquisitionFilename(displayTitle, comic.Filename))
+					row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID)
 				}
 				rows = append(rows, row)
 				continue
@@ -363,7 +436,7 @@ func physicalOPDSComicRow(comic *store.ComicListItem, units []service.WorkUnit) 
 		ComicType:    comic.ComicType,
 		LastReadPage: lastReadPage,
 		LastReadAt:   lastReadAt,
-		CoverHref:    "/api/opds/cover/" + url.PathEscape(comic.ID),
+		CoverHref:    "/api/opds/public-cover/" + url.PathEscape(comic.ID),
 	}
 }
 
@@ -402,6 +475,28 @@ func opdsDisplayTitle(title string) string {
 		}
 	}
 	return base
+}
+
+func opdsDisplayTitleForWork(title, workTitle string) string {
+	base := stripOPDSDisplayExtension(title)
+	workTitle = strings.TrimSpace(workTitle)
+	if workTitle != "" && strings.HasPrefix(strings.ToLower(base), strings.ToLower(workTitle)) {
+		base = strings.TrimSpace(base[len(workTitle):])
+		base = strings.TrimLeft(base, " -–—_:：·")
+		base = strings.TrimSpace(base)
+	}
+	if matches := opdsEnglishVolumePattern.FindStringSubmatch(base); len(matches) == 3 {
+		number := strings.TrimLeft(matches[1], "0")
+		if number == "" {
+			number = "0"
+		}
+		base = "第" + number + "卷"
+		if subtitle := strings.TrimSpace(matches[2]); subtitle != "" {
+			base += " " + subtitle
+		}
+		return base
+	}
+	return opdsDisplayTitle(base)
 }
 
 func opdsAcquisitionFilename(displayTitle, originalFilename string) string {
@@ -613,12 +708,29 @@ type opdsWorkCatalogItem struct {
 }
 
 func (item opdsWorkCatalogItem) OPDSWork() service.OPDSWork {
-	return service.OPDSWork{
+	result := service.OPDSWork{
 		Work:      item.Work,
-		CoverHref: "/api/opds/work-cover/" + url.PathEscape(item.Work.ID),
+		CoverHref: "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID),
 		AddedAt:   item.AddedAt,
 		UpdatedAt: item.UpdatedAt,
 	}
+	uniqueComicIDs := make(map[string]struct{}, len(item.Work.Units))
+	for _, unit := range item.Work.Units {
+		uniqueComicIDs[unit.ComicID] = struct{}{}
+	}
+	if len(uniqueComicIDs) == 1 {
+		for comicID := range uniqueComicIDs {
+			if comic, ok := getOPDSPublication(comicID); ok {
+				if _, physical := service.OPDSAcquisitionMIMEForFilename(comic.Filename); physical {
+					direct := physicalOPDSComicRow(comic, item.Work.Units)
+					direct.Title = item.Work.Title
+					direct.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID)
+					result.Direct = &direct
+				}
+			}
+		}
+	}
+	return result
 }
 
 func filterOPDSWorkItems(items []opdsWorkCatalogItem, keep func(opdsWorkCatalogItem) bool) []opdsWorkCatalogItem {
@@ -712,9 +824,9 @@ func maxAtomTime(left, right string) string {
 
 func opdsUnitCoverHref(unit service.WorkUnit) string {
 	if unit.InternalPath != "" {
-		return fmt.Sprintf("/api/opds/unit-cover/%s?page=%d", url.PathEscape(unit.ComicID), unit.CoverPage)
+		return fmt.Sprintf("/api/opds/public-unit-cover/%s?page=%d", url.PathEscape(unit.ComicID), unit.CoverPage)
 	}
-	return "/api/opds/cover/" + url.PathEscape(unit.ComicID)
+	return "/api/opds/public-cover/" + url.PathEscape(unit.ComicID)
 }
 
 // GET /api/opds/series
@@ -875,6 +987,20 @@ func (h *OPDSHandler) Cover(c *gin.Context) {
 	h.renderCover(c, c.Param("id"))
 }
 
+func (h *OPDSHandler) PublicCover(c *gin.Context) {
+	comic, ok := getOPDSPublication(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comic not found"})
+		return
+	}
+	thumbnail, mimeType, _, err := service.GetComicThumbnail(comic.ID)
+	if err != nil || len(thumbnail) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Thumbnail unavailable"})
+		return
+	}
+	h.renderOPDSImage(c, thumbnail, mimeType, 86400)
+}
+
 // GET /api/opds/work-cover/:id
 func (h *OPDSHandler) WorkCover(c *gin.Context) {
 	item, found, err := h.findIndexedDownloadableWork(c, c.Param("id"))
@@ -1022,6 +1148,26 @@ func (h *OPDSHandler) UnitCover(c *gin.Context) {
 		c.Status(http.StatusNotModified)
 		return
 	}
+	c.Data(http.StatusOK, "image/jpeg", result.Data)
+}
+
+func (h *OPDSHandler) PublicUnitCover(c *gin.Context) {
+	comic, ok := getOPDSPublication(c.Param("id"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Comic not found"})
+		return
+	}
+	page, err := strconv.Atoi(c.Query("page"))
+	if err != nil || page < 0 || page >= comic.PageCount {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid page"})
+		return
+	}
+	result, err := service.GetOPDSPSEPageImage(comic.ID, page, 0)
+	if err != nil || result == nil || len(result.Data) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Unit cover unavailable"})
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
 	c.Data(http.StatusOK, "image/jpeg", result.Data)
 }
 

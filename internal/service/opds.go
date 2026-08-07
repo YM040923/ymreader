@@ -62,6 +62,7 @@ type OPDSWork struct {
 	CoverHref string
 	AddedAt   string
 	UpdatedAt string
+	Direct    *OPDSComic
 }
 
 type OPDSSeries struct {
@@ -289,8 +290,25 @@ func GenerateWorkNavigationFeed(baseURL, title, feedID string, works []OPDSWork,
 		if workTitle == "" {
 			workTitle = "Untitled Work"
 		}
-		href := absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID)
-		links := []atomLink{{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME}}
+		links := make([]atomLink, 0, 4)
+		if item.Direct != nil {
+			direct := item.Direct
+			if mimeType, ok := OPDSAcquisitionMIMEForFilename(direct.Filename); ok {
+				acquisitionHref := direct.AcquisitionHref
+				if acquisitionHref == "" {
+					acquisitionHref = opdsDownloadPath(direct.ID, "")
+				}
+				links = append(links, atomLink{
+					Rel:    "http://opds-spec.org/acquisition",
+					Href:   absoluteOPDSURL(baseURL, acquisitionHref),
+					Type:   mimeType,
+					Length: opdsFileLength(direct.FileSize),
+				})
+			}
+		} else {
+			href := absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID)
+			links = append(links, atomLink{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME})
+		}
 		if item.CoverHref != "" {
 			cover := absoluteOPDSURL(baseURL, item.CoverHref)
 			links = append([]atomLink{
@@ -523,14 +541,14 @@ func GenerateNavigationFeed(opts NavigationFeedOptions) string {
 		if title == "" {
 			title = "Untitled"
 		}
-		cover := item.CoverHref
-		if cover == "" {
-			cover = "/api/opds/cover/" + url.PathEscape(item.ID)
-		}
 		links := []atomLink{
 			{Rel: "subsection", Href: absoluteOPDSURL(opts.BaseURL, item.Href), Type: OPDSAcquisitionMIME},
-			{Rel: "http://opds-spec.org/image", Href: absoluteOPDSURL(opts.BaseURL, cover)},
-			{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, cover)},
+		}
+		if cover := strings.TrimSpace(item.CoverHref); cover != "" {
+			links = append(links,
+				atomLink{Rel: "http://opds-spec.org/image", Href: absoluteOPDSURL(opts.BaseURL, cover)},
+				atomLink{Rel: "http://opds-spec.org/image/thumbnail", Href: absoluteOPDSURL(opts.BaseURL, cover)},
+			)
 		}
 		entry := atomEntry{
 			Title:   title,
@@ -595,7 +613,7 @@ func comicCategoryNamesForOPDS(categories []store.ComicCategoryInfo) []string {
 // zero-based image pages. Text-oriented publications remain downloadable
 // through OPDS but do not advertise page streaming.
 func OPDSPSESupported(filename, comicType string, pageCount int) bool {
-	if comicType != "comic" || pageCount <= 0 {
+	if pageCount <= 0 || (comicType != "" && comicType != "comic") {
 		return false
 	}
 	normalized := strings.TrimSpace(strings.ReplaceAll(filename, "\\", "/"))
