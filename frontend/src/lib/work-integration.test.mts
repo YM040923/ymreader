@@ -81,13 +81,12 @@ assert.match(detail, /阅读时长/);
 assert.match(detail, /阅读单元/);
 assert.match(detail, /上次读到这里/);
 assert.match(detail, /buildWorkReaderPath\(work, unit/);
-assert.match(detail, /SeriesMetadataSearch/);
+assert.match(detail, /WorkMetadataSearch/);
 assert.doesNotMatch(detail, /href=\{`\/reader\/\$\{unit\.comicId\}`\}/);
 const metadataApi = read("api/workMetadata.ts");
 assert.match(metadataApi, /getWorkMetadataTarget/);
-assert.match(metadataApi, /\/apply-metadata/);
-assert.match(metadataApi, /work\.units\.map/);
-assert.match(metadataApi, /\/api\/comics\/batch/);
+assert.match(metadataApi, /\/metadata/);
+assert.match(metadataApi, /\/api\/works\//);
 assert.match(metadataApi, /categorySlugs/);
 
 const history = read("app/history/page.tsx");
