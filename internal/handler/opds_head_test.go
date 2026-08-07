@@ -76,8 +76,6 @@ func TestOPDSHeadMatchesGetWithoutResponseBody(t *testing.T) {
 		"/api/opds/unit-cover/" + comicID + "?page=0",
 		"/api/opds/stream/" + comicID + "?page=0",
 		"/api/opds/units/" + works[0].Units[0].ID + "/download",
-		"/api/opds/works/" + works[0].ID + "/continuous/download",
-		"/api/opds/works/" + works[0].ID + "/continuous/stream?page=0",
 	}
 
 	for _, path := range paths {

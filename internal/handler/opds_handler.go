@@ -192,85 +192,27 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 		if work.ID != workID {
 			continue
 		}
-		rows := make([]service.OPDSComic, 0, len(work.Units)+1)
-		// Do not advertise an empty virtual CBZ. A number of OPDS clients
-		// immediately issue ranged requests for the first acquisition entry;
-		// a zero-page Work produces only an empty ZIP header and those clients
-		// then request bytes beyond EOF, resulting in HTTP 416.
-		if work.PageCount > 0 {
-			rows = append(rows, service.OPDSComic{
-				ID:              work.ID,
-				EntryID:         "continuous_" + work.ID,
-				Title:           "连续阅读（整部）",
-				Author:          work.Author,
-				Description:     work.Description,
-				Language:        work.Language,
-				Genre:           work.Genre,
-				Publisher:       work.Publisher,
-				PageCount:       work.PageCount,
-				FileSize:        0,
-				AddedAt:         work.AddedAt,
-				UpdatedAt:       work.UpdatedAt,
-				Tags:            comicTagNames(work.Tags),
-				Filename:        work.Title + ".cbz",
-				ComicType:       "comic",
-				CoverHref:       "/api/opds/work-cover/" + url.PathEscape(work.ID),
-				AcquisitionHref: "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/download",
-				AcquisitionType: "application/vnd.comicbook+zip",
-				StreamHref:      "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/stream?page={pageNumber}&width={maxWidth}",
-			})
+		rows := make([]service.OPDSComic, 0, len(work.Units))
+		unitsByComic := make(map[string][]service.WorkUnit, len(work.Units))
+		for _, unit := range work.Units {
+			unitsByComic[unit.ComicID] = append(unitsByComic[unit.ComicID], unit)
 		}
+		publishedPhysicalComics := make(map[string]struct{}, len(unitsByComic))
 		for _, unit := range work.Units {
 			comic, ok := getOPDSPublication(unit.ComicID)
 			if !ok {
 				continue
 			}
-			year := 0
-			if comic.Year != nil {
-				year = *comic.Year
-			}
-			streamStartPage := 0
-			streamPageCount := 0
-			if unit.InternalPath != "" {
-				streamStartPage = unit.StartPage
-				streamPageCount = unit.PageCount
-			}
-			lastReadAt := ""
-			if unit.LastReadAt != nil {
-				lastReadAt = *unit.LastReadAt
-			}
-			row := service.OPDSComic{
-				ID:                  comic.ID,
-				EntryID:             unit.ID,
-				Title:               unit.DisplayLabel,
-				Author:              comic.Author,
-				Description:         comic.Description,
-				Language:            comic.Language,
-				Genre:               comic.Genre,
-				Publisher:           comic.Publisher,
-				Year:                year,
-				PageCount:           unit.PageCount,
-				FileSize:            comic.FileSize,
-				AddedAt:             comic.AddedAt,
-				UpdatedAt:           comic.UpdatedAt,
-				Tags:                comicTagNames(comic.Tags),
-				Filename:            comic.Filename,
-				ComicType:           comic.ComicType,
-				LastReadPage:        unit.LastReadPage,
-				LastReadAt:          lastReadAt,
-				StreamStartPage:     streamStartPage,
-				StreamPageCount:     streamPageCount,
-				CoverHref:           opdsUnitCoverHref(unit),
-				SuppressAcquisition: unit.InternalPath != "",
-			}
 			_, hasPhysicalAcquisition := service.OPDSAcquisitionMIMEForFilename(comic.Filename)
-			if unit.InternalPath != "" || !hasPhysicalAcquisition {
-				row.SuppressAcquisition = false
-				row.AcquisitionHref = "/api/opds/units/" + url.PathEscape(unit.ID) + "/download"
-				row.AcquisitionType = "application/vnd.comicbook+zip"
-				row.FileSize = 0
+			if hasPhysicalAcquisition {
+				if _, published := publishedPhysicalComics[comic.ID]; published {
+					continue
+				}
+				publishedPhysicalComics[comic.ID] = struct{}{}
+				rows = append(rows, physicalOPDSComicRow(comic, unitsByComic[comic.ID]))
+				continue
 			}
-			rows = append(rows, row)
+			rows = append(rows, virtualOPDSUnitRow(comic, unit))
 		}
 		page, pageSize := parseOPDSPagination(c)
 		total := len(rows)
@@ -299,19 +241,86 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 	return false
 }
 
-func (h *OPDSHandler) findDownloadableWork(c *gin.Context, workID string) (*service.Work, bool) {
-	items, err := loadOPDSWorks(c)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get works"})
-		return nil, false
+func physicalOPDSComicRow(comic *store.ComicListItem, units []service.WorkUnit) service.OPDSComic {
+	title := ""
+	if len(units) > 0 {
+		title = strings.TrimSpace(units[0].DisplayLabel)
 	}
-	for index := range items {
-		if items[index].Work.ID == workID {
-			return &items[index].Work, true
+	if len(units) > 1 {
+		title = strings.TrimSpace(comic.Title)
+	}
+	if title == "" {
+		title = strings.TrimSuffix(filepath.Base(comic.Filename), filepath.Ext(comic.Filename))
+	}
+	year := 0
+	if comic.Year != nil {
+		year = *comic.Year
+	}
+	lastReadPage := comic.LastReadPage
+	lastReadAt := ""
+	if comic.LastReadAt != nil {
+		lastReadAt = *comic.LastReadAt
+	}
+	for _, unit := range units {
+		if unit.LastReadAt == nil || (lastReadAt != "" && *unit.LastReadAt <= lastReadAt) {
+			continue
 		}
+		lastReadAt = *unit.LastReadAt
+		lastReadPage = unit.StartPage + unit.LastReadPage
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "Work not found"})
-	return nil, false
+	return service.OPDSComic{
+		ID:           comic.ID,
+		Title:        title,
+		Author:       comic.Author,
+		Description:  comic.Description,
+		Language:     comic.Language,
+		Genre:        comic.Genre,
+		Publisher:    comic.Publisher,
+		Year:         year,
+		PageCount:    comic.PageCount,
+		FileSize:     comic.FileSize,
+		AddedAt:      comic.AddedAt,
+		UpdatedAt:    comic.UpdatedAt,
+		Tags:         comicTagNames(comic.Tags),
+		Filename:     comic.Filename,
+		ComicType:    comic.ComicType,
+		LastReadPage: lastReadPage,
+		LastReadAt:   lastReadAt,
+		CoverHref:    "/api/opds/cover/" + url.PathEscape(comic.ID),
+	}
+}
+
+func virtualOPDSUnitRow(comic *store.ComicListItem, unit service.WorkUnit) service.OPDSComic {
+	year := 0
+	if comic.Year != nil {
+		year = *comic.Year
+	}
+	lastReadAt := ""
+	if unit.LastReadAt != nil {
+		lastReadAt = *unit.LastReadAt
+	}
+	return service.OPDSComic{
+		ID:              comic.ID,
+		EntryID:         unit.ID,
+		Title:           unit.DisplayLabel,
+		Author:          comic.Author,
+		Description:     comic.Description,
+		Language:        comic.Language,
+		Genre:           comic.Genre,
+		Publisher:       comic.Publisher,
+		Year:            year,
+		PageCount:       unit.PageCount,
+		AddedAt:         comic.AddedAt,
+		UpdatedAt:       comic.UpdatedAt,
+		Tags:            comicTagNames(comic.Tags),
+		Filename:        comic.Filename,
+		ComicType:       comic.ComicType,
+		LastReadPage:    unit.LastReadPage,
+		LastReadAt:      lastReadAt,
+		CoverHref:       opdsUnitCoverHref(unit),
+		AcquisitionHref: "/api/opds/units/" + url.PathEscape(unit.ID) + "/download",
+		AcquisitionType: "application/vnd.comicbook+zip",
+	}
 }
 
 func (h *OPDSHandler) findDownloadableUnit(c *gin.Context, unitID string) (*service.Work, *service.WorkUnit, bool) {
@@ -338,16 +347,16 @@ func (h *OPDSHandler) UnitDownload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	h.renderVirtualCBZ(c, work.Title+" - "+unit.DisplayLabel, []service.WorkUnit{*unit})
-}
-
-// GET/HEAD /api/opds/works/:id/continuous/download
-func (h *OPDSHandler) WorkContinuousDownload(c *gin.Context) {
-	work, ok := h.findDownloadableWork(c, c.Param("id"))
+	comic, ok := getOPDSPublication(unit.ComicID)
 	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Unit source not found"})
 		return
 	}
-	h.renderVirtualCBZ(c, work.Title, work.Units)
+	if _, hasPhysicalAcquisition := service.OPDSAcquisitionMIMEForFilename(comic.Filename); hasPhysicalAcquisition {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Virtual Unit download unavailable"})
+		return
+	}
+	h.renderVirtualCBZ(c, work.Title+" - "+unit.DisplayLabel, []service.WorkUnit{*unit})
 }
 
 func (h *OPDSHandler) renderVirtualCBZ(c *gin.Context, title string, units []service.WorkUnit) {
@@ -473,64 +482,6 @@ func sanitizeOPDSFilename(value string) string {
 		return "comic"
 	}
 	return value
-}
-
-// GET/HEAD /api/opds/works/:id/continuous/stream?page={pageNumber}&width={maxWidth}
-func (h *OPDSHandler) WorkContinuousStream(c *gin.Context) {
-	work, ok := h.findDownloadableWork(c, c.Param("id"))
-	if !ok {
-		return
-	}
-	pageIndex, err := strconv.Atoi(c.Query("page"))
-	if err != nil || pageIndex < 0 || pageIndex >= work.PageCount {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
-		return
-	}
-	maxWidth := 0
-	if rawWidth := strings.TrimSpace(c.Query("width")); rawWidth != "" {
-		maxWidth, err = strconv.Atoi(rawWidth)
-		if err != nil || maxWidth < 0 || maxWidth > opdsPSEMaxWidth {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width must be between 0 and %d", opdsPSEMaxWidth)})
-			return
-		}
-	}
-	unit, pageInUnit := continuousWorkPage(work.Units, pageIndex)
-	if unit == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
-		return
-	}
-	result, err := service.GetOPDSPSEPageImage(unit.ComicID, unit.StartPage+pageInUnit, maxWidth)
-	if err != nil || result == nil || len(result.Data) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
-		return
-	}
-	sum := sha256.Sum256(result.Data)
-	etag := fmt.Sprintf(`"%x"`, sum[:12])
-	c.Header("Content-Type", "image/jpeg")
-	c.Header("Content-Length", strconv.Itoa(len(result.Data)))
-	c.Header("Cache-Control", "private, max-age=86400, must-revalidate")
-	c.Header("Vary", "Authorization, Cookie")
-	c.Header("ETag", etag)
-	c.Header("X-Content-Type-Options", "nosniff")
-	if c.GetHeader("If-None-Match") == etag {
-		c.Status(http.StatusNotModified)
-		return
-	}
-	if c.Request.Method == http.MethodHead {
-		c.Status(http.StatusOK)
-		return
-	}
-	c.Data(http.StatusOK, "image/jpeg", result.Data)
-}
-
-func continuousWorkPage(units []service.WorkUnit, pageIndex int) (*service.WorkUnit, int) {
-	for index := range units {
-		if pageIndex < units[index].PageCount {
-			return &units[index], pageIndex
-		}
-		pageIndex -= units[index].PageCount
-	}
-	return nil, 0
 }
 
 type opdsWorkCatalogItem struct {
