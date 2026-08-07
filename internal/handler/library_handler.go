@@ -39,14 +39,26 @@ func (h *LibraryHandler) ListLibraries(c *gin.Context) {
 	type libraryWithCount struct {
 		model.Library
 		ComicCount int `json:"comicCount"`
+		WorkCount  int `json:"workCount"`
+		UnitCount  int `json:"unitCount"`
+		FileCount  int `json:"fileCount"`
 	}
 
 	result := make([]libraryWithCount, len(libraries))
 	for i, lib := range libraries {
 		count, _ := store.GetLibraryComicCount(lib.ID)
+		workCount, unitCount, fileCount, _ := store.GetLibraryWorkCounts(lib.ID)
+		if lib.Type == "novel" {
+			workCount = count
+			unitCount = count
+			fileCount = count
+		}
 		result[i] = libraryWithCount{
 			Library:    lib,
-			ComicCount: count,
+			ComicCount: workCount,
+			WorkCount:  workCount,
+			UnitCount:  unitCount,
+			FileCount:  fileCount,
 		}
 	}
 

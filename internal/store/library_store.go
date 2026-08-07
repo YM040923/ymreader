@@ -662,6 +662,36 @@ func GetLibraryComicCount(libraryID string) (int, error) {
 	return count, err
 }
 
+// GetLibraryWorkCounts separates the logical works users see from the
+// physical Comic rows used to store chapters, volumes and source files.
+func GetLibraryWorkCounts(libraryID string) (workCount int, unitCount int, fileCount int, err error) {
+	if LogicalWorkPersistenceAvailable() {
+		err = db.QueryRow(`
+			SELECT COUNT(*)
+			FROM "LogicalWork"
+			WHERE "libraryId" = ? AND "contentType" = 'comic' AND "missingSince" IS NULL
+		`, libraryID).Scan(&workCount)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	err = db.QueryRow(`
+		SELECT COUNT(*)
+		FROM "Comic"
+		WHERE "libraryId" = ? AND ("contentType" = 'comic' OR "type" = 'comic')
+	`, libraryID).Scan(&unitCount)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	fileCount = unitCount
+	if workCount == 0 && unitCount > 0 {
+		// Old databases may not have persisted LogicalWork rows yet. Keep the
+		// count non-zero without pretending every chapter is a separate work.
+		workCount = 1
+	}
+	return workCount, unitCount, fileCount, nil
+}
+
 // CountNovelsByLibraryID returns the number of novels (contentType=novel) in a library.
 func CountNovelsByLibraryID(libraryID string) (int, error) {
 	var count int
