@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -14,10 +15,10 @@ import (
 
 func (h *MetadataHandler) Batch(c *gin.Context) {
 	var body struct {
-		Mode        string `json:"mode"` // "all" or "missing"
+		Mode        string `json:"mode"`
 		Lang        string `json:"lang"`
-		UpdateTitle bool   `json:"updateTitle"` // 是否同时更新书名/漫画名
-		SkipCover   bool   `json:"skipCover"`   // P2-A: 不替换封面
+		UpdateTitle bool   `json:"updateTitle"`
+		SkipCover   bool   `json:"skipCover"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		body.Mode = "all"
@@ -26,150 +27,47 @@ func (h *MetadataHandler) Batch(c *gin.Context) {
 	if body.Lang == "" {
 		body.Lang = "en"
 	}
-
-	// Get all comics
-	allComics, err := store.GetAllComicIDsAndFilenames()
+	targets, err := discoverMetadataTargets(c, nil)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to get comics"})
+		c.JSON(500, gin.H{"error": "Failed to get metadata targets"})
 		return
 	}
+	targets = filterMissingMetadataTargets(targets, body.Mode)
+	total := len(targets)
 
-	// If mode=missing, filter to only those without metadata
-	var comics []store.ComicIDFilename
-	if body.Mode == "missing" {
-		for _, comic := range allComics {
-			detail, _ := store.GetComicByID(comic.ID)
-			if detail != nil && detail.MetadataSource == "" {
-				comics = append(comics, comic)
-			}
-		}
-	} else {
-		comics = allComics
-	}
-
-	total := len(comics)
-
-	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Writer.Flush()
-
 	sendSSE := func(data interface{}) {
 		jsonData, _ := json.Marshal(data)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(jsonData))
 		c.Writer.Flush()
 	}
-
 	sendSSE(gin.H{"type": "start", "total": total})
 
-	success := 0
-	failed := 0
-
-	for i, comic := range comics {
-		progress := gin.H{
-			"type":     "progress",
-			"current":  i + 1,
-			"total":    total,
-			"comicId":  comic.ID,
-			"filename": comic.Filename,
-		}
-
-		resolved, err := service.GlobalFileResolver.ResolveContentPath(comic.ID)
-		if err != nil || resolved.AbsolutePath == "" {
+	success, failed := 0, 0
+	for index, target := range targets {
+		progress := metadataProgressEvent(target, index+1, total)
+		source, matchTitle, scrapeErr := executeStandardMetadataTarget(
+			c.Request.Context(), target, body.Lang, body.UpdateTitle, body.SkipCover,
+		)
+		if scrapeErr == nil {
+			progress["status"] = "success"
+			progress["source"] = source
+			if matchTitle != "" {
+				progress["matchTitle"] = matchTitle
+			}
+			success++
+		} else {
+			progress["status"] = "failed"
+			progress["message"] = scrapeErr.Error()
 			failed++
-			continue
 		}
-		filePath := resolved.AbsolutePath
-
-		isNovel := service.IsNovelFilename(comic.Filename)
-
-		// 如果是文件夹漫画，跳过：优先尝试从 EPUB OPF 提取本地元数据
-		if isNovel && filePath != "" {
-			ext := strings.ToLower(filepath.Ext(comic.Filename))
-			if ext == ".epub" {
-				epubMeta, err := service.ExtractEpubMetadata(filePath)
-				if err == nil && epubMeta != nil && epubMeta.Title != "" {
-					_, err := service.ApplyMetadata(comic.ID, *epubMeta, body.Lang, body.UpdateTitle, service.ApplyOption{SkipCover: body.SkipCover})
-					if err == nil {
-						progress["status"] = "success"
-						progress["source"] = "epub_opf"
-						if body.UpdateTitle && epubMeta.Title != "" {
-							progress["matchTitle"] = epubMeta.Title
-						}
-						sendSSE(progress)
-						success++
-						continue
-					}
-				}
-			}
-		}
-
-		// 漫画文件：尝试从 ComicInfo.xml 提取
-		if !isNovel && filePath != "" {
-			comicInfo, _ := service.ExtractComicInfoFromArchive(filePath)
-			if comicInfo != nil && comicInfo.Title != "" {
-				_, err := service.ApplyMetadata(comic.ID, *comicInfo, body.Lang, body.UpdateTitle, service.ApplyOption{SkipCover: body.SkipCover})
-				if err == nil {
-					progress["status"] = "success"
-					progress["source"] = "comicinfo"
-					if body.UpdateTitle && comicInfo.Title != "" {
-						progress["matchTitle"] = comicInfo.Title
-					}
-					sendSSE(progress)
-					success++
-					continue
-				}
-			}
-		}
-
-		// Online search fallback — 优先使用标题
-		searchQuery := service.BuildSearchQuery(comic.Title, comic.Filename)
-		if searchQuery == "" {
-			progress["status"] = "skipped"
-			progress["message"] = "No search query"
-			sendSSE(progress)
-			failed++
-			continue
-		}
-
-		// 批量在线搜索限流：每次请求之间间隔 1.5 秒，避免触发外部 API 的 429
-		time.Sleep(1500 * time.Millisecond)
-
-		// 根据文件名自动判断内容类型
-		batchContentType := "comic"
-		if service.IsNovelFilename(comic.Filename) {
-			batchContentType = "novel"
-		}
-
-		results := service.SearchMetadata(searchQuery, nil, body.Lang, batchContentType)
-		if len(results) > 0 {
-			_, err := service.ApplyMetadata(comic.ID, results[0], body.Lang, body.UpdateTitle, service.ApplyOption{SkipCover: body.SkipCover})
-			if err == nil {
-				progress["status"] = "success"
-				progress["source"] = results[0].Source
-				if body.UpdateTitle && results[0].Title != "" {
-					progress["matchTitle"] = results[0].Title
-				}
-				sendSSE(progress)
-				success++
-				continue
-			}
-		}
-
-		progress["status"] = "failed"
-		progress["message"] = "No metadata found"
 		sendSSE(progress)
-		failed++
 	}
-
-	sendSSE(gin.H{
-		"type":    "complete",
-		"total":   total,
-		"success": success,
-		"failed":  failed,
-	})
+	sendSSE(gin.H{"type": "complete", "total": total, "success": success, "failed": failed})
 }
 
 // POST /api/metadata/translate-batch — SSE stream（多引擎支持）
@@ -279,40 +177,104 @@ func (h *MetadataHandler) TranslateBatch(c *gin.Context) {
 
 // GET /api/metadata/stats — 元数据统计概览
 func (h *MetadataHandler) Stats(c *gin.Context) {
-	allComics, err := store.GetAllComicIDsAndFilenames()
+	targets, err := discoverMetadataTargets(c, nil)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to get comics"})
+		c.JSON(500, gin.H{"error": "Failed to get metadata targets"})
 		return
 	}
-
-	total := len(allComics)
-	withMeta := 0
-	missing := 0
-
-	for _, comic := range allComics {
-		detail, _ := store.GetComicByID(comic.ID)
-		if detail != nil && detail.MetadataSource != "" {
-			withMeta++
-		} else {
+	withMeta, missing := 0, 0
+	for _, target := range targets {
+		if metadataTargetMissing(target) {
 			missing++
+		} else {
+			withMeta++
 		}
 	}
+	c.JSON(200, gin.H{"total": len(targets), "withMetadata": withMeta, "missing": missing})
+}
 
-	c.JSON(200, gin.H{
-		"total":        total,
-		"withMetadata": withMeta,
-		"missing":      missing,
-	})
+func executeStandardMetadataTarget(
+	ctx context.Context,
+	target metadataTarget,
+	lang string,
+	updateTitle bool,
+	skipCover bool,
+) (string, string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if target.EntityType == "work" {
+		work, err := requireMetadataTargetWork(target)
+		if err != nil {
+			return "", "", err
+		}
+		query := metadataTargetSearchQuery(target)
+		if query == "" {
+			return "", "", fmt.Errorf("no Work search query")
+		}
+		if err := waitMetadataRateLimit(ctx); err != nil {
+			return "", "", err
+		}
+		if err := service.ScrapeWorkMetadataContext(ctx, work, query, skipCover || work.CoverLocked); err != nil {
+			return "", "", err
+		}
+		return "work", "", nil
+	}
+	if target.Comic == nil {
+		return "", "", fmt.Errorf("Comic metadata target is unavailable")
+	}
+	comic := *target.Comic
+	resolved, resolveErr := service.GlobalFileResolver.ResolveContentPath(comic.ID)
+	filePath := ""
+	if resolveErr == nil {
+		filePath = resolved.AbsolutePath
+	}
+	if filePath != "" && strings.EqualFold(filepath.Ext(comic.Filename), ".epub") {
+		if epubMeta, err := service.ExtractEpubMetadata(filePath); err == nil && epubMeta != nil && epubMeta.Title != "" {
+			if _, err := service.ApplyMetadata(comic.ID, *epubMeta, lang, updateTitle, service.ApplyOption{SkipCover: skipCover}); err == nil {
+				return "epub_opf", epubMeta.Title, nil
+			}
+		}
+	}
+	query := metadataTargetSearchQuery(target)
+	if query == "" {
+		return "", "", fmt.Errorf("no Comic search query")
+	}
+	if err := waitMetadataRateLimit(ctx); err != nil {
+		return "", "", err
+	}
+	results := service.SearchMetadata(query, nil, lang, "novel")
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if len(results) == 0 {
+		return "", "", fmt.Errorf("no metadata found")
+	}
+	if _, err := service.ApplyMetadata(comic.ID, results[0], lang, updateTitle, service.ApplyOption{SkipCover: skipCover}); err != nil {
+		return "", "", err
+	}
+	return results[0].Source, results[0].Title, nil
+}
+
+func waitMetadataRateLimit(ctx context.Context) error {
+	timer := time.NewTimer(1500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // POST /api/metadata/ai-batch — AI 智能批量刮削 (SSE)
 // 流水线：AI 解析文件名 → 在线搜索 → AI 补全 → 应用元数据
 func (h *MetadataHandler) AIBatch(c *gin.Context) {
 	var body struct {
-		Mode        string `json:"mode"` // "all" or "missing"
+		Mode        string `json:"mode"`
 		Lang        string `json:"lang"`
-		UpdateTitle bool   `json:"updateTitle"` // 是否同时更新书名/漫画名
-		SkipCover   bool   `json:"skipCover"`   // P2-A: 不替换封面
+		UpdateTitle bool   `json:"updateTitle"`
+		SkipCover   bool   `json:"skipCover"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		body.Mode = "missing"
@@ -321,223 +283,147 @@ func (h *MetadataHandler) AIBatch(c *gin.Context) {
 	if body.Lang == "" {
 		body.Lang = "zh"
 	}
-
-	// 检查 AI 配置
 	aiCfg := service.LoadAIConfig()
 	if !aiCfg.EnableCloudAI || aiCfg.CloudAPIKey == "" {
 		c.JSON(400, gin.H{"error": "AI not configured"})
 		return
 	}
-
-	allComics, err := store.GetAllComicIDsAndFilenames()
+	targets, err := discoverMetadataTargets(c, nil)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to get comics"})
+		c.JSON(500, gin.H{"error": "Failed to get metadata targets"})
 		return
 	}
-
-	// 根据 mode 过滤
-	var comics []store.ComicIDFilename
-	if body.Mode == "missing" {
-		for _, comic := range allComics {
-			detail, _ := store.GetComicByID(comic.ID)
-			if detail != nil && detail.MetadataSource == "" {
-				comics = append(comics, comic)
-			}
-		}
-	} else {
-		comics = allComics
-	}
-
-	total := len(comics)
-
-	// SSE headers
+	targets = filterMissingMetadataTargets(targets, body.Mode)
+	total := len(targets)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Writer.Flush()
-
 	sendSSE := func(data interface{}) {
 		jsonData, _ := json.Marshal(data)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(jsonData))
 		c.Writer.Flush()
 	}
-
 	sendSSE(gin.H{"type": "start", "total": total})
-
-	success := 0
-	failed := 0
-
-	for i, comic := range comics {
-		progress := gin.H{
-			"type":     "progress",
-			"current":  i + 1,
-			"total":    total,
-			"comicId":  comic.ID,
-			"filename": comic.Filename,
-		}
-
-		// Step 1: AI 内容识别（封面+内页 Vision 分析）
+	success, failed := 0, 0
+	for index, target := range targets {
+		progress := metadataProgressEvent(target, index+1, total)
 		progress["step"] = "recognize"
 		sendSSE(progress)
-
-		var searchQuery string
-		// 优先尝试 Vision 内容识别
-		var coverData []byte
-		coverBytes, _, _, coverErr := service.GetComicThumbnail(comic.ID)
-		if coverErr == nil && len(coverBytes) > 0 {
-			coverData = coverBytes
-		}
-
-		// 获取前 2 页内页图片用于辅助识别
-		var pageImages [][]byte
-		for pi := 0; pi < 2; pi++ {
-			pageImg, err := service.GetPageImage(comic.ID, pi)
-			if err == nil && pageImg != nil && len(pageImg.Data) > 0 {
-				pageImages = append(pageImages, pageImg.Data)
-			}
-		}
-
-		recognized, err := service.AIRecognizeComicContent(aiCfg, coverData, pageImages, body.Lang)
-		if err == nil && recognized != nil && recognized.Title != "" {
-			searchQuery = recognized.Title
-			if recognized.Author != "" {
-				searchQuery = recognized.Title + " " + recognized.Author
-			}
-			progress["recognized"] = recognized
-		} else {
-			// Vision 识别失败，降级为 AI 解析文件名
-			parsed, parseErr := service.AIParseFilename(aiCfg, comic.Filename)
-			if parseErr == nil && parsed != nil && parsed.Title != "" {
-				searchQuery = parsed.Title
-				if parsed.Author != "" {
-					searchQuery = parsed.Title + " " + parsed.Author
-				}
-				progress["parsed"] = parsed
-			} else {
-				// 再次降级为智能名称匹配（优先标题）
-				searchQuery = service.BuildSearchQuery(comic.Title, comic.Filename)
-			}
-		}
-
-		if searchQuery == "" {
-			progress["status"] = "failed"
-			progress["step"] = "done"
-			progress["message"] = "No search query"
-			sendSSE(progress)
-			failed++
-			continue
-		}
-
-		// Step 2: 在线搜索元数据
-		progress["step"] = "search"
-		sendSSE(progress)
-
-		// 限流防429
-		time.Sleep(1500 * time.Millisecond)
-
-		contentType := "comic"
-		if service.IsNovelFilename(comic.Filename) {
-			contentType = "novel"
-		}
-
-		results := service.SearchMetadata(searchQuery, nil, body.Lang, contentType)
-
-		if len(results) > 0 {
-			// Step 3: 找到结果，应用最佳匹配
-			progress["step"] = "apply"
-			progress["resultsCount"] = len(results)
-			sendSSE(progress)
-
-			_, err := service.ApplyMetadata(comic.ID, results[0], body.Lang, body.UpdateTitle, service.ApplyOption{SkipCover: body.SkipCover})
-			if err == nil {
-				progress["status"] = "success"
-				progress["step"] = "done"
-				progress["source"] = results[0].Source
-				progress["matchTitle"] = results[0].Title
-				sendSSE(progress)
-				success++
-				continue
-			}
-		}
-
-		// Step 4: 在线搜索无结果，尝试 AI 补全元数据
-		progress["step"] = "ai-complete"
-		sendSSE(progress)
-
-		detail, _ := store.GetComicByID(comic.ID)
-		// 复用 Step 1 中已获取的 coverData（如果没有则重新获取）
-		if len(coverData) == 0 {
-			if cb, _, _, cbErr := service.GetComicThumbnail(comic.ID); cbErr == nil && len(cb) > 0 {
-				coverData = cb
-			}
-		}
-
-		title := comic.Filename
-		if detail != nil && detail.Title != "" {
-			title = detail.Title
-		}
-
-		meta, err := service.AICompleteMetadata(aiCfg, comic.Filename, title, coverData, body.Lang)
-		if err == nil && meta != nil {
-			updates := map[string]interface{}{}
-			if meta.Title != "" && body.UpdateTitle {
-				updates["title"] = meta.Title
-			}
-			if meta.Author != "" {
-				updates["author"] = meta.Author
-			}
-			if meta.Genre != "" {
-				updates["genre"] = meta.Genre
-			}
-			if meta.Description != "" {
-				updates["description"] = meta.Description
-			}
-			if meta.Language != "" {
-				updates["language"] = meta.Language
-			}
-			if meta.Year != nil {
-				updates["year"] = *meta.Year
-			}
-			if len(updates) > 0 {
-				updates["metadataSource"] = "ai_complete"
-				_ = store.UpdateComicFields(comic.ID, updates)
-			}
-			// 添加标签
-			if meta.Tags != "" {
-				var tags []string
-				for _, t := range strings.Split(meta.Tags, ",") {
-					t = strings.TrimSpace(t)
-					if t != "" {
-						tags = append(tags, t)
-					}
-				}
-				if len(tags) > 0 {
-					_ = store.AddTagsToComic(comic.ID, tags)
-				}
-			}
-
-			progress["status"] = "success"
-			progress["step"] = "done"
-			progress["source"] = "ai_complete"
-			sendSSE(progress)
-			success++
-			continue
-		}
-
-		progress["status"] = "failed"
+		source, matchTitle, scrapeErr := executeAIMetadataTarget(
+			c.Request.Context(), target, aiCfg, body.Lang, body.UpdateTitle, body.SkipCover,
+		)
 		progress["step"] = "done"
-		progress["message"] = "No metadata found"
+		if scrapeErr == nil {
+			progress["status"] = "success"
+			progress["source"] = source
+			if matchTitle != "" {
+				progress["matchTitle"] = matchTitle
+			}
+			success++
+		} else {
+			progress["status"] = "failed"
+			progress["message"] = scrapeErr.Error()
+			failed++
+		}
 		sendSSE(progress)
-		failed++
 	}
+	sendSSE(gin.H{"type": "complete", "total": total, "success": success, "failed": failed})
+}
 
-	sendSSE(gin.H{
-		"type":    "complete",
-		"total":   total,
-		"success": success,
-		"failed":  failed,
-	})
+func executeAIMetadataTarget(
+	ctx context.Context,
+	target metadataTarget,
+	cfg service.AIConfig,
+	lang string,
+	updateTitle bool,
+	skipCover bool,
+) (string, string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	comicID := target.EntityID
+	filename := target.Filename
+	if target.EntityType == "work" {
+		work, err := requireMetadataTargetWork(target)
+		if err != nil {
+			return "", "", err
+		}
+		comicID = work.RepresentativeComicID
+		if comicID == "" {
+			ids := service.PhysicalComicIDs(work)
+			if len(ids) > 0 {
+				comicID = ids[0]
+			}
+		}
+	}
+	var coverData []byte
+	if comicID != "" {
+		if cover, _, _, err := service.GetComicThumbnail(comicID); err == nil {
+			coverData = cover
+		}
+	}
+	pageImages := make([][]byte, 0, 2)
+	for page := 0; comicID != "" && page < 2; page++ {
+		if image, err := service.GetPageImage(comicID, page); err == nil && image != nil && len(image.Data) > 0 {
+			pageImages = append(pageImages, image.Data)
+		}
+	}
+	query := ""
+	if recognized, err := service.AIRecognizeComicContent(cfg, coverData, pageImages, lang); err == nil && recognized != nil && recognized.Title != "" {
+		query = strings.TrimSpace(strings.Join([]string{recognized.Title, recognized.Author}, " "))
+	}
+	if query == "" && target.EntityType == "comic" {
+		if parsed, err := service.AIParseFilename(cfg, filename); err == nil && parsed != nil && parsed.Title != "" {
+			query = strings.TrimSpace(strings.Join([]string{parsed.Title, parsed.Author}, " "))
+		}
+	}
+	if query == "" {
+		query = metadataTargetSearchQuery(target)
+	}
+	if query == "" {
+		return "", "", fmt.Errorf("no metadata search query")
+	}
+	if err := waitMetadataRateLimit(ctx); err != nil {
+		return "", "", err
+	}
+	results := service.SearchMetadata(query, nil, lang, target.ContentType)
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if len(results) > 0 {
+		if target.EntityType == "work" {
+			work, _ := requireMetadataTargetWork(target)
+			if err := service.ApplyWorkMetadataContext(ctx, work, skipCover || work.CoverLocked, results[0]); err != nil {
+				return "", "", err
+			}
+		} else if _, err := service.ApplyMetadata(target.EntityID, results[0], lang, updateTitle, service.ApplyOption{SkipCover: skipCover}); err != nil {
+			return "", "", err
+		}
+		return results[0].Source, results[0].Title, nil
+	}
+	completed, err := service.AICompleteMetadata(cfg, filename, target.Title, coverData, lang)
+	if err != nil || completed == nil {
+		if err == nil {
+			err = fmt.Errorf("no metadata found")
+		}
+		return "", "", err
+	}
+	meta := service.ComicMetadata{
+		Title: completed.Title, Author: completed.Author, Genre: completed.Genre,
+		Description: completed.Description, Language: completed.Language, Year: completed.Year,
+		Source: "ai_complete",
+	}
+	if target.EntityType == "work" {
+		work, _ := requireMetadataTargetWork(target)
+		if err := service.ApplyWorkMetadataContext(ctx, work, skipCover || work.CoverLocked, meta); err != nil {
+			return "", "", err
+		}
+	} else if _, err := service.ApplyMetadata(target.EntityID, meta, lang, updateTitle, service.ApplyOption{SkipCover: skipCover}); err != nil {
+		return "", "", err
+	}
+	return "ai_complete", completed.Title, nil
 }
 
 // GET /api/metadata/library — 书库管理列表（带元数据状态过滤）

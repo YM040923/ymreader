@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/config"
@@ -21,6 +23,253 @@ const (
 type workScrapeJob struct {
 	Work      Work
 	SkipCover bool
+}
+
+type ManualWorkScrapeTask struct {
+	ID                string `json:"id"`
+	LibraryID         string `json:"libraryId"`
+	Status            string `json:"status"`
+	Total             int    `json:"total"`
+	Current           int    `json:"current"`
+	Success           int    `json:"success"`
+	Failed            int    `json:"failed"`
+	Skipped           int    `json:"skipped"`
+	CurrentEntityType string `json:"currentEntityType,omitempty"`
+	CurrentEntityID   string `json:"currentEntityId,omitempty"`
+	CurrentTitle      string `json:"currentTitle,omitempty"`
+	Error             string `json:"error,omitempty"`
+	StartedAt         string `json:"startedAt"`
+	FinishedAt        string `json:"finishedAt,omitempty"`
+}
+
+type manualWorkScrapeTaskOptions struct {
+	Workers int
+	Search  func(context.Context, Work) ([]ComicMetadata, error)
+	Apply   func(context.Context, workScrapeJob, ComicMetadata) error
+}
+
+type manualWorkScrapeTaskState struct {
+	snapshot ManualWorkScrapeTask
+	cancel   context.CancelFunc
+}
+
+type manualWorkScrapeTaskManager struct {
+	mu        sync.RWMutex
+	tasks     map[string]*manualWorkScrapeTaskState
+	workers   chan struct{}
+	search    func(context.Context, Work) ([]ComicMetadata, error)
+	apply     func(context.Context, workScrapeJob, ComicMetadata) error
+	closed    atomic.Bool
+	closeOnce sync.Once
+}
+
+var manualWorkScrapeTaskSequence atomic.Uint64
+
+func newManualWorkScrapeTaskManager(opts manualWorkScrapeTaskOptions) *manualWorkScrapeTaskManager {
+	if opts.Workers < 1 {
+		opts.Workers = 1
+	}
+	if opts.Search == nil {
+		opts.Search = func(ctx context.Context, work Work) ([]ComicMetadata, error) {
+			query := strings.TrimSpace(strings.Join([]string{work.Title, work.Author}, " "))
+			results := SearchMetadata(query, nil, "zh", "comic")
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return results, nil
+		}
+	}
+	if opts.Apply == nil {
+		opts.Apply = func(ctx context.Context, job workScrapeJob, meta ComicMetadata) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return retryWorkScrapeSQLite(ctx, func() error {
+				return applyAutomaticWorkMetadata(job, meta)
+			})
+		}
+	}
+	return &manualWorkScrapeTaskManager{
+		tasks:   make(map[string]*manualWorkScrapeTaskState),
+		workers: make(chan struct{}, opts.Workers),
+		search:  opts.Search,
+		apply:   opts.Apply,
+	}
+}
+
+func (m *manualWorkScrapeTaskManager) Start(libraryID string, works []Work, force bool) (ManualWorkScrapeTask, error) {
+	if m == nil || m.closed.Load() {
+		return ManualWorkScrapeTask{}, fmt.Errorf("work scrape task manager is closed")
+	}
+	libraryID = strings.TrimSpace(libraryID)
+	if libraryID == "" {
+		return ManualWorkScrapeTask{}, fmt.Errorf("library id is required")
+	}
+	if !tryBeginLibraryOperation(libraryID) {
+		return ManualWorkScrapeTask{}, fmt.Errorf("library operation is already running")
+	}
+	now := time.Now().UTC()
+	taskID := fmt.Sprintf("work-scrape-%d-%d", now.UnixNano(), manualWorkScrapeTaskSequence.Add(1))
+	ctx, cancel := context.WithCancel(context.Background())
+	task := ManualWorkScrapeTask{
+		ID: taskID, LibraryID: libraryID, Status: "queued", Total: len(works),
+		StartedAt: now.Format(time.RFC3339Nano),
+	}
+	m.mu.Lock()
+	m.tasks[taskID] = &manualWorkScrapeTaskState{snapshot: task, cancel: cancel}
+	m.mu.Unlock()
+	go m.run(ctx, taskID, libraryID, append([]Work(nil), works...), force)
+	return task, nil
+}
+
+func (m *manualWorkScrapeTaskManager) run(ctx context.Context, taskID, libraryID string, works []Work, force bool) {
+	defer endLibraryOperation(libraryID)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			m.finishTask(taskID, "failed", fmt.Sprintf("work scrape task panic: %v", recovered))
+		}
+	}()
+	m.updateTask(taskID, func(task *ManualWorkScrapeTask) { task.Status = "running" })
+	for _, work := range works {
+		if ctx.Err() != nil {
+			m.finishTask(taskID, "canceled", "")
+			return
+		}
+		metadataPoor := strings.TrimSpace(work.MetadataSource) == "" &&
+			strings.TrimSpace(work.Author) == "" &&
+			strings.TrimSpace(work.Description) == "" &&
+			strings.TrimSpace(work.Genre) == "" &&
+			work.Year == nil
+		coverMissing := strings.TrimSpace(work.StoredCoverURL) == "" &&
+			strings.TrimSpace(work.CoverComicID) == "" &&
+			!work.CoverLocked
+		if !force && !metadataPoor && !coverMissing {
+			m.updateTask(taskID, func(task *ManualWorkScrapeTask) {
+				task.Current++
+				task.Skipped++
+			})
+			continue
+		}
+		m.updateTask(taskID, func(task *ManualWorkScrapeTask) {
+			task.CurrentEntityType = "work"
+			task.CurrentEntityID = work.ID
+			task.CurrentTitle = work.Title
+		})
+		select {
+		case m.workers <- struct{}{}:
+		case <-ctx.Done():
+			m.finishTask(taskID, "canceled", "")
+			return
+		}
+		results, searchErr := m.search(ctx, work)
+		if searchErr == nil && len(results) == 0 {
+			searchErr = fmt.Errorf("no metadata result for %q", work.Title)
+		}
+		var scrapeErr error
+		if searchErr != nil {
+			scrapeErr = searchErr
+		} else if ctx.Err() != nil {
+			scrapeErr = ctx.Err()
+		} else {
+			scrapeErr = m.apply(ctx, workScrapeJob{
+				Work: work, SkipCover: work.CoverLocked || strings.TrimSpace(work.StoredCoverURL) != "",
+			}, results[0])
+		}
+		<-m.workers
+		if ctx.Err() != nil {
+			m.finishTask(taskID, "canceled", "")
+			return
+		}
+		m.updateTask(taskID, func(task *ManualWorkScrapeTask) {
+			task.Current++
+			if scrapeErr != nil {
+				task.Failed++
+				task.Error = scrapeErr.Error()
+			} else {
+				task.Success++
+			}
+		})
+	}
+	m.finishTask(taskID, "completed", "")
+}
+
+func (m *manualWorkScrapeTaskManager) Get(taskID string) (ManualWorkScrapeTask, bool) {
+	if m == nil {
+		return ManualWorkScrapeTask{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	state, ok := m.tasks[taskID]
+	if !ok {
+		return ManualWorkScrapeTask{}, false
+	}
+	return state.snapshot, true
+}
+
+func (m *manualWorkScrapeTaskManager) Cancel(taskID string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	state, ok := m.tasks[taskID]
+	if ok {
+		state.cancel()
+	}
+	m.mu.RUnlock()
+	return ok
+}
+
+func (m *manualWorkScrapeTaskManager) updateTask(taskID string, update func(*ManualWorkScrapeTask)) {
+	m.mu.Lock()
+	if state := m.tasks[taskID]; state != nil {
+		update(&state.snapshot)
+	}
+	m.mu.Unlock()
+}
+
+func (m *manualWorkScrapeTaskManager) finishTask(taskID, status, message string) {
+	m.updateTask(taskID, func(task *ManualWorkScrapeTask) {
+		task.Status = status
+		task.Error = message
+		task.CurrentEntityType = ""
+		task.CurrentEntityID = ""
+		task.CurrentTitle = ""
+		task.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	})
+}
+
+func (m *manualWorkScrapeTaskManager) Close() {
+	if m == nil {
+		return
+	}
+	m.closeOnce.Do(func() {
+		m.closed.Store(true)
+		m.mu.RLock()
+		cancels := make([]context.CancelFunc, 0, len(m.tasks))
+		for _, task := range m.tasks {
+			cancels = append(cancels, task.cancel)
+		}
+		m.mu.RUnlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
+	})
+}
+
+var defaultManualWorkScrapeTasks = newManualWorkScrapeTaskManager(manualWorkScrapeTaskOptions{
+	Workers: defaultWorkScrapeWorkers,
+})
+
+func StartManualWorkScrapeTask(libraryID string, works []Work, force bool) (ManualWorkScrapeTask, error) {
+	return defaultManualWorkScrapeTasks.Start(libraryID, works, force)
+}
+
+func GetManualWorkScrapeTask(taskID string) (ManualWorkScrapeTask, bool) {
+	return defaultManualWorkScrapeTasks.Get(taskID)
+}
+
+func CancelManualWorkScrapeTask(taskID string) bool {
+	return defaultManualWorkScrapeTasks.Cancel(taskID)
 }
 
 type workScrapeQueueOptions struct {
@@ -249,7 +498,9 @@ func selectAutomaticWorkScrapeJobs(works []Work, changedComicIDs []string) []wor
 		}
 		metadataPoor := strings.TrimSpace(work.MetadataSource) == "" ||
 			(strings.TrimSpace(work.Author) == "" && strings.TrimSpace(work.Description) == "" && strings.TrimSpace(work.Genre) == "")
-		coverMissing := strings.TrimSpace(work.StoredCoverURL) == "" && !work.CoverLocked
+		coverMissing := strings.TrimSpace(work.StoredCoverURL) == "" &&
+			strings.TrimSpace(work.CoverComicID) == "" &&
+			!work.CoverLocked
 		if !metadataPoor && !coverMissing {
 			continue
 		}
@@ -282,18 +533,70 @@ func scrapeWorkAutomatically(job workScrapeJob) error {
 // intentionally separate from the automatic queue so callers can keep
 // automatic scraping disabled while still offering manual actions.
 func ScrapeWorkMetadata(work Work, skipCover bool) error {
+	return ScrapeWorkMetadataContext(context.Background(), work, "", skipCover)
+}
+
+func ScrapeWorkMetadataContext(ctx context.Context, work Work, query string, skipCover bool) error {
 	if strings.TrimSpace(work.ID) == "" {
 		return fmt.Errorf("work id is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if work.MetadataHostType != "work" {
 		work.MetadataHostType = "work"
 		work.MetadataHostID = work.ID
 	}
-	results := SearchMetadata(work.Title, nil, "zh", "comic")
-	if len(results) == 0 {
-		return fmt.Errorf("no metadata result for %q", work.Title)
+	if strings.TrimSpace(query) == "" {
+		query = strings.TrimSpace(strings.Join([]string{work.Title, work.Author}, " "))
 	}
-	return applyAutomaticWorkMetadata(workScrapeJob{Work: work, SkipCover: skipCover}, results[0])
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	results := SearchMetadata(query, nil, "zh", "comic")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		return fmt.Errorf("no metadata result for %q", query)
+	}
+	return ApplyWorkMetadataContext(ctx, work, skipCover, results[0])
+}
+
+func ApplyWorkMetadataContext(ctx context.Context, work Work, skipCover bool, meta ComicMetadata) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return retryWorkScrapeSQLite(ctx, func() error {
+		return applyAutomaticWorkMetadata(workScrapeJob{Work: work, SkipCover: skipCover}, meta)
+	})
+}
+
+func retryWorkScrapeSQLite(ctx context.Context, operation func() error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		err = operation()
+		if err == nil || !store.IsSQLiteBusyError(err) {
+			return err
+		}
+		delay := time.Duration(25*(1<<attempt)) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 func applyAutomaticWorkMetadata(job workScrapeJob, meta ComicMetadata) error {

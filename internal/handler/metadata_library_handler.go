@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nowen-reader/nowen-reader/internal/service"
@@ -42,15 +43,30 @@ func (h *MetadataHandler) Library(c *gin.Context) {
 
 	// metaStatus 排序需要特殊处理：映射到数据库字段
 	if contentType != "novel" {
-		works, err := NewWorkHandler().loadWorks(c, true)
+		works, err := NewWorkHandler().loadWorks(c, false)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get comic Works"})
 			return
 		}
+		filters := parseWorkFilters(c)
+		filters.metaFilter = ""
+		filters.search = ""
+		works = filterWorks(works, filters)
+		if search != "" {
+			filtered := works[:0]
+			query := strings.ToLower(strings.TrimSpace(search))
+			for _, work := range works {
+				if strings.Contains(strings.ToLower(work.Title), query) ||
+					strings.Contains(strings.ToLower(work.Author), query) {
+					filtered = append(filtered, work)
+				}
+			}
+			works = filtered
+		}
 		if metaFilter == "with" || metaFilter == "missing" {
 			filtered := works[:0]
 			for _, work := range works {
-				hasMeta := workHasMetadata(work)
+				hasMeta := metadataWorkHasMetadata(work)
 				if (metaFilter == "with" && hasMeta) || (metaFilter == "missing" && !hasMeta) {
 					filtered = append(filtered, work)
 				}
@@ -82,7 +98,7 @@ func (h *MetadataHandler) Library(c *gin.Context) {
 				"author": work.Author, "genre": work.Genre, "description": work.Description,
 				"year": work.Year, "publisher": work.Publisher, "language": work.Language,
 				"fileSize": work.FileSize, "updatedAt": work.UpdatedAt,
-				"metadataSource": work.MetadataSource, "hasMetadata": workHasMetadata(work),
+				"metadataSource": work.MetadataSource, "hasMetadata": metadataWorkHasMetadata(work),
 				"contentType": "comic", "entityType": "work", "itemCount": work.ItemCount,
 				"representativeComicId": work.RepresentativeComicID,
 				"coverUrl":              work.CoverURL, "tags": tags, "rating": work.Rating,
@@ -207,6 +223,17 @@ func (h *MetadataHandler) Library(c *gin.Context) {
 		"page":       result.Page,
 		"pageSize":   result.PageSize,
 		"totalPages": result.TotalPages,
+	})
+}
+
+func metadataWorkHasMetadata(work service.Work) bool {
+	logical, err := store.GetLogicalWork(work.ID)
+	if err != nil {
+		return false
+	}
+	return !metadataTargetMissing(metadataTarget{
+		EntityType: "work", EntityID: work.ID, Title: work.Title, Author: work.Author,
+		Work: &work, LogicalWork: logical,
 	})
 }
 
