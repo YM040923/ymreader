@@ -19,6 +19,7 @@ import '../features/scan_rules/scan_rules_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/server/server_config_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/settings/library_reader_defaults_screen.dart';
 import '../features/settings/site_settings_screen.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/folder_tree_stats_screen.dart';
@@ -194,6 +195,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/site-settings',
         builder: (_, __) => const SiteSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/library-reader-defaults',
+        builder: (_, __) => const LibraryReaderDefaultsScreen(),
       ),
       GoRoute(
         path: '/cache',

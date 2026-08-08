@@ -70,4 +70,33 @@ void main() {
     expect(a.showPageNumber, isFalse);
     expect(b.autoPageInterval, 20);
   });
+
+  test('library defaults are used only when a Work has no override', () async {
+    SharedPreferences.setMockInitialValues({});
+
+    await const ReaderSettings(
+      mode: ComicReadingMode.webtoon,
+      direction: ReadingDirection.ttb,
+      continuousReading: true,
+    ).save(scope: 'library:cn');
+
+    final inherited = await ReaderSettings.load(
+      scope: 'work:book-without-override',
+      fallbackScope: 'library:cn',
+    );
+    expect(inherited.mode, ComicReadingMode.webtoon);
+    expect(inherited.direction, ReadingDirection.ttb);
+    expect(inherited.continuousReading, isTrue);
+
+    await const ReaderSettings(
+      mode: ComicReadingMode.doublePage,
+      direction: ReadingDirection.rtl,
+    ).save(scope: 'work:book-with-override');
+    final overridden = await ReaderSettings.load(
+      scope: 'work:book-with-override',
+      fallbackScope: 'library:cn',
+    );
+    expect(overridden.mode, ComicReadingMode.doublePage);
+    expect(overridden.direction, ReadingDirection.rtl);
+  });
 }

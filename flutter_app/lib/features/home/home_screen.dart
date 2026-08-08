@@ -171,9 +171,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     return WorkCard(
                       work: work,
                       serverUrl: serverUrl,
-                      onFavorite: () => ref
-                          .read(workListProvider.notifier)
-                          .toggleFavorite(work),
                     );
                   },
                 ),
@@ -187,9 +184,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     work: work,
                     serverUrl: serverUrl,
                     isGrid: false,
-                    onFavorite: () => ref
-                        .read(workListProvider.notifier)
-                        .toggleFavorite(work),
                   );
                 },
               ),

@@ -81,5 +81,23 @@ void main() {
         '/reader/comic-preview?page=0&workId=work-2&unitId=preview',
       );
     });
+
+    test('resolves a unit cover without reusing the Work cover', () {
+      final unit = WorkUnit.fromJson({
+        'id': 'unit',
+        'workId': 'work',
+        'comicId': 'comic id',
+        'title': '第1话',
+        'startPage': 20,
+        'pageCount': 10,
+        'coverPage': 23,
+      });
+
+      expect(unit.resolvedCoverPage, 23);
+      expect(
+        unit.resolvedCoverUrl('http://server/'),
+        'http://server/api/comics/comic%20id/page/23',
+      );
+    });
   });
 }

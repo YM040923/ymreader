@@ -71,6 +71,18 @@ class WorkUnit {
   int get endPage => pageCount > 0 ? startPage + pageCount - 1 : startPage;
 
   bool containsAbsolutePage(int page) => page >= startPage && page <= endPage;
+
+  int get resolvedCoverPage =>
+      coverPage >= startPage && coverPage <= endPage ? coverPage : startPage;
+
+  String resolvedCoverUrl(String serverUrl) {
+    final base = serverUrl.replaceFirst(RegExp(r'/$'), '');
+    final raw = coverUrl?.trim() ?? '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    if (raw.isNotEmpty) return '$base${raw.startsWith('/') ? raw : '/$raw'}';
+    return '$base/api/comics/${Uri.encodeComponent(comicId)}/page/'
+        '$resolvedCoverPage';
+  }
 }
 
 class WorkReadingTarget {

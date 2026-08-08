@@ -38,6 +38,7 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
   Work? _work;
   Object? _error;
   bool _loading = true;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -45,7 +46,19 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant ReaderDispatchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.comicId != widget.comicId ||
+        oldWidget.workId != widget.workId ||
+        oldWidget.unitId != widget.unitId ||
+        oldWidget.initialPosition != widget.initialPosition) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -56,14 +69,14 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
       if (widget.workId?.isNotEmpty == true) {
         work = await ref.read(workApiProvider).getWork(widget.workId!);
       }
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _comic = Comic.fromJson(data);
         _work = work;
         _loading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = error;
         _loading = false;
@@ -135,6 +148,9 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
           )
         : null;
     return ComicReaderScreen(
+      key: ValueKey(
+        '${comic.id}:${widget.workId}:${widget.unitId}:${widget.initialPosition}',
+      ),
       comicId: comic.id,
       initialPage: widget.initialPosition,
       workContext: workContext,

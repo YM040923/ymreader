@@ -17,13 +17,14 @@ T _enumValue<T>(List<T> values, int? index, T fallback) {
 
 /// 阅读器设置 — 持久化到 SharedPreferences
 class ReaderSettings {
-  static const int settingsVersion = 2;
+  static const int settingsVersion = 3;
 
   final ComicReadingMode mode;
   final ReadingDirection direction;
   final FitMode fitMode;
   final bool showPageNumber;
   final int autoPageInterval; // 秒，0=禁用
+  final bool continuousReading;
 
   /// 双页模式下封面单独显示（错页 1 页），日漫见开页对齐用
   final bool doubleCoverAlone;
@@ -36,7 +37,8 @@ class ReaderSettings {
     this.direction = ReadingDirection.ltr,
     this.fitMode = FitMode.width,
     this.showPageNumber = true,
-    this.autoPageInterval = 10,
+    this.autoPageInterval = 0,
+    this.continuousReading = false,
     this.doubleCoverAlone = true,
     this.doublePageNoGap = true,
   });
@@ -47,6 +49,7 @@ class ReaderSettings {
     FitMode? fitMode,
     bool? showPageNumber,
     int? autoPageInterval,
+    bool? continuousReading,
     bool? doubleCoverAlone,
     bool? doublePageNoGap,
   }) {
@@ -56,6 +59,7 @@ class ReaderSettings {
       fitMode: fitMode ?? this.fitMode,
       showPageNumber: showPageNumber ?? this.showPageNumber,
       autoPageInterval: autoPageInterval ?? this.autoPageInterval,
+      continuousReading: continuousReading ?? this.continuousReading,
       doubleCoverAlone: doubleCoverAlone ?? this.doubleCoverAlone,
       doublePageNoGap: doublePageNoGap ?? this.doublePageNoGap,
     );
@@ -65,12 +69,27 @@ class ReaderSettings {
   ///
   /// v2 将旧版默认的“完整容纳”迁移为“适应宽度”。旧默认会把长图完整
   /// 压进一屏，导致漫画文字非常小；用户仍可在设置中切回完整显示。
-  static Future<ReaderSettings> load({String? scope}) async {
+  static Future<ReaderSettings> load({
+    String? scope,
+    String? fallbackScope,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     String scoped(String key) =>
         scope == null || scope.isEmpty ? key : '${key}_$scope';
+    String fallbackKey(String key) =>
+        fallbackScope == null || fallbackScope.isEmpty
+            ? key
+            : '${key}_$fallbackScope';
+    int? readInt(String key) =>
+        prefs.getInt(scoped(key)) ??
+        prefs.getInt(fallbackKey(key)) ??
+        prefs.getInt(key);
+    bool? readBool(String key) =>
+        prefs.getBool(scoped(key)) ??
+        prefs.getBool(fallbackKey(key)) ??
+        prefs.getBool(key);
     final storedVersion = prefs.getInt('reader_settings_version') ?? 1;
-    var fitModeIndex = prefs.getInt('reader_fitMode');
+    var fitModeIndex = readInt('reader_fitMode');
 
     if (fitModeIndex == null ||
         (storedVersion < settingsVersion &&
@@ -85,28 +104,24 @@ class ReaderSettings {
     return ReaderSettings(
       mode: _enumValue(
         ComicReadingMode.values,
-        prefs.getInt(scoped('reader_mode')) ?? prefs.getInt('reader_mode'),
+        readInt('reader_mode'),
         ComicReadingMode.single,
       ),
       direction: _enumValue(
         ReadingDirection.values,
-        prefs.getInt(scoped('reader_direction')) ??
-            prefs.getInt('reader_direction'),
+        readInt('reader_direction'),
         ReadingDirection.ltr,
       ),
       fitMode: _enumValue(
         FitMode.values,
-        prefs.getInt(scoped('reader_fitMode')) ?? fitModeIndex,
+        readInt('reader_fitMode') ?? fitModeIndex,
         FitMode.width,
       ),
-      showPageNumber: prefs.getBool('reader_showPageNumber') ?? true,
-      autoPageInterval: prefs.getInt('reader_autoPageInterval') ?? 10,
-      doubleCoverAlone: prefs.getBool(scoped('reader_doubleCoverAlone')) ??
-          prefs.getBool('reader_doubleCoverAlone') ??
-          true,
-      doublePageNoGap: prefs.getBool(scoped('reader_doublePageNoGap')) ??
-          prefs.getBool('reader_doublePageNoGap') ??
-          true,
+      showPageNumber: readBool('reader_showPageNumber') ?? true,
+      autoPageInterval: readInt('reader_autoPageInterval') ?? 0,
+      continuousReading: readBool('reader_continuousReading') ?? false,
+      doubleCoverAlone: readBool('reader_doubleCoverAlone') ?? true,
+      doublePageNoGap: readBool('reader_doublePageNoGap') ?? true,
     );
   }
 
@@ -121,8 +136,25 @@ class ReaderSettings {
     await prefs.setInt(scoped('reader_fitMode'), fitMode.index);
     await prefs.setBool('reader_showPageNumber', showPageNumber);
     await prefs.setInt('reader_autoPageInterval', autoPageInterval);
+    await prefs.setBool(scoped('reader_continuousReading'), continuousReading);
     await prefs.setBool(scoped('reader_doubleCoverAlone'), doubleCoverAlone);
     await prefs.setBool(scoped('reader_doublePageNoGap'), doublePageNoGap);
+  }
+
+  static Future<void> clearScope(String scope) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in [
+      'reader_mode',
+      'reader_direction',
+      'reader_fitMode',
+      'reader_showPageNumber',
+      'reader_autoPageInterval',
+      'reader_continuousReading',
+      'reader_doubleCoverAlone',
+      'reader_doublePageNoGap',
+    ]) {
+      await prefs.remove('${key}_$scope');
+    }
   }
 }
 
@@ -336,49 +368,19 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                     ),
                     const SizedBox(height: 8),
 
-                    // 自动翻页间隔
-                    _SettingLabel('自动翻页间隔 (秒)'),
+                    _SwitchRow(
+                      label: '连续阅读',
+                      value: _settings.continuousReading,
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(continuousReading: v)),
+                    ),
                     const SizedBox(height: 4),
                     Text(
-                      '设为0则禁用，设置后可在工具栏启停',
+                      '开启后当前话结束会自动接上下一话',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.white.withAlpha(77),
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SliderTheme(
-                            data: SliderThemeData(
-                              activeTrackColor: Colors.blue[600],
-                              thumbColor: Colors.white,
-                              overlayColor: Colors.blue.withAlpha(51),
-                              inactiveTrackColor: Colors.white12,
-                            ),
-                            child: Slider(
-                              value: _settings.autoPageInterval.toDouble(),
-                              min: 0,
-                              max: 30,
-                              divisions: 30,
-                              onChanged: (v) => _update(_settings.copyWith(
-                                  autoPageInterval: v.round())),
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '${_settings.autoPageInterval}s',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 13,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
                     ),
                     const SizedBox(height: 24),
                   ],

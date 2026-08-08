@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:photo_view/photo_view.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/api/comic_api.dart';
@@ -15,6 +16,15 @@ import '../../widgets/authenticated_image.dart';
 import '../../widgets/reader_settings_panel.dart';
 import 'novel_reader_screen.dart';
 import 'work_reader_context.dart';
+
+class _ContinuousPage {
+  final WorkUnit unit;
+  final int relativePage;
+
+  const _ContinuousPage(this.unit, this.relativePage);
+
+  int get physicalPage => unit.startPage + relativePage;
+}
 
 /// 漫画阅读器
 class ComicReaderScreen extends ConsumerStatefulWidget {
@@ -36,31 +46,38 @@ class ComicReaderScreen extends ConsumerStatefulWidget {
 class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   late PageController _pageController;
   final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _continuousScrollController =
+      ItemScrollController();
+  final ItemPositionsListener _continuousPositions =
+      ItemPositionsListener.create();
   int _currentPage = 0;
   int _totalPages = 0;
   int _physicalTotalPages = 0;
   bool _showOverlay = false;
   bool _loading = true;
+  String? _activeUnitId;
+  List<_ContinuousPage> _continuousPageCache = const [];
 
   late final ComicApi _api;
-  late final ReadingActivityTracker _activity;
+  late ReadingActivityTracker _activity;
 
   // 设置
   ReaderSettings _settings = const ReaderSettings();
-
-  // 自动翻页
-  Timer? _autoPageTimer;
-  bool _autoPage = false;
 
   @override
   void initState() {
     super.initState();
     _currentPage = widget.workContext?.toRelativePage(widget.initialPage) ??
         widget.initialPage;
+    _activeUnitId = widget.workContext?.currentUnit.id;
+    _continuousPageCache = _buildContinuousPages();
     _pageController = PageController(initialPage: _currentPage);
     // 提前缓存 API 引用
     _api = ref.read(comicApiProvider);
     _activity = ReadingActivityTracker(api: _api, comicId: widget.comicId);
+    _continuousPositions.itemPositions.addListener(
+      _onContinuousPositionChanged,
+    );
     // 全屏沉浸模式
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _loadSettings();
@@ -69,10 +86,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   @override
   void dispose() {
-    _autoPageTimer?.cancel();
     // 恢复系统UI
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _activity.dispose();
+    _continuousPositions.itemPositions.removeListener(
+      _onContinuousPositionChanged,
+    );
     _pageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -82,10 +101,10 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   Future<void> _onWillPop() async {
     await _activity.finish();
     if (!mounted) return;
-    if (widget.workContext != null) {
-      context.go(widget.workContext!.work.detailRoute());
-    } else {
+    if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
+    } else if (widget.workContext != null) {
+      context.go(widget.workContext!.work.detailRoute());
     }
   }
 
@@ -93,7 +112,11 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     final scope = widget.workContext != null
         ? 'work:${widget.workContext!.work.id}'
         : 'comic:${widget.comicId}';
-    final s = await ReaderSettings.load(scope: scope);
+    final libraryId = widget.workContext?.work.libraryId ?? '';
+    final s = await ReaderSettings.load(
+      scope: scope,
+      fallbackScope: libraryId.isEmpty ? null : 'library:$libraryId',
+    );
     if (mounted) setState(() => _settings = s);
   }
 
@@ -145,53 +168,113 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   int _physicalPage(int relativePage) =>
-      (widget.workContext?.currentUnit.startPage ?? 0) + relativePage;
+      (_activeReaderContext?.currentUnit.startPage ?? 0) + relativePage;
+
+  WorkReaderContext? get _activeReaderContext {
+    final context = widget.workContext;
+    if (context == null) return null;
+    return WorkReaderContext(
+      work: context.work,
+      unitId: _activeUnitId ?? context.currentUnit.id,
+    );
+  }
+
+  List<_ContinuousPage> _buildContinuousPages() {
+    final context = widget.workContext;
+    if (context == null) return const [];
+    return [
+      for (final unit in context.work.units)
+        for (var page = 0; page < unit.pageCount; page++)
+          _ContinuousPage(unit, page),
+    ];
+  }
+
+  List<_ContinuousPage> get _continuousPages => _continuousPageCache;
+
+  int _continuousIndexFor(WorkUnit unit, int relativePage) {
+    var offset = 0;
+    for (final candidate
+        in widget.workContext?.work.units ?? const <WorkUnit>[]) {
+      if (candidate.id == unit.id) {
+        return offset + relativePage.clamp(0, candidate.pageCount - 1);
+      }
+      offset += candidate.pageCount;
+    }
+    return 0;
+  }
+
+  void _onContinuousPositionChanged() {
+    if (!_settings.continuousReading ||
+        _settings.mode != ComicReadingMode.webtoon) {
+      return;
+    }
+    final positions = _continuousPositions.itemPositions.value
+        .where((position) =>
+            position.itemTrailingEdge > 0 && position.itemLeadingEdge < 1)
+        .toList()
+      ..sort((a, b) => a.itemLeadingEdge.compareTo(b.itemLeadingEdge));
+    if (positions.isEmpty) return;
+    final pages = _continuousPages;
+    final index = positions.first.index;
+    if (index < 0 || index >= pages.length) return;
+    final page = pages[index];
+    if (_activeUnitId != page.unit.id) {
+      _switchActiveUnit(page.unit, page.relativePage);
+    } else if (_currentPage != page.relativePage) {
+      setState(() {
+        _currentPage = page.relativePage;
+        _totalPages = page.unit.pageCount;
+      });
+      _activity.updatePage(
+        page.physicalPage,
+        _trackerTotalPages(page.unit),
+      );
+    }
+  }
+
+  int _trackerTotalPages(WorkUnit unit) {
+    if (unit.comicId == widget.comicId) return _physicalTotalPages;
+    return unit.endPage + 1;
+  }
+
+  void _switchActiveUnit(WorkUnit unit, int relativePage) {
+    unawaited(_activity.finish());
+    _activity = ReadingActivityTracker(api: _api, comicId: unit.comicId);
+    _activity.start(
+      unit.startPage + relativePage,
+      _trackerTotalPages(unit),
+    );
+    setState(() {
+      _activeUnitId = unit.id;
+      _currentPage = relativePage;
+      _totalPages = unit.pageCount;
+    });
+  }
 
   void _toggleOverlay() {
     setState(() => _showOverlay = !_showOverlay);
   }
 
-  void _toggleAutoPage() {
-    setState(() => _autoPage = !_autoPage);
-    if (_autoPage) {
-      final interval =
-          _settings.autoPageInterval > 0 ? _settings.autoPageInterval : 10;
-      _autoPageTimer = Timer.periodic(Duration(seconds: interval), (_) {
-        if (_currentPage < _totalPages - 1) {
-          if (_settings.mode == ComicReadingMode.webtoon) {
-            // 长条模式 — 滚动
-            _scrollController.animateTo(
-              _scrollController.offset + 500,
-              duration: const Duration(milliseconds: 400),
-              curve: Curves.easeInOut,
-            );
-          } else if (_settings.mode == ComicReadingMode.doublePage) {
-            // 双页模式 — 翻两页
-            _pageController.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          } else {
-            _pageController.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
-          }
-        } else {
-          _autoPageTimer?.cancel();
-          setState(() => _autoPage = false);
-        }
-      });
-    } else {
-      _autoPageTimer?.cancel();
-    }
-  }
-
   void _onSettingsChanged(ReaderSettings s) {
-    // 如果模式变了，需要重置自动翻页
-    if (s.mode != _settings.mode) {
-      _autoPageTimer?.cancel();
-      _autoPage = false;
+    final previous = _settings;
+    final activeContext = _activeReaderContext;
+    final mustLeaveContinuousRoute = previous.continuousReading &&
+        (!s.continuousReading || s.mode != ComicReadingMode.webtoon) &&
+        activeContext != null &&
+        activeContext.currentUnit.id != widget.workContext?.currentUnit.id;
+    if (mustLeaveContinuousRoute) {
+      final unit = activeContext.currentUnit;
+      final absolutePage = unit.startPage + _currentPage;
+      setState(() => _settings = s);
+      unawaited(_activity.finish());
+      context.replace(
+        activeContext.routeFor(unit, absolutePage: absolutePage),
+      );
+      return;
+    }
+    if (previous.mode != s.mode) {
+      _pageController.dispose();
+      _pageController = PageController(initialPage: _currentPage);
     }
     setState(() => _settings = s);
   }
@@ -262,15 +345,27 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   /// 单页翻页模式
   Widget _buildPageView(String serverUrl) {
+    final readerContext = _activeReaderContext;
+    final hasNext =
+        _settings.continuousReading && readerContext?.nextUnit != null;
     return PageView.builder(
       controller: _pageController,
-      itemCount: _totalPages,
-      onPageChanged: _onPageChanged,
+      itemCount: _totalPages + (hasNext ? 1 : 0),
+      onPageChanged: (page) {
+        if (page >= _totalPages && readerContext?.nextUnit != null) {
+          _goToUnit(readerContext!.nextUnit!);
+          return;
+        }
+        _onPageChanged(page);
+      },
       reverse: _settings.direction == ReadingDirection.rtl,
       scrollDirection: _settings.direction == ReadingDirection.ttb
           ? Axis.vertical
           : Axis.horizontal,
       itemBuilder: (context, index) {
+        if (index >= _totalPages) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final physicalPage = _physicalPage(index);
         final imageUrl =
             getImageUrl(serverUrl, widget.comicId, page: physicalPage);
@@ -333,6 +428,10 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         }
       }
     }
+    final readerContext = _activeReaderContext;
+    if (_settings.continuousReading && readerContext?.nextUnit != null) {
+      pageGroups.add(const [-1]);
+    }
 
     // 找到当前页对应的 group index
     int currentGroupIndex = 0;
@@ -351,6 +450,10 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       reverse: _settings.direction == ReadingDirection.rtl,
       onPageChanged: (groupIndex) {
         final firstPage = pageGroups[groupIndex].first;
+        if (firstPage < 0 && readerContext?.nextUnit != null) {
+          _goToUnit(readerContext!.nextUnit!);
+          return;
+        }
         setState(() => _currentPage = firstPage);
         _activity.updatePage(
           _physicalPage(firstPage),
@@ -359,6 +462,9 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       },
       itemBuilder: (context, groupIndex) {
         final pages = pageGroups[groupIndex];
+        if (pages.first < 0) {
+          return const Center(child: CircularProgressIndicator());
+        }
         if (pages.length == 1) {
           // 单页（封面或最后一页）
           final physicalPage = _physicalPage(pages[0]);
@@ -439,6 +545,68 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   /// 长条滚动模式（Webtoon）
   Widget _buildWebtoonView(String serverUrl) {
+    if (_settings.continuousReading && widget.workContext != null) {
+      final pages = _continuousPages;
+      final currentUnit = _activeReaderContext!.currentUnit;
+      final initialIndex = _continuousIndexFor(currentUnit, _currentPage);
+      return ScrollablePositionedList.builder(
+        itemScrollController: _continuousScrollController,
+        itemPositionsListener: _continuousPositions,
+        initialScrollIndex: initialIndex,
+        itemCount: pages.length,
+        itemBuilder: (context, index) {
+          final page = pages[index];
+          final previousUnit = index == 0 ? null : pages[index - 1].unit;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (previousUnit?.id != page.unit.id)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  color: Colors.black,
+                  child: Text(
+                    page.unit.displayLabel.isEmpty
+                        ? page.unit.title
+                        : page.unit.displayLabel,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ),
+              AuthenticatedImage(
+                imageUrl: getImageUrl(
+                  serverUrl,
+                  page.unit.comicId,
+                  page: page.physicalPage,
+                ),
+                comicId: page.unit.comicId,
+                pageIndex: page.physicalPage,
+                fit: _settings.fitMode == FitMode.width
+                    ? BoxFit.fitWidth
+                    : BoxFit.contain,
+                placeholder: SizedBox(
+                  height: MediaQuery.of(context).size.height,
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+                errorWidget: const SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Icon(
+                      Icons.broken_image,
+                      color: Colors.white54,
+                      size: 48,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollUpdateNotification) {
@@ -521,16 +689,6 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                       )
                     : const SizedBox.shrink(),
               ),
-              // 自动翻页
-              if (_settings.autoPageInterval > 0)
-                IconButton(
-                  icon: Icon(
-                    _autoPage ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
-                  ),
-                  tooltip: _autoPage ? '停止自动翻页' : '自动翻页',
-                  onPressed: _toggleAutoPage,
-                ),
               // 设置按钮
               IconButton(
                 icon: const Icon(Icons.settings, color: Colors.white),
@@ -546,14 +704,29 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   /// 底部进度条
   Future<void> _goToUnit(WorkUnit unit) async {
-    final readerContext = widget.workContext;
+    final readerContext = _activeReaderContext;
     if (readerContext == null) return;
+    if (_settings.continuousReading &&
+        _settings.mode == ComicReadingMode.webtoon &&
+        _continuousScrollController.isAttached) {
+      final index = _continuousIndexFor(unit, 0);
+      await _continuousScrollController.scrollTo(
+        index: index,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
     await _activity.finish();
-    if (mounted) context.replace(readerContext.routeFor(unit));
+    if (mounted) {
+      context.replace(
+        readerContext.routeFor(unit, absolutePage: unit.startPage),
+      );
+    }
   }
 
   void _showWorkDirectory() {
-    final readerContext = widget.workContext;
+    final readerContext = _activeReaderContext;
     if (readerContext == null) return;
     showModalBottomSheet<void>(
       context: context,
@@ -619,7 +792,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   Widget _buildBottomOverlay() {
-    final readerContext = widget.workContext;
+    final readerContext = _activeReaderContext;
     final sliderMax =
         (_totalPages - 1).toDouble().clamp(0, double.infinity).toDouble();
     return Positioned(
@@ -690,10 +863,21 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                         onChanged: (v) {
                           final page = v.toInt();
                           if (_settings.mode == ComicReadingMode.webtoon) {
-                            final viewportH =
-                                MediaQuery.of(context).size.height;
-                            _scrollController.jumpTo(page * viewportH);
-                            setState(() => _currentPage = page);
+                            if (_settings.continuousReading &&
+                                readerContext != null &&
+                                _continuousScrollController.isAttached) {
+                              _continuousScrollController.jumpTo(
+                                index: _continuousIndexFor(
+                                  readerContext.currentUnit,
+                                  page,
+                                ),
+                              );
+                            } else {
+                              final viewportH =
+                                  MediaQuery.of(context).size.height;
+                              _scrollController.jumpTo(page * viewportH);
+                              setState(() => _currentPage = page);
+                            }
                           } else {
                             _pageController.jumpToPage(page);
                           }

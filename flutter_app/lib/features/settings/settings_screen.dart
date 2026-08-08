@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../data/providers/auth_provider.dart';
 import '../../data/api/api_client.dart';
@@ -11,6 +12,8 @@ import '../../data/services/cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../metadata/metadata_screen.dart';
 import '../../widgets/animations.dart';
+
+final _packageInfo = PackageInfo.fromPlatform();
 
 /// 设置页面 — 极简优雅风格
 class SettingsScreen extends ConsumerWidget {
@@ -157,6 +160,13 @@ class SettingsScreen extends ConsumerWidget {
                   onTap: () => context.push('/favorites'),
                 ),
                 _SettingsTile(
+                  icon: Icons.chrome_reader_mode_rounded,
+                  iconColor: Colors.blue,
+                  title: '漫画库默认阅读设置',
+                  subtitle: '分别设置每个漫画库的默认阅读模式',
+                  onTap: () => context.push('/library-reader-defaults'),
+                ),
+                _SettingsTile(
                   icon: Icons.collections_bookmark_rounded,
                   iconColor: cs.tertiary,
                   title: '合集管理',
@@ -235,12 +245,17 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           _SettingsGroup(
             children: [
-              _SettingsTile(
-                icon: Icons.info_outline_rounded,
-                iconColor: cs.onSurfaceVariant,
-                title: l10n.version,
-                subtitle: '1.0.0',
-                showArrow: false,
+              FutureBuilder<PackageInfo>(
+                future: _packageInfo,
+                builder: (_, snapshot) => _SettingsTile(
+                  icon: Icons.info_outline_rounded,
+                  iconColor: cs.onSurfaceVariant,
+                  title: l10n.version,
+                  subtitle: snapshot.hasData
+                      ? '${snapshot.data!.version} (${snapshot.data!.buildNumber})'
+                      : '正在读取',
+                  showArrow: false,
+                ),
               ),
               _SettingsTile(
                 icon: Icons.auto_stories_rounded,

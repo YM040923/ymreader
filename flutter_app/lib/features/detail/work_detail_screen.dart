@@ -35,13 +35,24 @@ class WorkDetailScreen extends ConsumerWidget {
   }
 }
 
-class _WorkDetailBody extends ConsumerWidget {
+enum _DirectoryViewMode { list, covers }
+
+class _WorkDetailBody extends ConsumerStatefulWidget {
   final Work work;
 
   const _WorkDetailBody({required this.work});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_WorkDetailBody> createState() => _WorkDetailBodyState();
+}
+
+class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
+  _DirectoryViewMode _directoryMode = _DirectoryViewMode.covers;
+
+  Work get work => widget.work;
+
+  @override
+  Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final serverUrl = ref.watch(authProvider).serverUrl;
     final target = work.readingTarget;
@@ -166,11 +177,36 @@ class _WorkDetailBody extends ConsumerWidget {
                     ),
                   ],
                   const SizedBox(height: 20),
-                  Text(
-                    '目录',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '目录',
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                         ),
+                      ),
+                      SegmentedButton<_DirectoryViewMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: _DirectoryViewMode.covers,
+                            icon: Icon(Icons.grid_view_rounded),
+                            tooltip: '封面目录',
+                          ),
+                          ButtonSegment(
+                            value: _DirectoryViewMode.list,
+                            icon: Icon(Icons.view_list_rounded),
+                            tooltip: '文字目录',
+                          ),
+                        ],
+                        selected: {_directoryMode},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (value) =>
+                            setState(() => _directoryMode = value.first),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -183,7 +219,7 @@ class _WorkDetailBody extends ConsumerWidget {
                 child: Center(child: Text('暂无可阅读目录')),
               ),
             )
-          else
+          else if (_directoryMode == _DirectoryViewMode.list)
             SliverList.separated(
               itemCount: work.units.length,
               separatorBuilder: (_, __) =>
@@ -217,6 +253,104 @@ class _WorkDetailBody extends ConsumerWidget {
                   ),
                 );
               },
+            ),
+          if (work.units.isNotEmpty &&
+              _directoryMode == _DirectoryViewMode.covers)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 16),
+              sliver: SliverGrid.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  childAspectRatio: 0.62,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 14,
+                ),
+                itemCount: work.units.length,
+                itemBuilder: (_, index) {
+                  final unit = work.units[index];
+                  final isCurrent = unit.id == work.continueUnitId;
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => context.push(
+                      work.readerRoute(
+                        target: WorkReadingTarget(
+                          unit: unit,
+                          absolutePage: unit.startPage,
+                          isContinue: false,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: AuthenticatedImage(
+                                  imageUrl: unit.resolvedCoverUrl(serverUrl),
+                                  comicId: unit.comicId,
+                                  pageIndex: unit.resolvedCoverPage,
+                                  fit: BoxFit.cover,
+                                  placeholder: ColoredBox(
+                                    color: colors.surfaceContainerHighest,
+                                  ),
+                                  errorWidget: AuthenticatedImage(
+                                    imageUrl: work.resolvedCoverUrl(serverUrl),
+                                    comicId: work.coverComicId,
+                                    isThumbnail: true,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                              if (isCurrent)
+                                Positioned(
+                                  top: 6,
+                                  right: 6,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: colors.primary,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(5),
+                                      child: Icon(
+                                        Icons.bookmark_rounded,
+                                        size: 15,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          unit.displayLabel.isEmpty
+                              ? unit.title
+                              : unit.displayLabel,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          '${unit.pageCount}页',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
           const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
