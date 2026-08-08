@@ -42,4 +42,32 @@ void main() {
       expect(settings.fitMode, FitMode.contain);
     });
   });
+
+  test('reader layout is isolated per Work while global options are shared',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+
+    await const ReaderSettings(
+      mode: ComicReadingMode.webtoon,
+      direction: ReadingDirection.ttb,
+      showPageNumber: false,
+      autoPageInterval: 20,
+    ).save(scope: 'work:a');
+    await const ReaderSettings(
+      mode: ComicReadingMode.doublePage,
+      direction: ReadingDirection.rtl,
+      showPageNumber: false,
+      autoPageInterval: 20,
+    ).save(scope: 'work:b');
+
+    final a = await ReaderSettings.load(scope: 'work:a');
+    final b = await ReaderSettings.load(scope: 'work:b');
+
+    expect(a.mode, ComicReadingMode.webtoon);
+    expect(a.direction, ReadingDirection.ttb);
+    expect(b.mode, ComicReadingMode.doublePage);
+    expect(b.direction, ReadingDirection.rtl);
+    expect(a.showPageNumber, isFalse);
+    expect(b.autoPageInterval, 20);
+  });
 }

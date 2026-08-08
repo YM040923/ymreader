@@ -3,26 +3,30 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:photo_view/photo_view.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/api/comic_api.dart';
+import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
 import '../../data/services/reading_activity_tracker.dart';
 import '../../widgets/authenticated_image.dart';
 import '../../widgets/reader_settings_panel.dart';
 import 'novel_reader_screen.dart';
-
+import 'work_reader_context.dart';
 
 /// 漫画阅读器
 class ComicReaderScreen extends ConsumerStatefulWidget {
   final String comicId;
   final int initialPage;
+  final WorkReaderContext? workContext;
 
   const ComicReaderScreen({
     super.key,
     required this.comicId,
     this.initialPage = 0,
+    this.workContext,
   });
 
   @override
@@ -34,6 +38,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   final ScrollController _scrollController = ScrollController();
   int _currentPage = 0;
   int _totalPages = 0;
+  int _physicalTotalPages = 0;
   bool _showOverlay = false;
   bool _loading = true;
 
@@ -50,7 +55,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   @override
   void initState() {
     super.initState();
-    _currentPage = widget.initialPage;
+    _currentPage = widget.workContext?.toRelativePage(widget.initialPage) ??
+        widget.initialPage;
     _pageController = PageController(initialPage: _currentPage);
     // 提前缓存 API 引用
     _api = ref.read(comicApiProvider);
@@ -75,11 +81,19 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   /// 拦截返回操作，尽量在退出前完成最后一次活动同步
   Future<void> _onWillPop() async {
     await _activity.finish();
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    if (widget.workContext != null) {
+      context.go(widget.workContext!.work.detailRoute());
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _loadSettings() async {
-    final s = await ReaderSettings.load();
+    final scope = widget.workContext != null
+        ? 'work:${widget.workContext!.work.id}'
+        : 'comic:${widget.comicId}';
+    final s = await ReaderSettings.load(scope: scope);
     if (mounted) setState(() => _settings = s);
   }
 
@@ -107,10 +121,19 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       }
 
       setState(() {
-        _totalPages = data['totalPages'] ?? 0;
+        _physicalTotalPages = data['totalPages'] ?? 0;
+        final unitCount = widget.workContext?.currentUnit.pageCount ?? 0;
+        final available = (_physicalTotalPages -
+                (widget.workContext?.currentUnit.startPage ?? 0))
+            .clamp(0, _physicalTotalPages);
+        _totalPages =
+            unitCount > 0 ? unitCount.clamp(0, available) : _physicalTotalPages;
+        if (_totalPages > 0) {
+          _currentPage = _currentPage.clamp(0, _totalPages - 1);
+        }
         _loading = false;
       });
-      _activity.start(_currentPage, _totalPages);
+      _activity.start(_physicalPage(_currentPage), _physicalTotalPages);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -118,8 +141,11 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   void _onPageChanged(int page) {
     setState(() => _currentPage = page);
-    _activity.updatePage(page, _totalPages);
+    _activity.updatePage(_physicalPage(page), _physicalTotalPages);
   }
+
+  int _physicalPage(int relativePage) =>
+      (widget.workContext?.currentUnit.startPage ?? 0) + relativePage;
 
   void _toggleOverlay() {
     setState(() => _showOverlay = !_showOverlay);
@@ -128,9 +154,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   void _toggleAutoPage() {
     setState(() => _autoPage = !_autoPage);
     if (_autoPage) {
-      final interval = _settings.autoPageInterval > 0
-          ? _settings.autoPageInterval
-          : 10;
+      final interval =
+          _settings.autoPageInterval > 0 ? _settings.autoPageInterval : 10;
       _autoPageTimer = Timer.periodic(Duration(seconds: interval), (_) {
         if (_currentPage < _totalPages - 1) {
           if (_settings.mode == ComicReadingMode.webtoon) {
@@ -176,6 +201,9 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       context,
       settings: _settings,
       onChanged: _onSettingsChanged,
+      scope: widget.workContext != null
+          ? 'work:${widget.workContext!.work.id}'
+          : 'comic:${widget.comicId}',
     );
   }
 
@@ -243,30 +271,28 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
           ? Axis.vertical
           : Axis.horizontal,
       itemBuilder: (context, index) {
+        final physicalPage = _physicalPage(index);
         final imageUrl =
-            getImageUrl(serverUrl, widget.comicId, page: index);
+            getImageUrl(serverUrl, widget.comicId, page: physicalPage);
         return PhotoView(
           imageProvider: AuthenticatedImageProvider(
             imageUrl,
             comicId: widget.comicId,
-            pageIndex: index,
+            pageIndex: physicalPage,
           ),
           minScale: PhotoViewComputedScale.contained,
           maxScale: PhotoViewComputedScale.covered * 3,
           initialScale: _getInitialScale(),
-          backgroundDecoration:
-              const BoxDecoration(color: Colors.black),
+          backgroundDecoration: const BoxDecoration(color: Colors.black),
           loadingBuilder: (_, event) => Center(
             child: CircularProgressIndicator(
               value: event?.expectedTotalBytes != null
-                  ? event!.cumulativeBytesLoaded /
-                      event.expectedTotalBytes!
+                  ? event!.cumulativeBytesLoaded / event.expectedTotalBytes!
                   : null,
             ),
           ),
           errorBuilder: (_, __, ___) => const Center(
-            child: Icon(Icons.broken_image,
-                color: Colors.white54, size: 48),
+            child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
           ),
         );
       },
@@ -276,7 +302,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   /// 双页模式 — 横屏时左右各显示一页，竖屏时自动回退到单页
   Widget _buildDoublePageView(String serverUrl) {
     // 计算双页对：根据 doubleCoverAlone 决定第 1 页是否单独显示
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
     if (!isLandscape) {
       // 竖屏回退到单页模式
       return _buildPageView(serverUrl);
@@ -325,18 +352,23 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       onPageChanged: (groupIndex) {
         final firstPage = pageGroups[groupIndex].first;
         setState(() => _currentPage = firstPage);
-        _activity.updatePage(firstPage, _totalPages);
+        _activity.updatePage(
+          _physicalPage(firstPage),
+          _physicalTotalPages,
+        );
       },
       itemBuilder: (context, groupIndex) {
         final pages = pageGroups[groupIndex];
         if (pages.length == 1) {
           // 单页（封面或最后一页）
-          final imageUrl = getImageUrl(serverUrl, widget.comicId, page: pages[0]);
+          final physicalPage = _physicalPage(pages[0]);
+          final imageUrl =
+              getImageUrl(serverUrl, widget.comicId, page: physicalPage);
           return PhotoView(
             imageProvider: AuthenticatedImageProvider(
               imageUrl,
               comicId: widget.comicId,
-              pageIndex: pages[0],
+              pageIndex: physicalPage,
             ),
             minScale: PhotoViewComputedScale.contained,
             maxScale: PhotoViewComputedScale.covered * 3,
@@ -356,10 +388,16 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         }
 
         // 双页并排
-        final leftPage = _settings.direction == ReadingDirection.rtl ? pages[1] : pages[0];
-        final rightPage = _settings.direction == ReadingDirection.rtl ? pages[0] : pages[1];
-        final leftUrl = getImageUrl(serverUrl, widget.comicId, page: leftPage);
-        final rightUrl = getImageUrl(serverUrl, widget.comicId, page: rightPage);
+        final leftPage =
+            _settings.direction == ReadingDirection.rtl ? pages[1] : pages[0];
+        final rightPage =
+            _settings.direction == ReadingDirection.rtl ? pages[0] : pages[1];
+        final physicalLeftPage = _physicalPage(leftPage);
+        final physicalRightPage = _physicalPage(rightPage);
+        final leftUrl =
+            getImageUrl(serverUrl, widget.comicId, page: physicalLeftPage);
+        final rightUrl =
+            getImageUrl(serverUrl, widget.comicId, page: physicalRightPage);
 
         // 双页贴合：把左页右对齐、右页左对齐，让两张图在屏幕正中央拼合，去除中间缝
         final noGap = _settings.doublePageNoGap;
@@ -369,12 +407,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
               child: AuthenticatedImage(
                 imageUrl: leftUrl,
                 comicId: widget.comicId,
-                pageIndex: leftPage,
+                pageIndex: physicalLeftPage,
                 fit: BoxFit.contain,
                 alignment: noGap ? Alignment.centerRight : Alignment.center,
                 placeholder: const Center(child: CircularProgressIndicator()),
                 errorWidget: const Center(
-                  child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                  child:
+                      Icon(Icons.broken_image, color: Colors.white54, size: 48),
                 ),
               ),
             ),
@@ -382,12 +421,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
               child: AuthenticatedImage(
                 imageUrl: rightUrl,
                 comicId: widget.comicId,
-                pageIndex: rightPage,
+                pageIndex: physicalRightPage,
                 fit: BoxFit.contain,
                 alignment: noGap ? Alignment.centerLeft : Alignment.center,
                 placeholder: const Center(child: CircularProgressIndicator()),
                 errorWidget: const Center(
-                  child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                  child:
+                      Icon(Icons.broken_image, color: Colors.white54, size: 48),
                 ),
               ),
             ),
@@ -405,11 +445,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
           // 根据滚动位置估算当前页码
           final viewportHeight = notification.metrics.viewportDimension;
           if (viewportHeight > 0) {
-            final page =
-                (notification.metrics.pixels / viewportHeight).floor();
+            final page = (notification.metrics.pixels / viewportHeight).floor();
             if (page != _currentPage && page >= 0 && page < _totalPages) {
               setState(() => _currentPage = page);
-              _activity.updatePage(page, _totalPages);
+              _activity.updatePage(
+                _physicalPage(page),
+                _physicalTotalPages,
+              );
             }
           }
         }
@@ -419,12 +461,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         controller: _scrollController,
         itemCount: _totalPages,
         itemBuilder: (context, index) {
+          final physicalPage = _physicalPage(index);
           final imageUrl =
-              getImageUrl(serverUrl, widget.comicId, page: index);
+              getImageUrl(serverUrl, widget.comicId, page: physicalPage);
           return AuthenticatedImage(
             imageUrl: imageUrl,
             comicId: widget.comicId,
-            pageIndex: index,
+            pageIndex: physicalPage,
             fit: _settings.fitMode == FitMode.width
                 ? BoxFit.fitWidth
                 : BoxFit.contain,
@@ -435,8 +478,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
             errorWidget: SizedBox(
               height: 200,
               child: const Center(
-                child: Icon(Icons.broken_image,
-                    color: Colors.white54, size: 48),
+                child:
+                    Icon(Icons.broken_image, color: Colors.white54, size: 48),
               ),
             ),
           );
@@ -502,7 +545,83 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   /// 底部进度条
+  Future<void> _goToUnit(WorkUnit unit) async {
+    final readerContext = widget.workContext;
+    if (readerContext == null) return;
+    await _activity.finish();
+    if (mounted) context.replace(readerContext.routeFor(unit));
+  }
+
+  void _showWorkDirectory() {
+    final readerContext = widget.workContext;
+    if (readerContext == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.72,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        readerContext.work.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    Text('${readerContext.currentIndex + 1}/'
+                        '${readerContext.work.units.length}'),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: readerContext.work.units.length,
+                  itemBuilder: (_, index) {
+                    final unit = readerContext.work.units[index];
+                    final selected = unit.id == readerContext.currentUnit.id;
+                    return ListTile(
+                      selected: selected,
+                      leading: CircleAvatar(child: Text('${index + 1}')),
+                      title: Text(
+                        unit.displayLabel.isEmpty
+                            ? unit.title
+                            : unit.displayLabel,
+                      ),
+                      subtitle: Text('${unit.pageCount}页'),
+                      trailing: selected
+                          ? const Icon(Icons.play_arrow_rounded)
+                          : null,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _goToUnit(unit);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomOverlay() {
+    final readerContext = widget.workContext;
+    final sliderMax =
+        (_totalPages - 1).toDouble().clamp(0, double.infinity).toDouble();
     return Positioned(
       bottom: 0,
       left: 0,
@@ -518,35 +637,73 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         child: SafeArea(
           top: false,
           child: Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${_currentPage + 1}',
-                    style: const TextStyle(color: Colors.white)),
-                Expanded(
-                  child: Slider(
-                    value: _currentPage.toDouble(),
-                    min: 0,
-                    max: (_totalPages - 1)
-                        .toDouble()
-                        .clamp(0, double.infinity),
-                    onChanged: (v) {
-                      final page = v.toInt();
-                      if (_settings.mode == ComicReadingMode.webtoon) {
-                        // 长条模式滚动到对应位置
-                        final viewportH =
-                            MediaQuery.of(context).size.height;
-                        _scrollController.jumpTo(page * viewportH);
-                        setState(() => _currentPage = page);
-                      } else {
-                        _pageController.jumpToPage(page);
-                      }
-                    },
+                if (readerContext != null)
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: '???',
+                        onPressed: readerContext.previousUnit == null
+                            ? null
+                            : () => _goToUnit(readerContext.previousUnit!),
+                        icon: const Icon(Icons.skip_previous_rounded),
+                        color: Colors.white,
+                        disabledColor: Colors.white30,
+                      ),
+                      Expanded(
+                        child: TextButton.icon(
+                          onPressed: _showWorkDirectory,
+                          icon: const Icon(Icons.list_alt_rounded),
+                          label: Text(
+                            readerContext.currentUnit.displayLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '???',
+                        onPressed: readerContext.nextUnit == null
+                            ? null
+                            : () => _goToUnit(readerContext.nextUnit!),
+                        icon: const Icon(Icons.skip_next_rounded),
+                        color: Colors.white,
+                        disabledColor: Colors.white30,
+                      ),
+                    ],
                   ),
+                Row(
+                  children: [
+                    Text('${_currentPage + 1}',
+                        style: const TextStyle(color: Colors.white)),
+                    Expanded(
+                      child: Slider(
+                        value: _currentPage.toDouble().clamp(0, sliderMax),
+                        min: 0,
+                        max: sliderMax,
+                        onChanged: (v) {
+                          final page = v.toInt();
+                          if (_settings.mode == ComicReadingMode.webtoon) {
+                            final viewportH =
+                                MediaQuery.of(context).size.height;
+                            _scrollController.jumpTo(page * viewportH);
+                            setState(() => _currentPage = page);
+                          } else {
+                            _pageController.jumpToPage(page);
+                          }
+                        },
+                      ),
+                    ),
+                    Text('$_totalPages',
+                        style: const TextStyle(color: Colors.white)),
+                  ],
                 ),
-                Text('$_totalPages',
-                    style: const TextStyle(color: Colors.white)),
               ],
             ),
           ),

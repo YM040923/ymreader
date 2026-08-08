@@ -97,6 +97,32 @@ class WorkListResponse {
   });
 }
 
+class WorkTagStat {
+  final String name;
+  final String color;
+  final int count;
+
+  const WorkTagStat({
+    required this.name,
+    this.color = '',
+    this.count = 0,
+  });
+}
+
+class WorkCategoryStat {
+  final String name;
+  final String slug;
+  final String icon;
+  final int count;
+
+  const WorkCategoryStat({
+    required this.name,
+    required this.slug,
+    this.icon = '',
+    this.count = 0,
+  });
+}
+
 class WorkApi {
   final Dio _dio;
 
@@ -136,6 +162,37 @@ class WorkApi {
         const [];
   }
 
+  Future<List<WorkTagStat>> getTagStats() async {
+    final response = await _dio.get('/works/tags');
+    final data = Map<String, dynamic>.from(response.data as Map);
+    return (data['tags'] as List?)
+            ?.whereType<Map>()
+            .map((item) => WorkTagStat(
+                  name: item['name']?.toString() ?? '',
+                  color: item['color']?.toString() ?? '',
+                  count: _asInt(item['count'], 0),
+                ))
+            .where((item) => item.name.isNotEmpty)
+            .toList() ??
+        const [];
+  }
+
+  Future<List<WorkCategoryStat>> getCategoryStats() async {
+    final response = await _dio.get('/works/categories');
+    final data = Map<String, dynamic>.from(response.data as Map);
+    return (data['categories'] as List?)
+            ?.whereType<Map>()
+            .map((item) => WorkCategoryStat(
+                  name: item['name']?.toString() ?? '',
+                  slug: item['slug']?.toString() ?? '',
+                  icon: item['icon']?.toString() ?? '',
+                  count: _asInt(item['count'], 0),
+                ))
+            .where((item) => item.name.isNotEmpty)
+            .toList() ??
+        const [];
+  }
+
   Future<void> setFavorite(String id, bool value) async {
     await _dio.put(
       '/works/${Uri.encodeComponent(id)}/favorite',
@@ -153,7 +210,7 @@ class WorkApi {
   Future<void> setReadingStatus(String id, String value) async {
     await _dio.put(
       '/works/${Uri.encodeComponent(id)}/reading-status',
-      data: {'readingStatus': value},
+      data: {'status': value},
     );
   }
 }

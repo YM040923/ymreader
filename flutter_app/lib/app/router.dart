@@ -6,6 +6,7 @@ import '../features/auth/login_screen.dart';
 import '../features/cache/cache_screen.dart';
 import '../features/collections/collections_screen.dart';
 import '../features/detail/comic_detail_screen.dart';
+import '../features/detail/work_detail_screen.dart';
 import '../features/favorites/favorites_screen.dart';
 import '../features/groups/group_detail_v2_screen.dart';
 import '../features/home/home_screen.dart';
@@ -81,6 +82,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           return ReaderDispatchScreen(
             comicId: comicId,
             initialPosition: initialPage,
+            workId: state.uri.queryParameters['workId'],
+            unitId: state.uri.queryParameters['unitId'],
           );
         },
       ),
@@ -124,8 +127,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(
             path: '/',
-            pageBuilder: (_, __) =>
-                const NoTransitionPage(child: HomeScreen()),
+            pageBuilder: (_, __) => const NoTransitionPage(child: HomeScreen()),
           ),
           GoRoute(
             path: '/search',
@@ -148,6 +150,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/comic/:id',
         builder: (_, state) =>
             ComicDetailScreen(comicId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/work/:id',
+        builder: (_, state) =>
+            WorkDetailScreen(workId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/collections',

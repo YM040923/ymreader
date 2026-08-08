@@ -65,8 +65,10 @@ class ReaderSettings {
   ///
   /// v2 将旧版默认的“完整容纳”迁移为“适应宽度”。旧默认会把长图完整
   /// 压进一屏，导致漫画文字非常小；用户仍可在设置中切回完整显示。
-  static Future<ReaderSettings> load() async {
+  static Future<ReaderSettings> load({String? scope}) async {
     final prefs = await SharedPreferences.getInstance();
+    String scoped(String key) =>
+        scope == null || scope.isEmpty ? key : '${key}_$scope';
     final storedVersion = prefs.getInt('reader_settings_version') ?? 1;
     var fitModeIndex = prefs.getInt('reader_fitMode');
 
@@ -83,37 +85,44 @@ class ReaderSettings {
     return ReaderSettings(
       mode: _enumValue(
         ComicReadingMode.values,
-        prefs.getInt('reader_mode'),
+        prefs.getInt(scoped('reader_mode')) ?? prefs.getInt('reader_mode'),
         ComicReadingMode.single,
       ),
       direction: _enumValue(
         ReadingDirection.values,
-        prefs.getInt('reader_direction'),
+        prefs.getInt(scoped('reader_direction')) ??
+            prefs.getInt('reader_direction'),
         ReadingDirection.ltr,
       ),
       fitMode: _enumValue(
         FitMode.values,
-        fitModeIndex,
+        prefs.getInt(scoped('reader_fitMode')) ?? fitModeIndex,
         FitMode.width,
       ),
       showPageNumber: prefs.getBool('reader_showPageNumber') ?? true,
       autoPageInterval: prefs.getInt('reader_autoPageInterval') ?? 10,
-      doubleCoverAlone: prefs.getBool('reader_doubleCoverAlone') ?? true,
-      doublePageNoGap: prefs.getBool('reader_doublePageNoGap') ?? true,
+      doubleCoverAlone: prefs.getBool(scoped('reader_doubleCoverAlone')) ??
+          prefs.getBool('reader_doubleCoverAlone') ??
+          true,
+      doublePageNoGap: prefs.getBool(scoped('reader_doublePageNoGap')) ??
+          prefs.getBool('reader_doublePageNoGap') ??
+          true,
     );
   }
 
   /// 保存到 SharedPreferences
-  Future<void> save() async {
+  Future<void> save({String? scope}) async {
     final prefs = await SharedPreferences.getInstance();
+    String scoped(String key) =>
+        scope == null || scope.isEmpty ? key : '${key}_$scope';
     await prefs.setInt('reader_settings_version', settingsVersion);
-    await prefs.setInt('reader_mode', mode.index);
-    await prefs.setInt('reader_direction', direction.index);
-    await prefs.setInt('reader_fitMode', fitMode.index);
+    await prefs.setInt(scoped('reader_mode'), mode.index);
+    await prefs.setInt(scoped('reader_direction'), direction.index);
+    await prefs.setInt(scoped('reader_fitMode'), fitMode.index);
     await prefs.setBool('reader_showPageNumber', showPageNumber);
     await prefs.setInt('reader_autoPageInterval', autoPageInterval);
-    await prefs.setBool('reader_doubleCoverAlone', doubleCoverAlone);
-    await prefs.setBool('reader_doublePageNoGap', doublePageNoGap);
+    await prefs.setBool(scoped('reader_doubleCoverAlone'), doubleCoverAlone);
+    await prefs.setBool(scoped('reader_doublePageNoGap'), doublePageNoGap);
   }
 }
 
@@ -121,11 +130,13 @@ class ReaderSettings {
 class ReaderSettingsPanel extends StatefulWidget {
   final ReaderSettings settings;
   final ValueChanged<ReaderSettings> onChanged;
+  final String? scope;
 
   const ReaderSettingsPanel({
     super.key,
     required this.settings,
     required this.onChanged,
+    this.scope,
   });
 
   @override
@@ -134,7 +145,8 @@ class ReaderSettingsPanel extends StatefulWidget {
   /// 从底部弹出显示
   static void show(BuildContext context,
       {required ReaderSettings settings,
-      required ValueChanged<ReaderSettings> onChanged}) {
+      required ValueChanged<ReaderSettings> onChanged,
+      String? scope}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -142,6 +154,7 @@ class ReaderSettingsPanel extends StatefulWidget {
       builder: (_) => ReaderSettingsPanel(
         settings: settings,
         onChanged: onChanged,
+        scope: scope,
       ),
     );
   }
@@ -159,7 +172,7 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
   void _update(ReaderSettings newSettings) {
     setState(() => _settings = newSettings);
     widget.onChanged(newSettings);
-    newSettings.save(); // 自动持久化
+    newSettings.save(scope: widget.scope); // 自动持久化
   }
 
   @override
@@ -172,8 +185,7 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
         return Container(
           decoration: BoxDecoration(
             color: Colors.grey[900],
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -236,8 +248,7 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                         _ToggleItem(FitMode.width, '宽度'),
                         _ToggleItem(FitMode.height, '高度'),
                       ],
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(fitMode: v)),
+                      onChanged: (v) => _update(_settings.copyWith(fitMode: v)),
                     ),
                     const SizedBox(height: 16),
 
@@ -251,8 +262,7 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                         _ToggleItem(ComicReadingMode.doublePage, '双页'),
                         _ToggleItem(ComicReadingMode.webtoon, '长条'),
                       ],
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(mode: v)),
+                      onChanged: (v) => _update(_settings.copyWith(mode: v)),
                     ),
                     const SizedBox(height: 16),
 
@@ -261,8 +271,8 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                       _SwitchRow(
                         label: '封面单独显示（双页错页）',
                         value: _settings.doubleCoverAlone,
-                        onChanged: (v) => _update(
-                            _settings.copyWith(doubleCoverAlone: v)),
+                        onChanged: (v) =>
+                            _update(_settings.copyWith(doubleCoverAlone: v)),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(top: 2, bottom: 8),
@@ -277,8 +287,8 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                       _SwitchRow(
                         label: '双页贴合（去除中间缝）',
                         value: _settings.doublePageNoGap,
-                        onChanged: (v) => _update(
-                            _settings.copyWith(doublePageNoGap: v)),
+                        onChanged: (v) =>
+                            _update(_settings.copyWith(doublePageNoGap: v)),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(top: 2, bottom: 8),

@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api/comic_api.dart';
+import '../../data/api/work_api.dart';
 import '../../data/models/comic.dart';
+import '../../data/models/work.dart';
 import 'comic_reader_screen.dart';
 import 'novel_reader_screen.dart';
 import 'pdf_reader_screen.dart';
+import 'work_reader_context.dart';
 
 /// 兼容旧链接和外部深链的阅读器分发页。
 ///
@@ -14,11 +17,15 @@ import 'pdf_reader_screen.dart';
 class ReaderDispatchScreen extends ConsumerStatefulWidget {
   final String comicId;
   final int initialPosition;
+  final String? workId;
+  final String? unitId;
 
   const ReaderDispatchScreen({
     super.key,
     required this.comicId,
     this.initialPosition = 0,
+    this.workId,
+    this.unitId,
   });
 
   @override
@@ -28,6 +35,7 @@ class ReaderDispatchScreen extends ConsumerStatefulWidget {
 
 class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
   Comic? _comic;
+  Work? _work;
   Object? _error;
   bool _loading = true;
 
@@ -43,11 +51,15 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
       _error = null;
     });
     try {
-      final data =
-          await ref.read(comicApiProvider).getComic(widget.comicId);
+      final data = await ref.read(comicApiProvider).getComic(widget.comicId);
+      Work? work;
+      if (widget.workId?.isNotEmpty == true) {
+        work = await ref.read(workApiProvider).getWork(widget.workId!);
+      }
       if (!mounted) return;
       setState(() {
         _comic = Comic.fromJson(data);
+        _work = work;
         _loading = false;
       });
     } catch (error) {
@@ -114,9 +126,18 @@ class _ReaderDispatchScreenState extends ConsumerState<ReaderDispatchScreen> {
         initialChapter: widget.initialPosition,
       );
     }
+    final workContext = _work != null && _work!.units.isNotEmpty
+        ? WorkReaderContext(
+            work: _work!,
+            unitId: widget.unitId?.isNotEmpty == true
+                ? widget.unitId!
+                : _work!.units.first.id,
+          )
+        : null;
     return ComicReaderScreen(
       comicId: comic.id,
       initialPage: widget.initialPosition,
+      workContext: workContext,
     );
   }
 }
