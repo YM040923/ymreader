@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api/comic_api.dart';
 import '../../widgets/animations.dart';
+import 'scan_rules_payload.dart';
 
 /// 扫描规则管理页面
 class ScanRulesScreen extends ConsumerStatefulWidget {
@@ -26,15 +27,8 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
   String _applyOn = 'newOnly'; // newOnly | all | manual
   // AI 推断
   bool _aiEnabled = false;
-  String _aiScope = 'folderGroup'; // folderGroup | file
   String _minConfidence = 'medium'; // low | medium | high
-  bool _applyToComic = true;
-  bool _applyToGroup = true;
   bool _overwriteTitle = false;
-  // 虚拟归类
-  bool _organizeEnabled = false;
-  bool _autoGroupByDir = true;
-  bool _inheritMeta = true;
   // 目录整理
   bool _directoryOrganizeEnabled = false;
   String _directoryOrganizeMode = 'hardlink'; // hardlink | move
@@ -71,15 +65,8 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
         _applyOn = rules['applyOn'] ?? 'newOnly';
         final ai = rules['aiInfer'] as Map<String, dynamic>? ?? {};
         _aiEnabled = ai['enabled'] ?? false;
-        _aiScope = ai['scope'] ?? 'folderGroup';
         _minConfidence = ai['minConfidence'] ?? 'medium';
-        _applyToComic = ai['applyToComic'] ?? true;
-        _applyToGroup = ai['applyToGroup'] ?? true;
         _overwriteTitle = ai['overwriteTitle'] ?? false;
-        final org = rules['organize'] as Map<String, dynamic>? ?? {};
-        _organizeEnabled = org['enabled'] ?? false;
-        _autoGroupByDir = org['autoGroupByDir'] ?? true;
-        _inheritMeta = org['inheritMeta'] ?? true;
         final dirOrg =
             rules['directoryOrganize'] as Map<String, dynamic>? ?? {};
         _directoryOrganizeEnabled = dirOrg['enabled'] ?? false;
@@ -102,17 +89,11 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
 
   void _applyRecommendedPreset() {
     setState(() {
-      _enabled = true;
+      _enabled = false;
       _applyOn = 'newOnly';
       _aiEnabled = true;
-      _aiScope = 'folderGroup';
       _minConfidence = 'medium';
-      _applyToComic = true;
-      _applyToGroup = true;
       _overwriteTitle = false;
-      _organizeEnabled = true;
-      _autoGroupByDir = true;
-      _inheritMeta = true;
       _directoryOrganizeEnabled = true;
       _directoryOrganizeMode = 'hardlink';
       _directoryOrganizeStrategy = 'smartDir';
@@ -121,32 +102,17 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
     });
   }
 
-  Map<String, dynamic> _buildRulesPayload() => {
-        'enabled': _enabled,
-        'applyOn': _applyOn,
-        'concurrency': 2,
-        'aiInfer': {
-          'enabled': _aiEnabled,
-          'scope': _aiScope,
-          'minConfidence': _minConfidence,
-          'applyToComic': _applyToComic,
-          'applyToGroup': _applyToGroup,
-          'overwriteTitle': _overwriteTitle,
-          'fallbackToRule': true,
-        },
-        'organize': {
-          'enabled': _organizeEnabled,
-          'autoGroupByDir': _autoGroupByDir,
-          'inheritMeta': _inheritMeta,
-        },
-        'directoryOrganize': {
-          'enabled': _directoryOrganizeEnabled,
-          'mode': _directoryOrganizeMode,
-          'strategy': _directoryOrganizeStrategy,
-          'hardlinkTargetDir': _hardlinkTargetController.text.trim(),
-        },
-        'filters': {},
-      };
+  Map<String, dynamic> _buildRulesPayload() => buildScanRulesPayload(
+        enabled: _enabled,
+        applyOn: _applyOn,
+        aiEnabled: _aiEnabled,
+        minConfidence: _minConfidence,
+        overwriteTitle: _overwriteTitle,
+        directoryOrganizeEnabled: _directoryOrganizeEnabled,
+        directoryOrganizeMode: _directoryOrganizeMode,
+        directoryOrganizeStrategy: _directoryOrganizeStrategy,
+        hardlinkTargetDir: _hardlinkTargetController.text,
+      );
 
   Future<void> _save() async {
     setState(() {
@@ -189,12 +155,11 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
         _running = false;
         if (result != null) {
           final inferred = result['inferred'] ?? 0;
-          final grouped = result['groupedNew'] ?? 0;
           final organized = result['directoryOrganized'] ?? 0;
           final failed = result['failed'] ?? 0;
           _message = dryRun
               ? '预览完成（共 ${result['total']} 项）'
-              : '执行完成（识别 $inferred，新建分组 $grouped，目录整理 $organized，失败 $failed）';
+              : '执行完成（识别 $inferred，目录整理 $organized，失败 $failed）';
           _isError = false;
         }
       });
@@ -273,7 +238,7 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
                                 fontWeight: FontWeight.bold,
                                 color: cs.onTertiaryContainer)),
                         const SizedBox(height: 4),
-                        Text('智能识别 + 自动分组 + 目录整理；推荐硬链接模式，不移动原文件',
+                        Text('按作品智能识别 + Work 目录整理；推荐硬链接模式，不移动原文件',
                             style: TextStyle(
                                 fontSize: 11,
                                 color:
@@ -344,28 +309,10 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
           _buildSection(cs, 'AI 智能识别', Icons.auto_awesome_rounded, [
             SwitchListTile(
               title: const Text('启用', style: TextStyle(fontSize: 14)),
-              subtitle: const Text('结合父目录与同伴文件名样本推断标题',
+              subtitle: const Text('每部 Work 识别一次，结果写入作品级元数据',
                   style: TextStyle(fontSize: 11)),
               value: _aiEnabled,
               onChanged: (v) => setState(() => _aiEnabled = v),
-            ),
-            ListTile(
-              title: const Text('识别范围', style: TextStyle(fontSize: 14)),
-              trailing: DropdownButton<String>(
-                value: _aiScope,
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'folderGroup',
-                      child: Text('按目录', style: TextStyle(fontSize: 12))),
-                  DropdownMenuItem(
-                      value: 'file',
-                      child: Text('每文件', style: TextStyle(fontSize: 12))),
-                ],
-                onChanged: (v) {
-                  if (v != null) setState(() => _aiScope = v);
-                },
-              ),
             ),
             ListTile(
               title: const Text('最低置信度', style: TextStyle(fontSize: 14)),
@@ -389,16 +336,6 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
               ),
             ),
             SwitchListTile(
-              title: const Text('写回单卷字段', style: TextStyle(fontSize: 14)),
-              value: _applyToComic,
-              onChanged: (v) => setState(() => _applyToComic = v),
-            ),
-            SwitchListTile(
-              title: const Text('同步到所属分组', style: TextStyle(fontSize: 14)),
-              value: _applyToGroup,
-              onChanged: (v) => setState(() => _applyToGroup = v),
-            ),
-            SwitchListTile(
               title: const Text('覆盖已有标题', style: TextStyle(fontSize: 14)),
               subtitle:
                   const Text('默认仅在标题为空时填充', style: TextStyle(fontSize: 11)),
@@ -408,33 +345,11 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
           ]),
           const SizedBox(height: 12),
 
-          // ─── 虚拟归类 ───
-          _buildSection(cs, '虚拟归类（自动分组）', Icons.folder_copy_rounded, [
-            SwitchListTile(
-              title: const Text('启用', style: TextStyle(fontSize: 14)),
-              subtitle:
-                  const Text('按目录结构自动创建/合并分组', style: TextStyle(fontSize: 11)),
-              value: _organizeEnabled,
-              onChanged: (v) => setState(() => _organizeEnabled = v),
-            ),
-            SwitchListTile(
-              title: const Text('按文件夹自动分组', style: TextStyle(fontSize: 14)),
-              value: _autoGroupByDir,
-              onChanged: (v) => setState(() => _autoGroupByDir = v),
-            ),
-            SwitchListTile(
-              title: const Text('从首卷继承元数据', style: TextStyle(fontSize: 14)),
-              value: _inheritMeta,
-              onChanged: (v) => setState(() => _inheritMeta = v),
-            ),
-          ]),
-          const SizedBox(height: 12),
-
           // ─── 目录整理 ───
           _buildSection(cs, '目录整理（硬链接 / 移动）', Icons.drive_file_move_rounded, [
             SwitchListTile(
               title: const Text('启用目录整理', style: TextStyle(fontSize: 14)),
-              subtitle: const Text('自动识别多层目录结构；推荐硬链接模式',
+              subtitle: const Text('单大 ZIP 保持单文件，多 CBZ 归入同一作品目录',
                   style: TextStyle(fontSize: 11)),
               value: _directoryOrganizeEnabled,
               onChanged: (v) => setState(() => _directoryOrganizeEnabled = v),
@@ -465,7 +380,7 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
                 items: const [
                   DropdownMenuItem(
                       value: 'smartDir',
-                      child: Text('智能多层', style: TextStyle(fontSize: 12))),
+                      child: Text('按作品模型', style: TextStyle(fontSize: 12))),
                   DropdownMenuItem(
                       value: 'flat',
                       child: Text('一级目录', style: TextStyle(fontSize: 12))),
@@ -482,7 +397,7 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
                   controller: _hardlinkTargetController,
                   decoration: const InputDecoration(
                     labelText: '硬链接目标目录',
-                    hintText: '留空使用默认整理目录，不要放在扫描目录内',
+                    hintText: '必须与源文件处于同一文件系统，且不能位于扫描目录内',
                     isDense: true,
                   ),
                   style: const TextStyle(fontSize: 12),
@@ -714,9 +629,10 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _miniStat('总数', '${r['total'] ?? 0}', cs),
+              _miniStat('作品数', '${r['total'] ?? 0}', cs),
+              if (r['physicalTotal'] != null)
+                _miniStat('物理文件', '${r['physicalTotal']}', cs),
               _miniStat('AI识别', '${r['inferred'] ?? 0}', cs),
-              _miniStat('新建分组', '${r['groupedNew'] ?? 0}', cs),
               _miniStat('目录整理', '${r['directoryOrganized'] ?? 0}', cs),
               _miniStat('跳过', '${r['skipped'] ?? 0}', cs),
               _miniStat('失败', '${r['failed'] ?? 0}', cs),
