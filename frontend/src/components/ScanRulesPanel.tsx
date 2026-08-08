@@ -479,16 +479,6 @@ export function ScanRulesPanel() {
           checked={rules.aiInfer.enabled}
           onChange={(v) => setRules({ ...rules, aiInfer: { ...rules.aiInfer, enabled: v } })}
         />
-        <FieldRow label="识别范围">
-          <select
-            className="w-full sm:w-auto rounded-lg border border-border/50 bg-card px-3 py-1.5 text-sm"
-            value={rules.aiInfer.scope}
-            onChange={(e) => setRules({ ...rules, aiInfer: { ...rules.aiInfer, scope: e.target.value as AIScope } })}
-          >
-            <option value="folderGroup">按目录去重（每目录调用一次，省 token）</option>
-            <option value="file">每个文件独立调用</option>
-          </select>
-        </FieldRow>
         <FieldRow label="最低置信度">
           <select
             className="w-full sm:w-auto rounded-lg border border-border/50 bg-card px-3 py-1.5 text-sm"
@@ -500,12 +490,9 @@ export function ScanRulesPanel() {
             <option value="high">高（最严格）</option>
           </select>
         </FieldRow>
-        <Toggle
-          label="写回单卷字段"
-          desc="把推断的标题/作者等写到 Comic 表"
-          checked={rules.aiInfer.applyToComic}
-          onChange={(v) => setRules({ ...rules, aiInfer: { ...rules.aiInfer, applyToComic: v } })}
-        />
+        <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 text-xs text-muted">
+          AI 现在按作品（Work）识别一次，结果写入作品级元数据；不会再逐话、逐卷覆盖 Comic 标题。
+        </div>
         <Toggle
           label="覆盖已有标题"
           desc="默认仅在标题为空时填充；开启后会强制覆盖"
@@ -518,7 +505,7 @@ export function ScanRulesPanel() {
       <SectionCard title="目录整理（硬链接 / 移动）" icon={<FolderTree className="h-4 w-4" />}>
         <Toggle
           label="启用目录整理"
-          desc="自动识别多层目录结构，生成更清晰的作品目录；推荐使用硬链接，不改动原始扫描目录"
+          desc="按 Work/WorkUnit 结构生成整理镜像；单个大 ZIP 保持单文件，多 CBZ 归入同一作品目录"
           checked={rules.directoryOrganize.enabled}
           onChange={(v) =>
             setRules({
@@ -579,7 +566,7 @@ export function ScanRulesPanel() {
               })
             }
           >
-            <option value="smartDir">智能保留多层目录（推荐）</option>
+            <option value="smartDir">按作品模型整理（推荐）</option>
             <option value="flat">仅按作品名生成一级目录</option>
           </select>
         </FieldRow>
@@ -602,7 +589,7 @@ export function ScanRulesPanel() {
                 className="w-full rounded-lg border border-border/50 bg-card px-3 py-1.5 text-sm font-mono"
               />
               <p className="text-[11px] text-muted/70">
-                目标目录不要放在任何扫描目录内部，避免下次扫描重复入库。
+                目标目录不要放在任何扫描目录内部；NAS 上还必须与源文件位于同一文件系统，才能创建硬链接。
               </p>
             </div>
           </FieldRow>

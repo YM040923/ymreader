@@ -348,14 +348,25 @@ func GetFileStats() (*FileStats, error) {
 	}
 
 	// 1. 总体概览
-	db.QueryRow(`
+	var avgFileSize, avgPageCount float64
+	if err := db.QueryRow(`
 		SELECT COUNT(*),
 		       COALESCE(SUM("fileSize"), 0),
 		       COALESCE(SUM("pageCount"), 0),
 		       COALESCE(AVG("fileSize"), 0),
 		       COALESCE(AVG("pageCount"), 0)
 		FROM "Comic"
-	`).Scan(&stats.TotalFiles, &stats.TotalSize, &stats.TotalPages, &stats.AvgFileSize, &stats.AvgPageCount)
+	`).Scan(
+		&stats.TotalFiles,
+		&stats.TotalSize,
+		&stats.TotalPages,
+		&avgFileSize,
+		&avgPageCount,
+	); err != nil {
+		return nil, err
+	}
+	stats.AvgFileSize = int64(avgFileSize + 0.5)
+	stats.AvgPageCount = int(avgPageCount + 0.5)
 
 	db.QueryRow(`SELECT COUNT(*) FROM "Comic" WHERE "type" = 'comic'`).Scan(&stats.ComicCount)
 	db.QueryRow(`SELECT COUNT(*) FROM "Comic" WHERE "type" = 'novel'`).Scan(&stats.NovelCount)

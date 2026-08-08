@@ -294,6 +294,15 @@ func (h *StatsHandler) getWorkReadingInputs(c *gin.Context) ([]service.Work, []s
 
 // GET /api/stats/files — 文件统计
 func (h *StatsHandler) GetFileStats(c *gin.Context) {
+	if !strings.EqualFold(c.Query("scope"), "physical") {
+		works, err := NewWorkHandler().loadWorks(c, false)
+		if err != nil {
+			writeWorkReadError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, service.BuildWorkFileStats(works))
+		return
+	}
 	stats, err := store.GetFileStats()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file stats"})
@@ -304,6 +313,15 @@ func (h *StatsHandler) GetFileStats(c *gin.Context) {
 
 // GET /api/stats/folder-tree — 文件夹树形统计
 func (h *StatsHandler) GetFolderTreeStats(c *gin.Context) {
+	if !strings.EqualFold(c.Query("scope"), "physical") {
+		works, err := NewWorkHandler().loadWorks(c, false)
+		if err != nil {
+			writeWorkReadError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, service.BuildWorkFolderTree(works))
+		return
+	}
 	tree, err := store.GetFolderTreeStats()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get folder tree stats"})

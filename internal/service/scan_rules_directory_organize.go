@@ -24,7 +24,7 @@ type directoryOrganizePlan struct {
 	FolderComic bool   `json:"folderComic"`
 }
 
-func runDirectoryOrganizeAction(batchID string, ids []string, rule *config.DirectoryOrganizeRule, dryRun bool) (organized, skipped, failed int) {
+func runDirectoryOrganizeAction(batchID string, ids []string, rule *config.DirectoryOrganizeRule, dryRun bool, workRoots map[string]string) (organized, skipped, failed int) {
 	if rule == nil || !rule.Enabled || len(ids) == 0 {
 		return 0, 0, 0
 	}
@@ -82,6 +82,13 @@ func runDirectoryOrganizeAction(batchID string, ids []string, rule *config.Direc
 
 		oldRel := normalizeScanRelPath(comic.Filename)
 		targetRel := buildDirectoryOrganizeRelPath(oldRel, strategy)
+		if workRoot := strings.TrimSpace(workRoots[id]); workRoot != "" {
+			targetRel = buildWorkAwareDirectoryOrganizeRelPath(
+				oldRel,
+				workRoot,
+				strategy,
+			)
+		}
 		if oldRel == "" || targetRel == "" {
 			skipped++
 			updateProgress(func(p *ScanRuleProgress) { p.Skipped++; p.Current++ })

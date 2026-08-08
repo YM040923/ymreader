@@ -132,6 +132,7 @@ const FORMAT_TEXT_COLORS: Record<string, string> = {
 // ============================================================
 
 export default function FileStatsPanel() {
+  const [scope, setScope] = useState<"work" | "physical">("work");
   const [stats, setStats] = useState<FileStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandLargest, setExpandLargest] = useState(false);
@@ -144,24 +145,30 @@ export default function FileStatsPanel() {
   const [expandAll, setExpandAll] = useState(false);
 
   useEffect(() => {
-    fetch(apiPath("/api/stats/files"))
+    setLoading(true);
+    setStats(null);
+    fetch(apiPath(`/api/stats/files?scope=${scope}`))
       .then((r) => r.json())
       .then((data) => setStats(data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [scope]);
 
   // 切换到文件夹树视图时懒加载数据
   useEffect(() => {
     if (activeTab === "folder-tree" && !folderTree) {
       setFolderTreeLoading(true);
-      fetch(apiPath("/api/stats/folder-tree"))
+      fetch(apiPath(`/api/stats/folder-tree?scope=${scope}`))
         .then((r) => r.json())
         .then((data) => setFolderTree(data))
         .catch(() => setFolderTree([]))
         .finally(() => setFolderTreeLoading(false));
     }
-  }, [activeTab, folderTree]);
+  }, [activeTab, folderTree, scope]);
+
+  useEffect(() => {
+    setFolderTree(null);
+  }, [scope]);
 
   // 格式百分比
   const formatPercentages = useMemo(() => {
@@ -197,6 +204,25 @@ export default function FileStatsPanel() {
 
   return (
     <div className="space-y-6">
+
+      <div className="inline-flex rounded-lg border border-border/50 bg-card p-1">
+        <button
+          onClick={() => setScope("work")}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            scope === "work" ? "bg-accent text-white" : "text-muted hover:text-foreground"
+          }`}
+        >
+          按作品统计
+        </button>
+        <button
+          onClick={() => setScope("physical")}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            scope === "physical" ? "bg-accent text-white" : "text-muted hover:text-foreground"
+          }`}
+        >
+          按物理文件统计
+        </button>
+      </div>
 
       {/* ── Tab 切换 ── */}
       <div className="flex gap-2">
@@ -305,7 +331,7 @@ export default function FileStatsPanel() {
         <OverviewCard
           icon={<Package className="h-4 w-4 sm:h-5 sm:w-5 text-accent" />}
           iconBg="bg-accent/15"
-          label="总文件数"
+          label={scope === "work" ? "作品数" : "总文件数"}
           value={stats.totalFiles.toLocaleString()}
         />
         <OverviewCard
@@ -623,7 +649,10 @@ function filterFolderTree(
     const nameMatch = !search || node.name.toLowerCase().includes(searchLower);
 
     const matchedFiles = (node.files || []).filter((f) => {
-      const typeMatch = typeFilter === "all" || f.type === typeFilter;
+      const typeMatch =
+        typeFilter === "all" ||
+        f.type === typeFilter ||
+        (typeFilter === "comic" && f.type === "work");
       const searchMatch = !search ||
         f.title.toLowerCase().includes(searchLower) ||
         f.filename.toLowerCase().includes(searchLower);
@@ -696,7 +725,9 @@ function FolderFileRow({
   return (
     <div
       onClick={() => {
-        if (file.type === "novel") {
+        if (file.type === "work") {
+          router.push(`/work/${encodeURIComponent(file.id)}`);
+        } else if (file.type === "novel") {
           router.push(`/novel/${file.id}`);
         } else {
           router.push(`/comic/${file.id}`);

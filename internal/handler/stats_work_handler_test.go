@@ -104,3 +104,85 @@ func TestWorkStatsAndHistoryAggregateUnitsButKeepNovelIdentity(t *testing.T) {
 		t.Fatalf("comic history = %#v", history.Items[1])
 	}
 }
+
+func TestFileStatsDefaultsToWorksAndKeepsPhysicalScope(t *testing.T) {
+	router := setupTestRouter(t)
+	cookie := registerAndLogin(t, router)
+	createWorkTestLibrary(t, "comic-lib", "Comics", "read")
+	createWorkTestComics(t, "comic-lib", []workTestComic{
+		{ID: "chapter-1", Path: "日漫/同一本漫画/第001话.cbz", Title: "第001话"},
+		{ID: "chapter-2", Path: "日漫/同一本漫画/第002话.cbz", Title: "第002话"},
+	})
+
+	workResponse := performAuthedRequest(
+		router, http.MethodGet, "/api/stats/files", nil, cookie,
+	)
+	if workResponse.Code != http.StatusOK {
+		t.Fatalf("work stats status = %d: %s", workResponse.Code, workResponse.Body.String())
+	}
+	var workStats store.FileStats
+	if err := json.Unmarshal(workResponse.Body.Bytes(), &workStats); err != nil {
+		t.Fatal(err)
+	}
+	if workStats.TotalFiles != 1 || workStats.ComicCount != 1 {
+		t.Fatalf("default file stats = %#v", workStats)
+	}
+	if len(workStats.LargestFiles) != 1 || workStats.LargestFiles[0].Type != "work" {
+		t.Fatalf("default largest files = %#v", workStats.LargestFiles)
+	}
+
+	physicalResponse := performAuthedRequest(
+		router, http.MethodGet, "/api/stats/files?scope=physical", nil, cookie,
+	)
+	if physicalResponse.Code != http.StatusOK {
+		t.Fatalf("physical stats status = %d: %s", physicalResponse.Code, physicalResponse.Body.String())
+	}
+	var physicalStats store.FileStats
+	if err := json.Unmarshal(physicalResponse.Body.Bytes(), &physicalStats); err != nil {
+		t.Fatal(err)
+	}
+	if physicalStats.TotalFiles != 2 || physicalStats.ComicCount != 2 {
+		t.Fatalf("physical file stats = %#v", physicalStats)
+	}
+}
+
+func TestFolderTreeStatsDefaultsToWorksAndKeepsPhysicalScope(t *testing.T) {
+	router := setupTestRouter(t)
+	cookie := registerAndLogin(t, router)
+	createWorkTestLibrary(t, "comic-lib", "Comics", "read")
+	createWorkTestComics(t, "comic-lib", []workTestComic{
+		{ID: "chapter-1", Path: "日漫/同一本漫画/第001话.cbz", Title: "第001话"},
+		{ID: "chapter-2", Path: "日漫/同一本漫画/第002话.cbz", Title: "第002话"},
+	})
+
+	workResponse := performAuthedRequest(
+		router, http.MethodGet, "/api/stats/folder-tree", nil, cookie,
+	)
+	if workResponse.Code != http.StatusOK {
+		t.Fatalf("work tree status = %d: %s", workResponse.Code, workResponse.Body.String())
+	}
+	var workTree []*store.FolderTreeNode
+	if err := json.Unmarshal(workResponse.Body.Bytes(), &workTree); err != nil {
+		t.Fatal(err)
+	}
+	if len(workTree) != 1 || workTree[0].FileCount != 1 ||
+		len(workTree[0].Files) != 1 || workTree[0].Files[0].Type != "work" {
+		t.Fatalf("default folder tree = %#v", workTree)
+	}
+
+	physicalResponse := performAuthedRequest(
+		router, http.MethodGet, "/api/stats/folder-tree?scope=physical", nil, cookie,
+	)
+	if physicalResponse.Code != http.StatusOK {
+		t.Fatalf("physical tree status = %d: %s", physicalResponse.Code, physicalResponse.Body.String())
+	}
+	var physicalTree []*store.FolderTreeNode
+	if err := json.Unmarshal(physicalResponse.Body.Bytes(), &physicalTree); err != nil {
+		t.Fatal(err)
+	}
+	if len(physicalTree) != 1 || physicalTree[0].FileCount != 2 ||
+		len(physicalTree[0].Children) != 1 ||
+		len(physicalTree[0].Children[0].Files) != 2 {
+		t.Fatalf("physical folder tree = %#v", physicalTree)
+	}
+}

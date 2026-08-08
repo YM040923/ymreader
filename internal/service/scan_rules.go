@@ -39,6 +39,7 @@ type ScanRuleRunOptions struct {
 type ScanRuleRunResult struct {
 	BatchID            string `json:"batchId"`
 	Total              int    `json:"total"`
+	PhysicalTotal      int    `json:"physicalTotal"`
 	Inferred           int    `json:"inferred"`
 	DirectoryOrganized int    `json:"directoryOrganized"`
 	Skipped            int    `json:"skipped"`
@@ -249,9 +250,10 @@ func RunScanRules(opts ScanRuleRunOptions) (*ScanRuleRunResult, error) {
 	ids = filterScanRuleTargets(ids, rules.Filters)
 
 	result := &ScanRuleRunResult{
-		BatchID: opts.BatchID,
-		Total:   len(ids),
-		DryRun:  opts.DryRun,
+		BatchID:       opts.BatchID,
+		Total:         len(ids),
+		PhysicalTotal: len(ids),
+		DryRun:        opts.DryRun,
 	}
 
 	updateProgress(func(p *ScanRuleProgress) {
@@ -263,7 +265,24 @@ func RunScanRules(opts ScanRuleRunOptions) (*ScanRuleRunResult, error) {
 		return result, nil
 	}
 
-	log.Printf("[scan-rules] batch=%s start, total=%d, dryRun=%v", opts.BatchID, result.Total, opts.DryRun)
+	works, workErr := buildScanRuleWorks(ids)
+	if workErr != nil {
+		finishProgress(workErr.Error())
+		return nil, workErr
+	}
+	if !opts.DryRun {
+		if err := PersistAndApplyLogicalWorks(works); err != nil {
+			finishProgress(err.Error())
+			return nil, err
+		}
+	}
+	workRoots := workRootForComic(works)
+	result.Total = len(works)
+	updateProgress(func(p *ScanRuleProgress) {
+		p.Total = result.Total
+	})
+
+	log.Printf("[scan-rules] batch=%s start, total=%d, works=%d, dryRun=%v", opts.BatchID, result.Total, len(works), opts.DryRun)
 
 	// 动作 1：AI 智能识别（按目录去重）
 	if rules.AIInfer != nil && rules.AIInfer.Enabled {
@@ -272,7 +291,7 @@ func RunScanRules(opts ScanRuleRunOptions) (*ScanRuleRunResult, error) {
 			p.StageLabel = "AI 智能识别"
 			p.Current = 0
 		})
-		inferred, skipped, failed := runAIInferAction(opts.BatchID, ids, rules.AIInfer, opts.DryRun)
+		inferred, skipped, failed := runAIInferWorkAction(opts.BatchID, works, rules.AIInfer, opts.DryRun)
 		result.Inferred = inferred
 		result.Skipped += skipped
 		result.Failed += failed
@@ -280,7 +299,7 @@ func RunScanRules(opts ScanRuleRunOptions) (*ScanRuleRunResult, error) {
 
 	// 动作 2：物理目录整理（默认硬链接镜像；move 模式才会移动/重命名当前扫描目录）
 	if rules.DirectoryOrganize != nil && rules.DirectoryOrganize.Enabled {
-		organized, skipped, failed := runDirectoryOrganizeAction(opts.BatchID, ids, rules.DirectoryOrganize, opts.DryRun)
+		organized, skipped, failed := runDirectoryOrganizeAction(opts.BatchID, ids, rules.DirectoryOrganize, opts.DryRun, workRoots)
 		result.DirectoryOrganized = organized
 		result.Skipped += skipped
 		result.Failed += failed
