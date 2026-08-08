@@ -4,11 +4,9 @@ import 'package:go_router/go_router.dart';
 import '../data/providers/auth_provider.dart';
 import '../features/auth/login_screen.dart';
 import '../features/cache/cache_screen.dart';
-import '../features/collections/collections_screen.dart';
 import '../features/detail/comic_detail_screen.dart';
 import '../features/detail/work_detail_screen.dart';
 import '../features/favorites/favorites_screen.dart';
-import '../features/groups/group_detail_v2_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/metadata/metadata_screen.dart';
 import '../features/reader/novel_reader_screen.dart';
@@ -156,16 +154,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/work/:id',
         builder: (_, state) =>
             WorkDetailScreen(workId: state.pathParameters['id']!),
-      ),
-      GoRoute(
-        path: '/collections',
-        builder: (_, __) => const CollectionsScreen(),
-      ),
-      GoRoute(
-        path: '/group/:id',
-        builder: (_, state) => GroupDetailV2Screen(
-          groupId: int.parse(state.pathParameters['id']!),
-        ),
       ),
       GoRoute(
         path: '/metadata/:id',

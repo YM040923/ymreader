@@ -73,9 +73,7 @@ class Comic {
 
   bool get isFinished =>
       readingStatus == 'finished' ||
-      (hasReadingProgress &&
-          pageCount > 0 &&
-          lastReadPage >= pageCount - 1);
+      (hasReadingProgress && pageCount > 0 && lastReadPage >= pageCount - 1);
 
   Comic({
     required this.id,
@@ -137,18 +135,15 @@ class Comic {
       readingStatus: json['readingStatus']?.toString() ?? '',
       lastReadAt: json['lastReadAt']?.toString(),
       metadataSource: json['metadataSource']?.toString() ?? '',
-      coverImageUrl:
-          (json['coverUrl'] ?? json['coverImageUrl'])?.toString(),
+      coverImageUrl: (json['coverUrl'] ?? json['coverImageUrl'])?.toString(),
       coverAspectRatio: _asDouble(json['coverAspectRatio']) ?? 0,
       rating: _asDouble(json['rating']),
       isFavorite: json['isFavorite'] == true,
-      comicType:
-          (json['type'] ?? json['comicType'])?.toString() ?? 'comic',
+      comicType: (json['type'] ?? json['comicType'])?.toString() ?? 'comic',
       libraryId: json['libraryId']?.toString() ?? '',
       externalRating: _asDouble(json['externalRating']),
       externalRatingMax: _asDouble(json['externalRatingMax']) ?? 0,
-      externalRatingSource:
-          json['externalRatingSource']?.toString() ?? '',
+      externalRatingSource: json['externalRatingSource']?.toString() ?? '',
       externalRatingUpdatedAt:
           json['externalRatingUpdatedAt']?.toString() ?? '',
       canManage: json['canManage'] == true,
@@ -160,8 +155,7 @@ class Comic {
           const [],
       categories: (json['categories'] as List?)
               ?.whereType<Map>()
-              .map((item) =>
-                  Category.fromJson(Map<String, dynamic>.from(item)))
+              .map((item) => Category.fromJson(Map<String, dynamic>.from(item)))
               .toList() ??
           const [],
     );
@@ -254,8 +248,7 @@ class Comic {
       libraryId: libraryId ?? this.libraryId,
       externalRating: externalRating ?? this.externalRating,
       externalRatingMax: externalRatingMax ?? this.externalRatingMax,
-      externalRatingSource:
-          externalRatingSource ?? this.externalRatingSource,
+      externalRatingSource: externalRatingSource ?? this.externalRatingSource,
       externalRatingUpdatedAt:
           externalRatingUpdatedAt ?? this.externalRatingUpdatedAt,
       canManage: canManage ?? this.canManage,
@@ -341,66 +334,6 @@ class AuthUser {
 
   bool get isAdmin => role == 'admin';
   bool get canUseAI => isAdmin || aiEnabled;
-}
-
-/// 系列（分组）
-class ComicGroup {
-  final int id;
-  final String name;
-  final String coverUrl;
-  final int sortOrder;
-  final String author;
-  final String description;
-  final String tags;
-  final int? year;
-  final String publisher;
-  final String language;
-  final String genre;
-  final String status;
-  final String createdAt;
-  final String updatedAt;
-  final int comicCount;
-  final String contentType;
-
-  const ComicGroup({
-    required this.id,
-    required this.name,
-    this.coverUrl = '',
-    this.sortOrder = 0,
-    this.author = '',
-    this.description = '',
-    this.tags = '',
-    this.year,
-    this.publisher = '',
-    this.language = '',
-    this.genre = '',
-    this.status = '',
-    this.createdAt = '',
-    this.updatedAt = '',
-    this.comicCount = 0,
-    this.contentType = '',
-  });
-
-  factory ComicGroup.fromJson(Map<String, dynamic> json) {
-    return ComicGroup(
-      id: _asInt(json['id']),
-      name: json['name']?.toString() ?? '',
-      coverUrl: json['coverUrl']?.toString() ?? '',
-      sortOrder: _asInt(json['sortOrder']),
-      author: json['author']?.toString() ?? '',
-      description: json['description']?.toString() ?? '',
-      tags: json['tags']?.toString() ?? '',
-      year: json['year'] == null ? null : _asInt(json['year']),
-      publisher: json['publisher']?.toString() ?? '',
-      language: json['language']?.toString() ?? '',
-      genre: json['genre']?.toString() ?? '',
-      status: json['status']?.toString() ?? '',
-      createdAt: json['createdAt']?.toString() ?? '',
-      updatedAt: json['updatedAt']?.toString() ?? '',
-      comicCount: _asInt(json['comicCount']),
-      contentType: json['contentType']?.toString() ?? '',
-    );
-  }
 }
 
 /// 阅读统计
@@ -502,13 +435,11 @@ class RecentSession {
     return RecentSession(
       id: _asInt(json['id']),
       comicId: json['comicId']?.toString() ?? '',
-      comicTitle:
-          (json['comicTitle'] ?? json['title'])?.toString() ?? '',
+      comicTitle: (json['comicTitle'] ?? json['title'])?.toString() ?? '',
       startPage: _asInt(json['startPage']),
       endPage: _asInt(json['endPage']),
       duration: _asInt(json['duration']),
-      startedAt:
-          (json['startedAt'] ?? json['createdAt'])?.toString() ?? '',
+      startedAt: (json['startedAt'] ?? json['createdAt'])?.toString() ?? '',
     );
   }
 }

@@ -106,7 +106,8 @@ class ComicListNotifier extends StateNotifier<ComicListState> {
   /// 加载漫画列表（刷新/首次加载）
   Future<void> loadComics({ComicListParams? params}) async {
     final p = params ?? state.params;
-    state = state.copyWith(isLoading: true, params: p.copyWith(page: 1), clearError: true);
+    state = state.copyWith(
+        isLoading: true, params: p.copyWith(page: 1), clearError: true);
     try {
       final api = _ref.read(comicApiProvider);
       final data = await api.listComics(
@@ -229,26 +230,6 @@ final statsProvider = FutureProvider<ReadingStats>((ref) async {
   final api = ref.read(comicApiProvider);
   final data = await api.getStats();
   return ReadingStats.fromJson(data);
-});
-
-/// 分组列表 Provider
-final groupsProvider = FutureProvider<List<ComicGroup>>((ref) async {
-  final api = ref.read(comicApiProvider);
-  final data = await api.getGroups();
-  return data.map((e) => ComicGroup.fromJson(e)).toList();
-});
-
-/// 已分组漫画 ID 映射 Provider（漫画ID -> 所属分组ID列表）
-final groupedComicMapProvider = FutureProvider<Map<String, List<int>>>((ref) async {
-  final api = ref.read(comicApiProvider);
-  return await api.getGroupedComicMap();
-});
-
-/// 按内容类型过滤的分组列表 Provider
-final groupsByTypeProvider = FutureProvider.family<List<ComicGroup>, String?>((ref, contentType) async {
-  final api = ref.read(comicApiProvider);
-  final data = await api.getGroups(contentType: contentType);
-  return data.map((e) => ComicGroup.fromJson(e)).toList();
 });
 
 /// 视图模式枚举

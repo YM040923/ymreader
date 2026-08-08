@@ -39,76 +39,78 @@ class SettingsScreen extends ConsumerWidget {
             SlideAndFade(
               delay: const Duration(milliseconds: 100),
               child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    cs.primary,
-                    cs.primary.withOpacity(0.75),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      cs.primary,
+                      cs.primary.withOpacity(0.75),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: cs.primary.withOpacity(0.2),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
                   ],
                 ),
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: cs.primary.withOpacity(0.2),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  // 头像
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Center(
-                      child: Text(
-                        user.nickname.isNotEmpty
-                            ? user.nickname[0].toUpperCase()
-                            : user.username[0].toUpperCase(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                        ),
+                child: Row(
+                  children: [
+                    // 头像
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user.nickname.isNotEmpty ? user.nickname : user.username,
+                      child: Center(
+                        child: Text(
+                          user.nickname.isNotEmpty
+                              ? user.nickname[0].toUpperCase()
+                              : user.username[0].toUpperCase(),
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 18,
+                            fontSize: 22,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '@${user.username} · ${user.isAdmin ? l10n.admin : l10n.user}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.75),
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.nickname.isNotEmpty
+                                ? user.nickname
+                                : user.username,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '@${user.username} · ${user.isAdmin ? l10n.admin : l10n.user}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.75),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
 
           const SizedBox(height: 24),
 
@@ -165,13 +167,6 @@ class SettingsScreen extends ConsumerWidget {
                   title: '漫画库默认阅读设置',
                   subtitle: '分别设置每个漫画库的默认阅读模式',
                   onTap: () => context.push('/library-reader-defaults'),
-                ),
-                _SettingsTile(
-                  icon: Icons.collections_bookmark_rounded,
-                  iconColor: cs.tertiary,
-                  title: '合集管理',
-                  subtitle: '管理系列分组与合集',
-                  onTap: () => context.push('/collections'),
                 ),
                 const _OfflineCacheTile(),
                 if (isAdmin)
@@ -373,7 +368,8 @@ class _SectionHeader extends StatelessWidget {
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+          color:
+              Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
           letterSpacing: 0.3,
         ),
       ),
@@ -612,7 +608,8 @@ class _ServerHistorySheetState extends ConsumerState<_ServerHistorySheet> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.dns_outlined,
-                                  size: 40, color: cs.onSurfaceVariant.withOpacity(0.3)),
+                                  size: 40,
+                                  color: cs.onSurfaceVariant.withOpacity(0.3)),
                               const SizedBox(height: 12),
                               Text(
                                 '暂无服务器记录',
@@ -671,9 +668,7 @@ class _ServerRecordTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Material(
-        color: isCurrent
-            ? cs.primary.withOpacity(0.06)
-            : Colors.transparent,
+        color: isCurrent ? cs.primary.withOpacity(0.06) : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -693,7 +688,9 @@ class _ServerRecordTile extends StatelessWidget {
                   ),
                   child: Icon(
                     isCurrent ? Icons.check_rounded : Icons.dns_outlined,
-                    color: isCurrent ? cs.primary : cs.onSurfaceVariant.withOpacity(0.5),
+                    color: isCurrent
+                        ? cs.primary
+                        : cs.onSurfaceVariant.withOpacity(0.5),
                     size: 18,
                   ),
                 ),
@@ -705,7 +702,8 @@ class _ServerRecordTile extends StatelessWidget {
                       Text(
                         record.url,
                         style: TextStyle(
-                          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500,
+                          fontWeight:
+                              isCurrent ? FontWeight.w600 : FontWeight.w500,
                           color: isCurrent ? cs.primary : cs.onSurface,
                           fontSize: 14,
                         ),
@@ -714,7 +712,8 @@ class _ServerRecordTile extends StatelessWidget {
                       Text(
                         [
                           if (record.username != null) '@${record.username}',
-                          if (record.nickname != null && record.nickname!.isNotEmpty)
+                          if (record.nickname != null &&
+                              record.nickname!.isNotEmpty)
                             record.nickname!,
                           _formatTime(record.lastUsed),
                         ].join(' · '),
@@ -728,7 +727,8 @@ class _ServerRecordTile extends StatelessWidget {
                 ),
                 if (isCurrent)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: cs.primary.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(6),
