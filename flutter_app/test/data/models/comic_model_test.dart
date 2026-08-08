@@ -103,20 +103,14 @@ void main() {
     });
   });
 
-  test('parses user AI permission and group content type', () {
+  test('parses user AI permission', () {
     final user = AuthUser.fromJson({
       'id': 'user-1',
       'username': 'reader',
       'role': 'user',
       'aiEnabled': true,
     });
-    final group = ComicGroup.fromJson({
-      'id': 7,
-      'name': 'Collection',
-      'contentType': 'novel',
-    });
 
     expect(user.canUseAI, isTrue);
-    expect(group.contentType, 'novel');
   });
 }

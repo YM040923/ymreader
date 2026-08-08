@@ -212,7 +212,7 @@ class SettingsScreen extends ConsumerWidget {
                   icon: Icons.auto_awesome_rounded,
                   iconColor: Colors.deepPurple,
                   title: '扫描规则',
-                  subtitle: 'AI 智能识别 + 虚拟归类',
+                  subtitle: 'Work 级 AI 识别 + 目录整理',
                   onTap: () => context.push('/scan-rules'),
                 ),
                 _SettingsTile(
