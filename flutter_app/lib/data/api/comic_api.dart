@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'api_client.dart';
+import '../models/folder_stats.dart';
 
 /// 漫画 API
 class ComicApi {
@@ -53,7 +54,8 @@ class ComicApi {
   }
 
   /// 获取小说章节内容
-  Future<Map<String, dynamic>> getChapterContent(String comicId, int chapterIndex) async {
+  Future<Map<String, dynamic>> getChapterContent(
+      String comicId, int chapterIndex) async {
     final res = await _dio.get('/comics/$comicId/chapter/$chapterIndex');
     return res.data;
   }
@@ -76,8 +78,7 @@ class ComicApi {
 
   /// 设置阅读状态
   Future<void> setReadingStatus(String comicId, String status) async {
-    await _dio.put('/comics/$comicId/reading-status',
-        data: {'status': status});
+    await _dio.put('/comics/$comicId/reading-status', data: {'status': status});
   }
 
   /// 获取标签列表
@@ -163,7 +164,8 @@ class ComicApi {
   }
 
   /// 获取分组详情
-  Future<Map<String, dynamic>> getGroupDetail(int groupId, {String? contentType}) async {
+  Future<Map<String, dynamic>> getGroupDetail(int groupId,
+      {String? contentType}) async {
     final params = <String, dynamic>{};
     if (contentType != null && contentType.isNotEmpty) {
       params['contentType'] = contentType;
@@ -173,7 +175,8 @@ class ComicApi {
   }
 
   /// 创建分组
-  Future<Map<String, dynamic>> createGroup(String name, {List<String>? comicIds}) async {
+  Future<Map<String, dynamic>> createGroup(String name,
+      {List<String>? comicIds}) async {
     final res = await _dio.post('/groups', data: {
       'name': name,
       'comicIds': comicIds ?? [],
@@ -218,9 +221,9 @@ class ComicApi {
     final res = await _dio.get('/groups/comic-map');
     final map = res.data['map'] as Map<String, dynamic>? ?? {};
     return map.map((key, value) => MapEntry(
-      key,
-      (value as List<dynamic>).map((e) => e as int).toList(),
-    ));
+          key,
+          (value as List<dynamic>).map((e) => e as int).toList(),
+        ));
   }
 
   /// 自动检测可合并的系列
@@ -232,7 +235,9 @@ class ComicApi {
   }
 
   /// 批量创建分组
-  Future<Map<String, dynamic>> batchCreateGroups(List<Map<String, dynamic>> groups, {bool autoInherit = false}) async {
+  Future<Map<String, dynamic>> batchCreateGroups(
+      List<Map<String, dynamic>> groups,
+      {bool autoInherit = false}) async {
     final res = await _dio.post('/groups/batch-create', data: {
       'groups': groups,
       'autoInherit': autoInherit,
@@ -249,7 +254,8 @@ class ComicApi {
   }
 
   /// 合并分组
-  Future<Map<String, dynamic>> mergeGroups(List<int> groupIds, String newName) async {
+  Future<Map<String, dynamic>> mergeGroups(
+      List<int> groupIds, String newName) async {
     final res = await _dio.post('/groups/merge', data: {
       'groupIds': groupIds,
       'newName': newName,
@@ -322,13 +328,15 @@ class ComicApi {
   }
 
   /// 更新扫描规则配置
-  Future<Map<String, dynamic>> updateScanRules(Map<String, dynamic> rules) async {
+  Future<Map<String, dynamic>> updateScanRules(
+      Map<String, dynamic> rules) async {
     final res = await _dio.put('/scan-rules', data: rules);
     return res.data;
   }
 
   /// 执行扫描规则（预览或正式）
-  Future<Map<String, dynamic>> applyScanRules({bool dryRun = false, String? scope}) async {
+  Future<Map<String, dynamic>> applyScanRules(
+      {bool dryRun = false, String? scope}) async {
     final url = dryRun ? '/scan-rules/preview' : '/scan-rules/apply';
     final data = <String, dynamic>{};
     if (scope != null) data['scope'] = scope;
@@ -343,7 +351,8 @@ class ComicApi {
   }
 
   /// 获取扫描规则操作日志
-  Future<Map<String, dynamic>> getScanRulesLogs({String? batchId, int limit = 100}) async {
+  Future<Map<String, dynamic>> getScanRulesLogs(
+      {String? batchId, int limit = 100}) async {
     final params = <String, dynamic>{'limit': limit};
     if (batchId != null) params['batchId'] = batchId;
     final res = await _dio.get('/scan-rules/logs', queryParameters: params);
@@ -351,7 +360,8 @@ class ComicApi {
   }
 
   /// 还原标题
-  Future<Map<String, dynamic>> restoreTitles({bool dryRun = true, bool onlyDuplicates = true}) async {
+  Future<Map<String, dynamic>> restoreTitles(
+      {bool dryRun = true, bool onlyDuplicates = true}) async {
     final res = await _dio.post('/scan-rules/restore-titles', data: {
       'dryRun': dryRun,
       'onlyDuplicates': onlyDuplicates,
@@ -364,9 +374,24 @@ class ComicApi {
   // ============================================================
 
   /// 获取文件夹树形统计
-  Future<Map<String, dynamic>> getFolderTreeStats() async {
-    final res = await _dio.get('/stats/folder-tree');
-    return res.data;
+  Future<FolderStatsResponse> getFolderTreeStats({
+    FolderStatsScope scope = FolderStatsScope.work,
+  }) async {
+    final res = await _dio.get(
+      '/stats/folder-tree',
+      queryParameters: {'scope': scope.name},
+    );
+    return FolderStatsResponse.fromJson(res.data);
+  }
+
+  Future<FileStatsSummary> getFileStats({
+    FolderStatsScope scope = FolderStatsScope.work,
+  }) async {
+    final res = await _dio.get(
+      '/stats/files',
+      queryParameters: {'scope': scope.name},
+    );
+    return FileStatsSummary.fromJson(res.data);
   }
 
   // ============================================================
@@ -374,7 +399,8 @@ class ComicApi {
   // ============================================================
 
   /// 更新站点设置
-  Future<Map<String, dynamic>> updateSiteSettings(Map<String, dynamic> settings) async {
+  Future<Map<String, dynamic>> updateSiteSettings(
+      Map<String, dynamic> settings) async {
     final res = await _dio.put('/site-settings', data: settings);
     return res.data;
   }
