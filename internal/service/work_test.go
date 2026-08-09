@@ -476,6 +476,65 @@ func TestPhysicalComicIDsDeduplicatesInternalUnits(t *testing.T) {
 	}
 }
 
+func TestApplyUserWorkProgressOverridesDerivedContinueCursor(t *testing.T) {
+	readAt := "2026-08-09T07:30:00Z"
+	works := []Work{{
+		ID: "work-progress", ContinueComicID: "comic-old", ContinueUnitID: "unit-old",
+		ContinuePage: 999,
+		Units: []WorkUnit{
+			{ID: "unit-old", WorkID: "work-progress", ComicID: "comic-old", StartPage: 0, PageCount: 20},
+			{ID: "unit-new", WorkID: "work-progress", ComicID: "comic-new", StartPage: 40, PageCount: 10},
+		},
+	}}
+	ApplyUserWorkProgress(works, map[string]store.UserWorkProgress{
+		"work-progress": {
+			WorkID: "work-progress", UnitID: "unit-new", ComicID: "comic-new",
+			RelativePage: 3, AbsolutePage: 43, UpdatedAt: mustParseWorkTestTime(t, readAt),
+		},
+	})
+
+	work := works[0]
+	if work.ContinueComicID != "comic-new" || work.ContinueUnitID != "unit-new" ||
+		work.ContinuePage != 43 || work.LastReadAt == nil || *work.LastReadAt != readAt {
+		t.Fatalf("explicit Work cursor not projected: %#v", work)
+	}
+	if work.Units[1].LastReadPage != 3 || work.Units[1].LastReadAt == nil ||
+		*work.Units[1].LastReadAt != readAt {
+		t.Fatalf("explicit Unit cursor not projected: %#v", work.Units[1])
+	}
+}
+
+func TestApplyUserWorkProgressAllowsRollbackToEarlierUnit(t *testing.T) {
+	works := []Work{{
+		ID: "work-progress", ContinueComicID: "comic-late", ContinueUnitID: "unit-late",
+		ContinuePage: 120,
+		Units: []WorkUnit{
+			{ID: "unit-early", WorkID: "work-progress", ComicID: "comic-early", StartPage: 0, PageCount: 20},
+			{ID: "unit-late", WorkID: "work-progress", ComicID: "comic-late", StartPage: 100, PageCount: 20},
+		},
+	}}
+	ApplyUserWorkProgress(works, map[string]store.UserWorkProgress{
+		"work-progress": {
+			WorkID: "work-progress", UnitID: "unit-early", ComicID: "comic-early",
+			RelativePage: 2, AbsolutePage: 2, UpdatedAt: mustParseWorkTestTime(t, "2026-08-09T07:31:00Z"),
+		},
+	})
+
+	if works[0].ContinueUnitID != "unit-early" || works[0].ContinueComicID != "comic-early" ||
+		works[0].ContinuePage != 2 {
+		t.Fatalf("rollback cursor was ignored: %#v", works[0])
+	}
+}
+
+func mustParseWorkTestTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
 func TestProbeArchiveChapterUnitsAtArchiveRoot(t *testing.T) {
 	fp := filepath.Join(t.TempDir(), "败犬女主太多了.zip")
 	createTestZip(t, fp, []string{

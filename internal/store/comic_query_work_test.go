@@ -196,6 +196,29 @@ func TestGetWorkSourceFingerprintChangesWithLogicalWorkMetadataAndRelations(t *t
 	}
 }
 
+func TestGetWorkSourceFingerprintChangesWithExplicitWorkProgress(t *testing.T) {
+	setupWorkProgressTest(t)
+
+	before, err := GetWorkSourceFingerprint("progress-user", []string{"progress-library"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, applied, err := upsertWorkProgressForTest(t, WorkProgressUpdate{
+		UserID: "progress-user", WorkID: "work-progress", UnitID: "unit-1",
+		ComicID: "progress-comic", RelativePage: 3, UnitStartPage: 20, UnitPageCount: 10,
+		ClientSessionID: "fingerprint-session", Sequence: 1,
+	}); err != nil || !applied {
+		t.Fatalf("write explicit cursor = applied:%v err:%v", applied, err)
+	}
+	after, err := GetWorkSourceFingerprint("progress-user", []string{"progress-library"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("explicit Work progress did not invalidate the Work catalog fingerprint")
+	}
+}
+
 func TestGetWorkSourceFingerprintHashesOrderedTagAndCategoryContent(t *testing.T) {
 	setupTestDB(t)
 	library := &model.Library{

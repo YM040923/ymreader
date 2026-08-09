@@ -132,6 +132,36 @@ func GetUserWorkProgress(userID, workID string) (*UserWorkProgress, error) {
 	return &progress, err
 }
 
+func GetUserWorkProgresses(userID string, workIDs []string) (map[string]UserWorkProgress, error) {
+	result := make(map[string]UserWorkProgress, len(workIDs))
+	if strings.TrimSpace(userID) == "" || len(workIDs) == 0 {
+		return result, nil
+	}
+	args := make([]any, 0, len(workIDs)+1)
+	args = append(args, userID)
+	for _, workID := range workIDs {
+		args = append(args, workID)
+	}
+	rows, err := db.Query(`
+		SELECT "userId", "workId", "unitId", "comicId", "relativePage",
+		       "absolutePage", "updatedAt", "clientSessionId", "lastSequence"
+		FROM "UserWorkProgress"
+		WHERE "userId" = ? AND "workId" IN (`+placeholders(len(workIDs))+`)
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		progress, scanErr := getUserWorkProgressRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result[progress.WorkID] = progress
+	}
+	return result, rows.Err()
+}
+
 func getUserWorkProgressTx(tx *sql.Tx, userID, workID string) (UserWorkProgress, error) {
 	return getUserWorkProgressRow(tx.QueryRow(`
 		SELECT "userId", "workId", "unitId", "comicId", "relativePage",

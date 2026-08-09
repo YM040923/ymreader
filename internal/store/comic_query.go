@@ -305,8 +305,41 @@ func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryI
 		}
 	}
 
+	progressCount, progressShape, progressUpdated := int64(0), int64(0), ""
+	if userID != "" && workTableExists("UserWorkProgress") && workTableExists("LogicalWork") {
+		progressConditions := []string{`p."userId" = ?`}
+		progressArgs := []interface{}{userID}
+		if filterLibraryIDs {
+			if len(libraryIDs) == 0 {
+				progressConditions = append(progressConditions, "1=0")
+			} else {
+				progressPlaceholders := make([]string, len(libraryIDs))
+				for index, id := range libraryIDs {
+					progressPlaceholders[index] = "?"
+					progressArgs = append(progressArgs, id)
+				}
+				progressConditions = append(progressConditions,
+					fmt.Sprintf(`w."libraryId" IN (%s)`, strings.Join(progressPlaceholders, ",")))
+			}
+		}
+		if err := db.QueryRow(`
+			SELECT COUNT(*), COALESCE(MAX(CAST(p."updatedAt" AS TEXT)), ''),
+			       COALESCE(SUM(
+			         LENGTH(p."workId") + LENGTH(p."unitId") + LENGTH(p."comicId") +
+			         COALESCE(p."relativePage", 0) + COALESCE(p."absolutePage", 0) +
+			         COALESCE(p."lastSequence", 0)
+			       ), 0)
+			FROM "UserWorkProgress" p
+			JOIN "LogicalWork" w ON w."id" = p."workId"
+			WHERE `+strings.Join(progressConditions, " AND "),
+			progressArgs...,
+		).Scan(&progressCount, &progressUpdated, &progressShape); err != nil {
+			return "", err
+		}
+	}
+
 	return fmt.Sprintf(
-		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s|w:%d:%s:%d|wt:%s|wc:%s",
+		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s|w:%d:%s:%d|wt:%s|wc:%s|p:%d:%s:%d",
 		comicCount, comicUpdated, comicShape,
 		tagHash, categoryHash,
 		stateCount, stateUpdated, stateShape,
@@ -314,6 +347,7 @@ func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryI
 		seriesTagsHash,
 		logicalCount, logicalUpdated, logicalShape,
 		logicalTagsHash, logicalCategoriesHash,
+		progressCount, progressUpdated, progressShape,
 	), nil
 }
 

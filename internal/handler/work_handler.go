@@ -248,6 +248,11 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 		if overlayErr := service.ApplyPersistedLogicalWorks(works); overlayErr != nil {
 			return nil, overlayErr
 		}
+		progressByWork, progressErr := store.GetUserWorkProgresses(userID, workIDs)
+		if progressErr != nil {
+			return nil, progressErr
+		}
+		service.ApplyUserWorkProgress(works, progressByWork)
 		return works, nil
 	})
 }

@@ -625,6 +625,35 @@ func TestReadingActivityAcceptsAndReturnsCanonicalWorkCursor(t *testing.T) {
 		response.Progress.AbsolutePage != unit.StartPage+4 {
 		t.Fatalf("canonical response = %s", w.Body.String())
 	}
+	if _, err := store.DB().Exec(`
+		UPDATE "UserComicState"
+		SET "lastReadPage" = 1, "lastReadAt" = ?
+		WHERE "userId" = (SELECT "id" FROM "User" WHERE "username" = 'admin')
+		  AND "comicId" = ?
+	`, time.Now().UTC().Add(time.Minute), unit.ComicID); err != nil {
+		t.Fatalf("seed conflicting physical cursor: %v", err)
+	}
+
+	w = performAuthedRequest(r, "GET", "/api/works", nil, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reload works failed: %d %s", w.Code, w.Body.String())
+	}
+	var refreshed struct {
+		Works []struct {
+			ID              string `json:"id"`
+			ContinueComicID string `json:"continueComicId"`
+			ContinueUnitID  string `json:"continueUnitId"`
+			ContinuePage    int    `json:"continuePage"`
+		} `json:"works"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if len(refreshed.Works) != 1 || refreshed.Works[0].ContinueComicID != unit.ComicID ||
+		refreshed.Works[0].ContinueUnitID != unit.ID ||
+		refreshed.Works[0].ContinuePage != unit.StartPage+4 {
+		t.Fatalf("Work query did not use explicit cursor: %s", w.Body.String())
+	}
 
 	w = performAuthedRequest(r, "POST", "/api/reading/"+unit.ComicID+"/activity", map[string]interface{}{
 		"clientSessionId": "handler-invalid-unit",

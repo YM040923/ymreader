@@ -471,6 +471,47 @@ func ApplyWorkSortOrders(works []Work, orders map[string]int) {
 	}
 }
 
+// ApplyUserWorkProgress makes the explicit per-user Work cursor authoritative
+// over progress inferred from physical Comic rows.
+func ApplyUserWorkProgress(works []Work, progressByWork map[string]store.UserWorkProgress) {
+	for workIndex := range works {
+		work := &works[workIndex]
+		progress, ok := progressByWork[work.ID]
+		if !ok {
+			continue
+		}
+		unitIndex := -1
+		for index := range work.Units {
+			unit := work.Units[index]
+			if unit.ID == progress.UnitID && unit.ComicID == progress.ComicID {
+				unitIndex = index
+				break
+			}
+		}
+		if unitIndex < 0 {
+			continue
+		}
+		unit := &work.Units[unitIndex]
+		if progress.RelativePage < 0 || unit.PageCount <= 0 || progress.RelativePage >= unit.PageCount ||
+			progress.AbsolutePage != unit.StartPage+progress.RelativePage {
+			continue
+		}
+		readAt := progress.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		work.ContinueComicID = progress.ComicID
+		work.ContinueUnitID = progress.UnitID
+		work.ContinuePage = progress.AbsolutePage
+		work.LastReadAt = &readAt
+		if work.ReadingStatus == "" || work.ReadingStatus == "unread" {
+			work.ReadingStatus = "reading"
+		}
+		unit.LastReadPage = progress.RelativePage
+		unit.LastReadAt = &readAt
+		if unit.ReadingStatus == "" || unit.ReadingStatus == "unread" {
+			unit.ReadingStatus = "reading"
+		}
+	}
+}
+
 func aggregateWorkReadingStatus(sources []store.ComicListItem) string {
 	if len(sources) == 0 {
 		return "unread"
