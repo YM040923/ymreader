@@ -22,6 +22,9 @@ type readingActivityRequest struct {
 	Sequence        int    `json:"sequence"`
 	Finalize        bool   `json:"finalize"`
 	TrackProgress   *bool  `json:"trackProgress"`
+	WorkID          string `json:"workId"`
+	UnitID          string `json:"unitId"`
+	RelativePage    int    `json:"relativePage"`
 }
 
 // NewStatsHandler creates a new StatsHandler.
@@ -44,14 +47,60 @@ func (h *StatsHandler) RecordActivity(c *gin.Context) {
 	if body.TrackProgress != nil {
 		trackProgress = *body.TrackProgress
 	}
-	if err := store.RecordReadingActivity(
-		comicID, getUserID(c), body.ClientSessionID, body.Page, body.TotalPages,
-		body.ActiveSeconds, body.Sequence, body.Finalize, trackProgress,
-	); err != nil {
+
+	input := store.ReadingActivityInput{
+		ComicID: comicID, UserID: getUserID(c), ClientSessionID: body.ClientSessionID,
+		Page: body.Page, TotalPages: body.TotalPages, ActiveSeconds: body.ActiveSeconds,
+		Sequence: body.Sequence, Finalize: body.Finalize, TrackProgress: trackProgress,
+	}
+	if body.WorkID != "" || body.UnitID != "" {
+		if body.WorkID == "" || body.UnitID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "workId and unitId must be provided together"})
+			return
+		}
+		catalog, err := NewWorkHandler().loadWorkCatalog(c)
+		if err != nil {
+			writeWorkReadError(c, err)
+			return
+		}
+		work := catalog.ByID[body.WorkID]
+		if work == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Work not found"})
+			return
+		}
+		var unit *service.WorkUnit
+		for index := range work.Units {
+			if work.Units[index].ID == body.UnitID {
+				unit = &work.Units[index]
+				break
+			}
+		}
+		if unit == nil || unit.ComicID != comicID || body.RelativePage < 0 ||
+			unit.PageCount <= 0 || body.RelativePage >= unit.PageCount {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Work reading cursor"})
+			return
+		}
+		input.WorkID = work.ID
+		input.UnitID = unit.ID
+		input.RelativePage = body.RelativePage
+		input.UnitStartPage = unit.StartPage
+		input.UnitPageCount = unit.PageCount
+	}
+
+	result, err := store.RecordReadingActivityWithWork(input)
+	if err != nil {
+		if input.WorkID != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Work reading cursor"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record reading activity"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	response := gin.H{"success": true, "page": result.Page, "totalPages": result.TotalPages}
+	if result.WorkProgress != nil {
+		response["progress"] = result.WorkProgress
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // GET /api/stats — Get reading statistics

@@ -25,30 +25,95 @@ func placeholders(n int) string {
 // RecordReadingActivity 幂等记录阅读活动，并可在同一事务内同步用户进度。
 // activeSeconds 是客户端本次会话累计的有效阅读秒数，只取最大值，不做重复累加。
 func RecordReadingActivity(comicID, userID, clientSessionID string, page, totalPages, activeSeconds, sequence int, finalize, trackProgress bool) error {
-	if comicID == "" || userID == "" || clientSessionID == "" {
-		return fmt.Errorf("comicId, userId and clientSessionId are required")
+	_, err := RecordReadingActivityWithWork(ReadingActivityInput{
+		ComicID: comicID, UserID: userID, ClientSessionID: clientSessionID,
+		Page: page, TotalPages: totalPages, ActiveSeconds: activeSeconds,
+		Sequence: sequence, Finalize: finalize, TrackProgress: trackProgress,
+	})
+	return err
+}
+
+type ReadingActivityInput struct {
+	ComicID         string
+	UserID          string
+	ClientSessionID string
+	Page            int
+	TotalPages      int
+	ActiveSeconds   int
+	Sequence        int
+	Finalize        bool
+	TrackProgress   bool
+	WorkID          string
+	UnitID          string
+	RelativePage    int
+	UnitStartPage   int
+	UnitPageCount   int
+}
+
+type ReadingActivityResult struct {
+	Page         int               `json:"page"`
+	TotalPages   int               `json:"totalPages"`
+	WorkProgress *UserWorkProgress `json:"workProgress,omitempty"`
+}
+
+func (input ReadingActivityInput) hasWorkContext() bool {
+	return input.WorkID != "" || input.UnitID != ""
+}
+
+// RecordReadingActivityWithWork records session time, physical Comic state and
+// an explicit logical Work cursor in one transaction.
+func RecordReadingActivityWithWork(input ReadingActivityInput) (ReadingActivityResult, error) {
+	if input.ComicID == "" || input.UserID == "" || input.ClientSessionID == "" {
+		return ReadingActivityResult{}, fmt.Errorf("comicId, userId and clientSessionId are required")
 	}
-	if activeSeconds < 0 {
-		activeSeconds = 0
+	if input.ActiveSeconds < 0 {
+		input.ActiveSeconds = 0
 	}
-	if sequence < 0 {
-		sequence = 0
+	if input.Sequence < 0 {
+		input.Sequence = 0
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return ReadingActivityResult{}, err
 	}
 	defer tx.Rollback()
 
 	var pageCount int
-	if err := tx.QueryRow(`SELECT "pageCount" FROM "Comic" WHERE "id" = ?`, comicID).Scan(&pageCount); err != nil {
-		return err
+	if err := tx.QueryRow(`SELECT "pageCount" FROM "Comic" WHERE "id" = ?`, input.ComicID).Scan(&pageCount); err != nil {
+		return ReadingActivityResult{}, err
 	}
 	if pageCount > 0 {
-		totalPages = pageCount
+		input.TotalPages = pageCount
 	}
-	page = normalizePageIndex(page, totalPages)
+
+	result := ReadingActivityResult{TotalPages: input.TotalPages}
+	if input.hasWorkContext() {
+		if input.WorkID == "" || input.UnitID == "" {
+			return ReadingActivityResult{}, fmt.Errorf("workId and unitId must be provided together")
+		}
+		update := WorkProgressUpdate{
+			UserID: input.UserID, WorkID: input.WorkID, UnitID: input.UnitID,
+			ComicID: input.ComicID, RelativePage: input.RelativePage,
+			UnitStartPage: input.UnitStartPage, UnitPageCount: input.UnitPageCount,
+			ClientSessionID: input.ClientSessionID, Sequence: input.Sequence,
+		}
+		if input.TrackProgress {
+			progress, _, progressErr := UpsertUserWorkProgressTx(tx, update)
+			if progressErr != nil {
+				return ReadingActivityResult{}, progressErr
+			}
+			result.WorkProgress = &progress
+			input.Page = progress.AbsolutePage
+		} else {
+			if input.UnitStartPage < 0 || input.UnitPageCount <= 0 || input.RelativePage < 0 || input.RelativePage >= input.UnitPageCount {
+				return ReadingActivityResult{}, fmt.Errorf("relative page is outside the Work unit")
+			}
+			input.Page = input.UnitStartPage + input.RelativePage
+		}
+	}
+	input.Page = normalizePageIndex(input.Page, input.TotalPages)
+	result.Page = input.Page
 	now := time.Now().UTC()
 
 	var sessionID int64
@@ -57,64 +122,68 @@ func RecordReadingActivity(comicID, userID, clientSessionID string, page, totalP
 	err = tx.QueryRow(`
 		SELECT "id", "comicId", "duration", "lastSequence" FROM "ReadingSession"
 		WHERE "userId" = ? AND "clientSessionId" = ?
-	`, userID, clientSessionID).Scan(&sessionID, &storedComicID, &storedDuration, &storedSequence)
+	`, input.UserID, input.ClientSessionID).Scan(&sessionID, &storedComicID, &storedDuration, &storedSequence)
 	if err == sql.ErrNoRows {
-		if trackProgress {
-			if err := updateReadingProgressTx(tx, comicID, userID, page, totalPages, now); err != nil {
-				return err
+		if input.TrackProgress {
+			if err := updateReadingProgressTx(tx, input.ComicID, input.UserID, input.Page, input.TotalPages, now); err != nil {
+				return ReadingActivityResult{}, err
 			}
 		}
 		var endedAt interface{}
-		if finalize {
+		if input.Finalize {
 			endedAt = now
 		}
 		_, err = tx.Exec(`
 			INSERT INTO "ReadingSession"
 				("comicId", "userId", "clientSessionId", "startedAt", "lastActiveAt", "endedAt", "startPage", "endPage", "duration", "lastSequence")
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, comicID, userID, clientSessionID, now, now, endedAt, page, page, activeSeconds, sequence)
+		`, input.ComicID, input.UserID, input.ClientSessionID, now, now, endedAt,
+			input.Page, input.Page, input.ActiveSeconds, input.Sequence)
 		if err != nil {
-			return err
+			return ReadingActivityResult{}, err
 		}
-		if activeSeconds > 0 {
-			if err := incrementReadingTimeTx(tx, comicID, userID, activeSeconds); err != nil {
-				return err
+		if input.ActiveSeconds > 0 {
+			if err := incrementReadingTimeTx(tx, input.ComicID, input.UserID, input.ActiveSeconds); err != nil {
+				return ReadingActivityResult{}, err
 			}
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return ReadingActivityResult{}, err
+		}
+		return result, nil
 	}
 	if err != nil {
-		return err
+		return ReadingActivityResult{}, err
 	}
-	if storedComicID != comicID {
-		return fmt.Errorf("clientSessionId belongs to another comic")
+	if storedComicID != input.ComicID {
+		return ReadingActivityResult{}, fmt.Errorf("clientSessionId belongs to another comic")
 	}
-	isCurrent := sequence > storedSequence
-	if trackProgress && isCurrent {
-		if err := updateReadingProgressTx(tx, comicID, userID, page, totalPages, now); err != nil {
-			return err
+	isCurrent := input.Sequence > storedSequence
+	if input.TrackProgress && isCurrent {
+		if err := updateReadingProgressTx(tx, input.ComicID, input.UserID, input.Page, input.TotalPages, now); err != nil {
+			return ReadingActivityResult{}, err
 		}
 	}
 
-	newDuration := activeSeconds
+	newDuration := input.ActiveSeconds
 	if storedDuration > newDuration {
 		newDuration = storedDuration
 	}
 	if isCurrent {
-		if finalize {
+		if input.Finalize {
 			_, err = tx.Exec(`
 				UPDATE "ReadingSession"
 				SET "endPage" = ?, "duration" = ?, "lastActiveAt" = ?, "lastSequence" = ?, "endedAt" = COALESCE("endedAt", ?)
 				WHERE "id" = ?
-			`, page, newDuration, now, sequence, now, sessionID)
+			`, input.Page, newDuration, now, input.Sequence, now, sessionID)
 		} else {
 			_, err = tx.Exec(`
 				UPDATE "ReadingSession"
 				SET "endPage" = ?, "duration" = ?, "lastActiveAt" = ?, "lastSequence" = ?
 				WHERE "id" = ?
-			`, page, newDuration, now, sequence, sessionID)
+			`, input.Page, newDuration, now, input.Sequence, sessionID)
 		}
-	} else if finalize {
+	} else if input.Finalize {
 		_, err = tx.Exec(`
 			UPDATE "ReadingSession"
 			SET "duration" = ?, "lastActiveAt" = ?, "endedAt" = COALESCE("endedAt", ?)
@@ -124,14 +193,17 @@ func RecordReadingActivity(comicID, userID, clientSessionID string, page, totalP
 		_, err = tx.Exec(`UPDATE "ReadingSession" SET "duration" = ?, "lastActiveAt" = ? WHERE "id" = ?`, newDuration, now, sessionID)
 	}
 	if err != nil {
-		return err
+		return ReadingActivityResult{}, err
 	}
 	if delta := newDuration - storedDuration; delta > 0 {
-		if err := incrementReadingTimeTx(tx, comicID, userID, delta); err != nil {
-			return err
+		if err := incrementReadingTimeTx(tx, input.ComicID, input.UserID, delta); err != nil {
+			return ReadingActivityResult{}, err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return ReadingActivityResult{}, err
+	}
+	return result, nil
 }
 
 func incrementReadingTimeTx(tx *sql.Tx, comicID, userID string, seconds int) error {

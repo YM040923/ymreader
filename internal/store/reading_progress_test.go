@@ -177,6 +177,122 @@ func TestRecordReadingActivityIsCumulativeAndSequenceSafe(t *testing.T) {
 	}
 }
 
+func TestRecordReadingActivityUsesCanonicalWorkUnitPage(t *testing.T) {
+	setupReadingProgressTest(t)
+	createTestUser(t, "work-activity-user", "work-activity-user", "user")
+	if _, err := db.Exec(`
+		INSERT INTO "Library" ("id", "name", "type", "rootPath")
+		VALUES ('work-activity-library', 'Work Activity', 'comic', '/work-activity');
+		INSERT INTO "Comic" (
+			"id", "filename", "title", "pageCount", "libraryId", "relativePath"
+		) VALUES (
+			'work-activity-comic', '作品.zip', '作品', 200,
+			'work-activity-library', '作品.zip'
+		);
+		INSERT INTO "LogicalWork" ("id", "libraryId", "rootPath", "title", "sortTitle")
+		VALUES ('work-activity', 'work-activity-library', '作品.zip', '作品', '作品');
+	`); err != nil {
+		t.Fatalf("seed work activity: %v", err)
+	}
+
+	result, err := RecordReadingActivityWithWork(ReadingActivityInput{
+		ComicID:         "work-activity-comic",
+		UserID:          "work-activity-user",
+		ClientSessionID: "work-activity-session",
+		Page:            2, // 客户端错误地把话内页当成绝对页；服务端不得信任。
+		TotalPages:      10,
+		ActiveSeconds:   15,
+		Sequence:        1,
+		TrackProgress:   true,
+		WorkID:          "work-activity",
+		UnitID:          "unit-21",
+		RelativePage:    2,
+		UnitStartPage:   120,
+		UnitPageCount:   10,
+	})
+	if err != nil {
+		t.Fatalf("RecordReadingActivityWithWork failed: %v", err)
+	}
+	if result.WorkProgress == nil || result.WorkProgress.AbsolutePage != 122 ||
+		result.WorkProgress.RelativePage != 2 {
+		t.Fatalf("canonical result = %#v", result)
+	}
+
+	var comicPage, userPage, sessionPage int
+	if err := db.QueryRow(`SELECT "lastReadPage" FROM "Comic" WHERE "id" = ?`, "work-activity-comic").Scan(&comicPage); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT "lastReadPage" FROM "UserComicState" WHERE "userId" = ? AND "comicId" = ?`,
+		"work-activity-user", "work-activity-comic").Scan(&userPage); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT "endPage" FROM "ReadingSession" WHERE "userId" = ? AND "clientSessionId" = ?`,
+		"work-activity-user", "work-activity-session").Scan(&sessionPage); err != nil {
+		t.Fatal(err)
+	}
+	if comicPage != 122 || userPage != 122 || sessionPage != 122 {
+		t.Fatalf("canonical pages = comic:%d user:%d session:%d, want 122", comicPage, userPage, sessionPage)
+	}
+}
+
+func TestRecordReadingActivitySwitchesInternalUnitsWithoutRelativePageCorruption(t *testing.T) {
+	setupReadingProgressTest(t)
+	createTestUser(t, "switch-unit-user", "switch-unit-user", "user")
+	if _, err := db.Exec(`
+		INSERT INTO "Library" ("id", "name", "type", "rootPath")
+		VALUES ('switch-unit-library', 'Switch Unit', 'comic', '/switch-unit');
+		INSERT INTO "Comic" (
+			"id", "filename", "title", "pageCount", "libraryId", "relativePath"
+		) VALUES (
+			'switch-unit-comic', '长篇.zip', '长篇', 1500,
+			'switch-unit-library', '长篇.zip'
+		);
+		INSERT INTO "LogicalWork" ("id", "libraryId", "rootPath", "title", "sortTitle")
+		VALUES ('switch-unit-work', 'switch-unit-library', '长篇.zip', '长篇', '长篇');
+	`); err != nil {
+		t.Fatalf("seed switch-unit activity: %v", err)
+	}
+
+	base := ReadingActivityInput{
+		ComicID: "switch-unit-comic", UserID: "switch-unit-user",
+		ClientSessionID: "switch-unit-session", TrackProgress: true,
+		WorkID: "switch-unit-work", UnitPageCount: 20,
+	}
+	first := base
+	first.Sequence = 1
+	first.Page = 1308
+	first.UnitID = "unit-20"
+	first.RelativePage = 8
+	first.UnitStartPage = 1300
+	if _, err := RecordReadingActivityWithWork(first); err != nil {
+		t.Fatalf("record unit 20: %v", err)
+	}
+
+	second := base
+	second.Sequence = 2
+	second.Page = 3
+	second.UnitID = "unit-21"
+	second.RelativePage = 3
+	second.UnitStartPage = 1320
+	result, err := RecordReadingActivityWithWork(second)
+	if err != nil {
+		t.Fatalf("record unit 21: %v", err)
+	}
+	if result.WorkProgress == nil || result.WorkProgress.UnitID != "unit-21" ||
+		result.WorkProgress.AbsolutePage != 1323 {
+		t.Fatalf("unit switch result = %#v", result.WorkProgress)
+	}
+
+	var page int
+	if err := db.QueryRow(`SELECT "lastReadPage" FROM "UserComicState" WHERE "userId" = ? AND "comicId" = ?`,
+		"switch-unit-user", "switch-unit-comic").Scan(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page != 1323 {
+		t.Fatalf("unit switch stored page = %d, want 1323", page)
+	}
+}
+
 func TestReadingStatsHandleMixedSQLiteTimestampFormats(t *testing.T) {
 	setupReadingProgressTest(t)
 	createTestUser(t, "mixed-time-user", "mixed-time-user", "user")

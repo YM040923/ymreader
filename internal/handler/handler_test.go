@@ -550,6 +550,97 @@ func TestStatsEndpoints(t *testing.T) {
 	}
 }
 
+func TestReadingActivityAcceptsAndReturnsCanonicalWorkCursor(t *testing.T) {
+	r := setupTestRouter(t)
+	cookie := registerAndLogin(t, r)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatalf("run Work migrations: %v", err)
+	}
+
+	if _, err := store.DB().Exec(`
+		INSERT INTO "Library" ("id", "name", "type", "rootPath", "defaultAccess")
+		VALUES ('activity-library', 'Activity', 'comic', '/activity', 'public');
+		INSERT INTO "Comic" (
+			"id", "filename", "title", "pageCount", "libraryId", "relativePath"
+		) VALUES
+			('activity-ch1', '作品/第001话.cbz', '第001话', 20, 'activity-library', '作品/第001话.cbz'),
+			('activity-ch2', '作品/第002话.cbz', '第002话', 30, 'activity-library', '作品/第002话.cbz');
+	`); err != nil {
+		t.Fatalf("seed activity Work: %v", err)
+	}
+
+	w := performAuthedRequest(r, "GET", "/api/works", nil, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("load works failed: %d %s", w.Code, w.Body.String())
+	}
+	var worksResponse struct {
+		Works []struct {
+			ID       string `json:"id"`
+			RootPath string `json:"rootPath"`
+			Units    []struct {
+				ID        string `json:"id"`
+				ComicID   string `json:"comicId"`
+				StartPage int    `json:"startPage"`
+				PageCount int    `json:"pageCount"`
+			} `json:"units"`
+		} `json:"works"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &worksResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(worksResponse.Works) != 1 || len(worksResponse.Works[0].Units) != 2 {
+		t.Fatalf("unexpected Work response: %s", w.Body.String())
+	}
+	work := worksResponse.Works[0]
+	unit := work.Units[1]
+	if _, err := store.DB().Exec(`
+		INSERT INTO "LogicalWork" ("id", "libraryId", "rootPath", "title", "sortTitle")
+		VALUES (?, 'activity-library', ?, '作品', '作品')
+	`, work.ID, work.RootPath); err != nil {
+		t.Fatalf("persist test Work: %v", err)
+	}
+
+	w = performAuthedRequest(r, "POST", "/api/reading/"+unit.ComicID+"/activity", map[string]interface{}{
+		"clientSessionId": "handler-work-session",
+		"page":            1,
+		"totalPages":      unit.PageCount,
+		"activeSeconds":   5,
+		"sequence":        1,
+		"workId":          work.ID,
+		"unitId":          unit.ID,
+		"relativePage":    4,
+	}, cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("record Work activity failed: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Success  bool                   `json:"success"`
+		Progress store.UserWorkProgress `json:"progress"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Success || response.Progress.WorkID != work.ID ||
+		response.Progress.UnitID != unit.ID || response.Progress.RelativePage != 4 ||
+		response.Progress.AbsolutePage != unit.StartPage+4 {
+		t.Fatalf("canonical response = %s", w.Body.String())
+	}
+
+	w = performAuthedRequest(r, "POST", "/api/reading/"+unit.ComicID+"/activity", map[string]interface{}{
+		"clientSessionId": "handler-invalid-unit",
+		"page":            1,
+		"totalPages":      unit.PageCount,
+		"activeSeconds":   5,
+		"sequence":        1,
+		"workId":          work.ID,
+		"unitId":          "unit-not-in-work",
+		"relativePage":    4,
+	}, cookie)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Work unit returned %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestSiteSettingsEndpoints(t *testing.T) {
 	r := setupTestRouter(t)
 
