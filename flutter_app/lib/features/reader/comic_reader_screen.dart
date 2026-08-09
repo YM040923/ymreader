@@ -75,7 +75,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     _pageController = PageController(initialPage: _currentPage);
     // 提前缓存 API 引用
     _api = ref.read(comicApiProvider);
-    _activity = ReadingActivityTracker(api: _api, comicId: widget.comicId);
+    final auth = ref.read(authProvider);
+    _activity = ReadingActivityTracker(
+      api: _api,
+      comicId: widget.comicId,
+      serverKey: auth.serverUrl,
+      userKey: auth.user?.id ?? 'anonymous',
+    );
     _continuousPositions.itemPositions.addListener(
       _onContinuousPositionChanged,
     );
@@ -279,7 +285,13 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       _switchingActivity = false;
       return;
     }
-    _activity = ReadingActivityTracker(api: _api, comicId: unit.comicId);
+    final auth = ref.read(authProvider);
+    _activity = ReadingActivityTracker(
+      api: _api,
+      comicId: unit.comicId,
+      serverKey: auth.serverUrl,
+      userKey: auth.user?.id ?? 'anonymous',
+    );
     _activity.start(
       unit.startPage + relativePage,
       _trackerTotalPages(unit),
