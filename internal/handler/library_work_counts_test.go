@@ -58,3 +58,54 @@ func TestAdminLibraryCountsExposeWorksUnitsAndFilesSeparately(t *testing.T) {
 	}
 	t.Fatal("test library missing from response")
 }
+
+func TestAccessibleLibraryCountsExposeLogicalWorks(t *testing.T) {
+	r := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	cookie := registerAndLogin(t, r)
+	createWorkTestLibrary(t, "accessible-counts-work", "Accessible counts", "private")
+	createWorkTestComics(t, "accessible-counts-work", []workTestComic{
+		{ID: "accessible-counts-1", Path: "作品/第001话.cbz", Title: "第001话"},
+		{ID: "accessible-counts-2", Path: "作品/第002话.cbz", Title: "第002话"},
+	})
+	result, err := store.GetAllComics(store.ComicListOptions{
+		ContentType: "comic", LibraryIDs: []string{"accessible-counts-work"}, FilterLibraryIDs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{})
+	if err := service.PersistAndApplyLogicalWorks(works); err != nil {
+		t.Fatal(err)
+	}
+
+	response := performAuthedRequest(r, http.MethodGet, "/api/libraries/accessible", nil, cookie)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Libraries []struct {
+			ID         string `json:"id"`
+			ComicCount int    `json:"comicCount"`
+			WorkCount  int    `json:"workCount"`
+			UnitCount  int    `json:"unitCount"`
+			FileCount  int    `json:"fileCount"`
+		} `json:"libraries"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, library := range payload.Libraries {
+		if library.ID != "accessible-counts-work" {
+			continue
+		}
+		if library.WorkCount != 1 || library.ComicCount != 1 ||
+			library.UnitCount != 2 || library.FileCount != 2 {
+			t.Fatalf("unexpected accessible counts: %#v", library)
+		}
+		return
+	}
+	t.Fatal("test library missing from accessible response")
+}

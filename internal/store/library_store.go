@@ -737,6 +737,9 @@ type AccessibleLibrary struct {
 	Enabled       bool   `json:"enabled"`
 	DefaultAccess string `json:"defaultAccess"`
 	ComicCount    int    `json:"comicCount"`
+	WorkCount     int    `json:"workCount"`
+	UnitCount     int    `json:"unitCount"`
+	FileCount     int    `json:"fileCount"`
 	CanManage     bool   `json:"canManage"`
 }
 
@@ -772,8 +775,23 @@ func GetAccessibleLibrariesWithCount(userID string) ([]AccessibleLibrary, error)
 		if err := rows.Scan(&lib.ID, &lib.Name, &lib.Type, &lib.Enabled, &lib.DefaultAccess); err != nil {
 			continue
 		}
-		count, _ := GetLibraryComicCount(lib.ID)
-		lib.ComicCount = count
+		workCount, unitCount, fileCount, countErr := GetLibraryWorkCounts(lib.ID)
+		if countErr != nil {
+			return nil, countErr
+		}
+		if lib.Type == "novel" {
+			workCount, countErr = GetLibraryComicCount(lib.ID)
+			if countErr != nil {
+				return nil, countErr
+			}
+			unitCount = workCount
+			fileCount = workCount
+		}
+		// comicCount remains a backward-compatible alias for visible Works.
+		lib.ComicCount = workCount
+		lib.WorkCount = workCount
+		lib.UnitCount = unitCount
+		lib.FileCount = fileCount
 		lib.CanManage, _ = UserCanManageLibrary(userID, lib.ID)
 		result = append(result, lib)
 	}
