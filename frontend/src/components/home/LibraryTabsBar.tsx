@@ -137,7 +137,7 @@ function VisibilityDialog({
                 <span className={`text-sm flex-1 text-left ${isHidden ? "text-muted" : "text-foreground"}`}>
                   {lib.name}
                 </span>
-                <span className="text-xs text-muted/70 tabular-nums">{lib.comicCount ?? 0}</span>
+                <span className="text-xs text-muted/70 tabular-nums">{lib.workCount ?? lib.comicCount ?? 0}</span>
                 {isHidden ? (
                   <EyeOff className="h-3.5 w-3.5 text-muted/50 shrink-0" />
                 ) : (
@@ -182,8 +182,8 @@ export function LibraryTabsBar({
   const [multiMode, setMultiMode] = useState(false);
   const [showVisibility, setShowVisibility] = useState(false);
   const totalCount = allLibraries
-    ? allLibraries.reduce((sum, l) => sum + (l.comicCount ?? 0), 0)
-    : libraries.reduce((sum, l) => sum + (l.comicCount ?? 0), 0);
+    ? allLibraries.reduce((sum, l) => sum + (l.workCount ?? l.comicCount ?? 0), 0)
+    : libraries.reduce((sum, l) => sum + (l.workCount ?? l.comicCount ?? 0), 0);
   const isAll = selectedIds.length === 0;
   const hasHidden = hiddenIds.length > 0;
   const canManage = !!onToggleVisible && !!allLibraries && allLibraries.length > 1;
@@ -272,7 +272,7 @@ export function LibraryTabsBar({
             <LibraryChip
               key={lib.id}
               label={lib.name}
-              count={lib.comicCount ?? 0}
+              count={lib.workCount ?? lib.comicCount ?? 0}
               icon={Icon}
               active={active}
               multiSelected={multiMode && selected}
