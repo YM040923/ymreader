@@ -79,3 +79,4 @@ coverage.out
 git-tmp*.txt
 run-log.txt
 scripts/__pycache__/
+.worktrees/
