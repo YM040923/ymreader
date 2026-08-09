@@ -57,6 +57,7 @@ import {
   shouldAutoAdvanceChapter,
   type ReadingAnchor,
 } from "@/lib/reader/continuousReading";
+import { buildWorkReadingContext } from "@/lib/reading-progress";
 
 // 跨卷导航信息
 type SeriesVolumeInfo = WorkUnit;
@@ -264,6 +265,11 @@ export default function ReaderPage() {
   const absoluteCurrentPage = activeUnit
     ? absolutePageForUnit(activeUnit, currentPage)
     : currentPage;
+  const workReadingContext = buildWorkReadingContext(
+    readerNavigation.workId,
+    activeUnit,
+    currentPage,
+  );
   const { finish: finishReadingActivity } = useReadingActivity({
     comicId,
     sessionKey: activeUnit?.id || comicId,
@@ -275,6 +281,9 @@ export default function ReaderPage() {
     page: absoluteCurrentPage,
     totalPages: physicalPages.length,
     trackProgress: readerOpts.progressTracking,
+    workId: workReadingContext?.workId,
+    unitId: workReadingContext?.unitId,
+    relativePage: workReadingContext?.relativePage,
   });
   const finishSessionRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {

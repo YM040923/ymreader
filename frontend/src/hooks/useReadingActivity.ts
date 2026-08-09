@@ -10,6 +10,9 @@ interface ReadingActivityOptions {
   page: number;
   totalPages: number;
   trackProgress?: boolean;
+  workId?: string;
+  unitId?: string;
+  relativePage?: number;
 }
 
 interface ActiveReadingSession {
@@ -22,6 +25,9 @@ interface ActiveReadingSession {
   sequence: number;
   trackProgress: boolean;
   finalized: boolean;
+  workId?: string;
+  unitId?: string;
+  relativePage?: number;
 }
 
 function createClientSessionId(): string {
@@ -41,6 +47,13 @@ function buildPayload(session: ActiveReadingSession, finalize: boolean): Reading
     sequence: session.sequence,
     finalize,
     trackProgress: session.trackProgress,
+    ...(session.workId && session.unitId && session.relativePage !== undefined
+      ? {
+          workId: session.workId,
+          unitId: session.unitId,
+          relativePage: session.relativePage,
+        }
+      : {}),
   };
 }
 
@@ -51,6 +64,9 @@ export function useReadingActivity({
   page,
   totalPages,
   trackProgress = true,
+  workId,
+  unitId,
+  relativePage,
 }: ReadingActivityOptions) {
   const hasPages = totalPages > 0;
   const sessionRef = useRef<ActiveReadingSession | null>(null);
@@ -59,6 +75,9 @@ export function useReadingActivity({
     session.page = page;
     session.totalPages = totalPages;
     session.trackProgress = trackProgress;
+    session.workId = workId;
+    session.unitId = unitId;
+    session.relativePage = relativePage;
   }
 
   const flush = useCallback(async (finalize = false) => {
@@ -85,6 +104,9 @@ export function useReadingActivity({
       sequence: 0,
       trackProgress,
       finalized: false,
+      workId,
+      unitId,
+      relativePage,
     };
     sessionRef.current = current;
 
@@ -122,7 +144,7 @@ export function useReadingActivity({
     if (!enabled || !sessionRef.current || sessionRef.current.finalized) return;
     const timer = window.setTimeout(() => { void flush(); }, 600);
     return () => window.clearTimeout(timer);
-  }, [enabled, flush, page, totalPages, trackProgress]);
+  }, [enabled, flush, page, relativePage, totalPages, trackProgress, unitId, workId]);
 
   const finish = useCallback(() => flush(true), [flush]);
   const flushNow = useCallback(() => flush(false), [flush]);

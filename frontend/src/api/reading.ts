@@ -9,6 +9,9 @@ export interface ReadingActivityPayload {
   sequence: number;
   finalize: boolean;
   trackProgress: boolean;
+  workId?: string;
+  unitId?: string;
+  relativePage?: number;
 }
 
 export async function recordReadingActivity(
