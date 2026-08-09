@@ -376,31 +376,6 @@ func createTables() error {
 		`CREATE INDEX IF NOT EXISTS "UCS_userId_lastReadAt_idx" ON "UserComicState"("userId", "lastReadAt" DESC)`,
 
 		// ============================================================
-		// UserWorkProgress (用户作品级继续阅读游标)
-		// ============================================================
-		`CREATE TABLE IF NOT EXISTS "UserWorkProgress" (
-			"userId"          TEXT NOT NULL,
-			"workId"          TEXT NOT NULL,
-			"unitId"          TEXT NOT NULL,
-			"comicId"         TEXT NOT NULL,
-			"relativePage"    INTEGER NOT NULL DEFAULT 0,
-			"absolutePage"    INTEGER NOT NULL DEFAULT 0,
-			"updatedAt"       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			"clientSessionId" TEXT NOT NULL DEFAULT '',
-			"lastSequence"    INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY ("userId", "workId"),
-			CONSTRAINT "UWP_userId_fkey" FOREIGN KEY ("userId")
-				REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-			CONSTRAINT "UWP_workId_fkey" FOREIGN KEY ("workId")
-				REFERENCES "LogicalWork" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-			CONSTRAINT "UWP_comicId_fkey" FOREIGN KEY ("comicId")
-				REFERENCES "Comic" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-		)`,
-		`CREATE INDEX IF NOT EXISTS "UWP_workId_idx" ON "UserWorkProgress"("workId")`,
-		`CREATE INDEX IF NOT EXISTS "UWP_comicId_idx" ON "UserWorkProgress"("comicId")`,
-		`CREATE INDEX IF NOT EXISTS "UWP_userId_updatedAt_idx" ON "UserWorkProgress"("userId", "updatedAt" DESC)`,
-
-		// ============================================================
 		// FTS5 全文搜索虚拟表
 		// ============================================================
 		`CREATE VIRTUAL TABLE IF NOT EXISTS "ComicFTS" USING fts5(

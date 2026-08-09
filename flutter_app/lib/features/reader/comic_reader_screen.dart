@@ -56,6 +56,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   bool _showOverlay = false;
   bool _loading = true;
   String? _activeUnitId;
+  bool _switchingActivity = false;
   List<_ContinuousPage> _continuousPageCache = const [];
 
   late final ComicApi _api;
@@ -156,7 +157,14 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         }
         _loading = false;
       });
-      _activity.start(_physicalPage(_currentPage), _physicalTotalPages);
+      final unit = _activeReaderContext?.currentUnit;
+      _activity.start(
+        _physicalPage(_currentPage),
+        _physicalTotalPages,
+        workId: widget.workContext?.work.id,
+        unitId: unit?.id,
+        relativePage: unit == null ? null : _currentPage,
+      );
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -164,7 +172,20 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   void _onPageChanged(int page) {
     setState(() => _currentPage = page);
-    _activity.updatePage(_physicalPage(page), _physicalTotalPages);
+    _trackPage(page);
+  }
+
+  void _trackPage(int relativePage, {bool flushImmediately = false}) {
+    if (_switchingActivity) return;
+    final unit = _activeReaderContext?.currentUnit;
+    _activity.updatePage(
+      _physicalPage(relativePage),
+      unit == null ? _physicalTotalPages : _trackerTotalPages(unit),
+      workId: widget.workContext?.work.id,
+      unitId: unit?.id,
+      relativePage: unit == null ? null : relativePage,
+      flushImmediately: flushImmediately,
+    );
   }
 
   int _physicalPage(int relativePage) =>
@@ -225,10 +246,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         _currentPage = page.relativePage;
         _totalPages = page.unit.pageCount;
       });
-      _activity.updatePage(
-        page.physicalPage,
-        _trackerTotalPages(page.unit),
-      );
+      _trackPage(page.relativePage);
     }
   }
 
@@ -238,17 +256,38 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   void _switchActiveUnit(WorkUnit unit, int relativePage) {
-    unawaited(_activity.finish());
-    _activity = ReadingActivityTracker(api: _api, comicId: unit.comicId);
-    _activity.start(
-      unit.startPage + relativePage,
-      _trackerTotalPages(unit),
-    );
     setState(() {
       _activeUnitId = unit.id;
       _currentPage = relativePage;
       _totalPages = unit.pageCount;
     });
+    if (_activity.comicId == unit.comicId) {
+      _trackPage(relativePage, flushImmediately: true);
+      return;
+    }
+    unawaited(_replaceActivityForUnit(unit, relativePage));
+  }
+
+  Future<void> _replaceActivityForUnit(
+    WorkUnit unit,
+    int relativePage,
+  ) async {
+    if (_switchingActivity) return;
+    _switchingActivity = true;
+    await _activity.finish();
+    if (!mounted || _activeUnitId != unit.id) {
+      _switchingActivity = false;
+      return;
+    }
+    _activity = ReadingActivityTracker(api: _api, comicId: unit.comicId);
+    _activity.start(
+      unit.startPage + relativePage,
+      _trackerTotalPages(unit),
+      workId: widget.workContext?.work.id,
+      unitId: unit.id,
+      relativePage: relativePage,
+    );
+    _switchingActivity = false;
   }
 
   void _toggleOverlay() {
@@ -455,10 +494,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
           return;
         }
         setState(() => _currentPage = firstPage);
-        _activity.updatePage(
-          _physicalPage(firstPage),
-          _physicalTotalPages,
-        );
+        _trackPage(firstPage);
       },
       itemBuilder: (context, groupIndex) {
         final pages = pageGroups[groupIndex];
@@ -616,10 +652,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
             final page = (notification.metrics.pixels / viewportHeight).floor();
             if (page != _currentPage && page >= 0 && page < _totalPages) {
               setState(() => _currentPage = page);
-              _activity.updatePage(
-                _physicalPage(page),
-                _physicalTotalPages,
-              );
+              _trackPage(page);
             }
           }
         }

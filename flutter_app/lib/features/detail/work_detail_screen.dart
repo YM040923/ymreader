@@ -51,6 +51,13 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
 
   Work get work => widget.work;
 
+  Future<void> _openReader(String route) async {
+    await context.push(route);
+    if (!mounted) return;
+    ref.invalidate(workDetailProvider(work.id));
+    ref.read(workListProvider.notifier).load();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -144,15 +151,15 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                     child: FilledButton.icon(
                       onPressed: target == null
                           ? null
-                          : () => context.push(work.readerRoute()),
+                          : () => _openReader(work.readerRoute()),
                       icon: Icon(
                         work.hasReadingProgress
                             ? Icons.play_arrow_rounded
                             : Icons.auto_stories_rounded,
                       ),
-                      label: Text(
-                        work.hasReadingProgress ? '继续阅读' : '立即阅读',
-                      ),
+                      label: Text(work.hasReadingProgress && target != null
+                          ? '继续阅读 · ${target.unit.displayLabel} · 第${target.relativePage + 1}页'
+                          : '立即阅读'),
                     ),
                   ),
                   const SizedBox(height: 14),
@@ -242,7 +249,7 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                   trailing: isCurrent
                       ? Icon(Icons.bookmark_rounded, color: colors.primary)
                       : const Icon(Icons.chevron_right_rounded),
-                  onTap: () => context.push(
+                  onTap: () => _openReader(
                     work.readerRoute(
                       target: WorkReadingTarget(
                         unit: unit,
@@ -271,7 +278,7 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                   final isCurrent = unit.id == work.continueUnitId;
                   return InkWell(
                     borderRadius: BorderRadius.circular(10),
-                    onTap: () => context.push(
+                    onTap: () => _openReader(
                       work.readerRoute(
                         target: WorkReadingTarget(
                           unit: unit,

@@ -132,7 +132,7 @@ class ComicApi {
   }
 
   /// 统一记录阅读进度与活跃时长
-  Future<void> recordReadingActivity({
+  Future<Map<String, dynamic>> recordReadingActivity({
     required String comicId,
     required String clientSessionId,
     required int page,
@@ -141,8 +141,11 @@ class ComicApi {
     required int sequence,
     bool finalize = false,
     bool trackProgress = true,
+    String? workId,
+    String? unitId,
+    int? relativePage,
   }) async {
-    await _dio.post('/reading/$comicId/activity', data: {
+    final data = <String, dynamic>{
       'clientSessionId': clientSessionId,
       'page': page,
       'totalPages': totalPages,
@@ -150,7 +153,14 @@ class ComicApi {
       'sequence': sequence,
       'finalize': finalize,
       'trackProgress': trackProgress,
-    });
+    };
+    if (workId != null && unitId != null && relativePage != null) {
+      data['workId'] = workId;
+      data['unitId'] = unitId;
+      data['relativePage'] = relativePage;
+    }
+    final response = await _dio.post('/reading/$comicId/activity', data: data);
+    return Map<String, dynamic>.from(response.data as Map);
   }
 
   /// 获取站点设置

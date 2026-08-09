@@ -74,9 +74,10 @@ class _ContinueReadingState extends ConsumerState<ContinueReading> {
               itemBuilder: (_, index) {
                 final work = _works[index];
                 return GestureDetector(
-                  onTap: () {
+                  onTap: () async {
                     HapticFeedback.lightImpact();
-                    context.push(work.readerRoute());
+                    await context.push(work.readerRoute());
+                    if (mounted) await _load();
                   },
                   child: SizedBox(
                     width: 102,

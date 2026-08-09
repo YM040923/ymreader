@@ -134,7 +134,8 @@ func GetUserWorkProgress(userID, workID string) (*UserWorkProgress, error) {
 
 func GetUserWorkProgresses(userID string, workIDs []string) (map[string]UserWorkProgress, error) {
 	result := make(map[string]UserWorkProgress, len(workIDs))
-	if strings.TrimSpace(userID) == "" || len(workIDs) == 0 {
+	if strings.TrimSpace(userID) == "" || len(workIDs) == 0 ||
+		!workTableExists("UserWorkProgress") {
 		return result, nil
 	}
 	args := make([]any, 0, len(workIDs)+1)
