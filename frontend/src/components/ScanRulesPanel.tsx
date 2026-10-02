@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { apiPath } from "@/lib/base-path";
+import { ScanExclusionsPanel } from "@/components/ScanExclusionsPanel";
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Sparkles,
@@ -416,6 +417,7 @@ export function ScanRulesPanel() {
 
   return (
     <div className="space-y-6">
+      <ScanExclusionsPanel />
       {/* 顶部说明卡片 */}
       <div className="rounded-2xl border border-border/40 bg-gradient-to-br from-accent/5 via-card to-card p-5 sm:p-6">
         <div className="flex items-start gap-4">
@@ -602,7 +604,7 @@ export function ScanRulesPanel() {
       </SectionCard>
 
       {/* 过滤器 */}
-      <SectionCard title="过滤器（高级，可不填）" icon={<Filter className="h-4 w-4" />}>
+      <SectionCard title="入库后自动化过滤（高级）" icon={<Filter className="h-4 w-4" />}>
         <FieldRow label="包含扩展名（逗号分隔）">
           <input
             type="text"
@@ -647,7 +649,7 @@ export function ScanRulesPanel() {
             className="w-full rounded-lg border border-border/50 bg-card px-3 py-1.5 text-sm font-mono"
           />
         </FieldRow>
-        <FieldRow label="路径排除正则">
+        <FieldRow label="自动化处理排除路径正则">
           <input
             type="text"
             value={rules.filters.excludePathRegex || ""}
@@ -657,6 +659,7 @@ export function ScanRulesPanel() {
             className="w-full rounded-lg border border-border/50 bg-card px-3 py-1.5 text-sm font-mono"
           />
         </FieldRow>
+        <p className="text-xs text-muted">这里仅影响 AI 识别和自动整理。阻止文件入库请使用上方的“扫描入库排除”。</p>
       </SectionCard>
 
       {/* 操作栏 */}
