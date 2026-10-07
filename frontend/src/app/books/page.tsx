@@ -244,6 +244,11 @@ export default function BooksPage() {
   // 筛选条件变更时同步到 sessionStorage
   useEffect(() => {
     sessionStorage.setItem("homeFilter:search", searchQuery);
+    const params = new URLSearchParams(window.location.search);
+    if (searchQuery) params.set("search", searchQuery);
+    else params.delete("search");
+    const query = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
   }, [searchQuery]);
   useEffect(() => {
     sessionStorage.setItem("homeFilter:tags", JSON.stringify(selectedTags));
@@ -326,19 +331,18 @@ export default function BooksPage() {
   // 删除动画状态
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
 
-  // Pagination — 优先从 sessionStorage 恢复（最可靠），其次从 URL 恢复
+  // Explicit page/search URLs take precedence over the saved list page.
   const [currentPage, setCurrentPage] = useState(() => {
     if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("page") || params.has("search")) {
+        const page = Number(params.get("page") || 1);
+        return Number.isInteger(page) && page > 0 ? page : 1;
+      }
       // 优先从 sessionStorage 恢复
       const saved = sessionStorage.getItem("homePage");
       if (saved) {
         const n = parseInt(saved, 10);
-        if (n > 0) return n;
-      }
-      // 其次从 URL 查询参数读取
-      const p = new URLSearchParams(window.location.search).get("page");
-      if (p) {
-        const n = parseInt(p, 10);
         if (n > 0) return n;
       }
     }
@@ -374,8 +378,9 @@ export default function BooksPage() {
         sessionStorage.removeItem("homePage");
       }
     }
-    const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
-    window.history.replaceState(null, "", newUrl);
+    const query = params.toString();
+    const newUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", newUrl);
   }, [currentPage]);
 
   // Load pageSize from site settings
