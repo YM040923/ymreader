@@ -11,6 +11,7 @@ import '../../data/api/api_client.dart';
 import '../../data/api/comic_api.dart';
 import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
+import '../../data/services/reader_warmup_session.dart';
 import '../../data/services/reading_activity_tracker.dart';
 import '../../widgets/authenticated_image.dart';
 import '../../widgets/reader_settings_panel.dart';
@@ -61,6 +62,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   late final ComicApi _api;
   late ReadingActivityTracker _activity;
+  late ReaderWarmupSession _warmup;
 
   // 设置
   ReaderSettings _settings = const ReaderSettings();
@@ -82,6 +84,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       serverKey: auth.serverUrl,
       userKey: auth.user?.id ?? 'anonymous',
     );
+    _warmup = ReaderWarmupSession(api: _api, comicId: widget.comicId);
     _continuousPositions.itemPositions.addListener(
       _onContinuousPositionChanged,
     );
@@ -96,6 +99,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     // 恢复系统UI
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _activity.dispose();
+    _warmup.dispose();
     _continuousPositions.itemPositions.removeListener(
       _onContinuousPositionChanged,
     );
@@ -106,6 +110,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   /// 拦截返回操作，尽量在退出前完成最后一次活动同步
   Future<void> _onWillPop() async {
+    _warmup.dispose();
     await _activity.finish();
     if (!mounted) return;
     if (Navigator.of(context).canPop()) {
@@ -171,6 +176,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         unitId: unit?.id,
         relativePage: unit == null ? null : _currentPage,
       );
+      _warmup.start(_physicalPage(_currentPage), _physicalTotalPages);
+      unawaited(_prefetchPages(_currentPage));
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -192,6 +199,34 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       relativePage: unit == null ? null : relativePage,
       flushImmediately: flushImmediately,
     );
+    unawaited(_prefetchPages(relativePage));
+  }
+
+  Future<void> _prefetchPages(int relativePage) async {
+    final unit = _activeReaderContext?.currentUnit;
+    // Cross-unit pages belong to another comic; the reader swaps the tracker
+    // when it switches units, so only read ahead inside the current comic.
+    if (unit != null && unit.comicId != widget.comicId) return;
+    final serverUrl = ref.read(authProvider).serverUrl;
+    final basePage = unit?.startPage ?? 0;
+    for (final offset in [0, 1, 2, -1]) {
+      final nextRelative = relativePage + offset;
+      if (!mounted || _currentPage != relativePage) return;
+      if (nextRelative < 0 || nextRelative >= _totalPages) continue;
+      final physicalPage = basePage + nextRelative;
+      try {
+        await loadAuthenticatedImageBytes(
+          getImageUrl(serverUrl, widget.comicId, page: physicalPage),
+          comicId: widget.comicId,
+          pageIndex: physicalPage,
+        );
+        if (offset == 0 && mounted && _currentPage == relativePage) {
+          _warmup.prefetch(physicalPage);
+        }
+      } catch (_) {
+        // A failed speculative load must not interrupt the visible page.
+      }
+    }
   }
 
   int _physicalPage(int relativePage) =>
