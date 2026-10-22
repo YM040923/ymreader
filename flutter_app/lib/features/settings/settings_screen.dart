@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -12,6 +11,7 @@ import '../../data/services/cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../metadata/metadata_screen.dart';
 import '../../widgets/animations.dart';
+import '../../data/providers/server_route_provider.dart';
 
 final _packageInfo = PackageInfo.fromPlatform();
 
@@ -26,6 +26,21 @@ class SettingsScreen extends ConsumerWidget {
     final cs = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context);
     final isAdmin = user?.isAdmin ?? false;
+    final routes = ref.watch(serverRouteProvider);
+    final latency = routes.latencies[routes.activeUrl];
+    final routeLabel = routes.activeUrl == routes.config.backupUrl
+        ? '备用线路'
+        : '主线路';
+    final latencyLabel = routes.measuring
+        ? '测速中…'
+        : latency != null
+            ? '${latency.ceil().clamp(1, 999999)} ms'
+            : routes.latencies.containsKey(routes.activeUrl)
+                ? '不可达'
+                : '未检测';
+    final serverSubtitle = routes.activeUrl.isEmpty
+        ? '地址、线路与服务器列表'
+        : '$routeLabel · $latencyLabel';
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.settings)),
@@ -117,26 +132,14 @@ class SettingsScreen extends ConsumerWidget {
           // ─── 服务器 ───
           SlideAndFade(
             delay: const Duration(milliseconds: 200),
-            child: _SectionHeader(title: l10n.serverInfo),
-          ),
-          const SizedBox(height: 8),
-          SlideAndFade(
-            delay: const Duration(milliseconds: 250),
             child: _SettingsGroup(
               children: [
                 _SettingsTile(
                   icon: Icons.dns_outlined,
                   iconColor: cs.primary,
-                  title: l10n.serverAddress,
-                  subtitle: authState.serverUrl,
-                  onTap: () => _showServerInfo(context, ref),
-                ),
-                _SettingsTile(
-                  icon: Icons.history_rounded,
-                  iconColor: cs.secondary,
-                  title: '服务器列表',
-                  subtitle: '切换到之前登录过的服务器',
-                  onTap: () => _showServerHistory(context, ref),
+                  title: '服务器设置',
+                  subtitle: serverSubtitle,
+                  onTap: () => context.push('/settings/server'),
                 ),
               ],
             ),
@@ -299,57 +302,12 @@ class SettingsScreen extends ConsumerWidget {
                   }
                 },
               ),
-              _SettingsTile(
-                icon: Icons.swap_horiz_rounded,
-                iconColor: cs.onSurfaceVariant,
-                title: l10n.switchServer,
-                onTap: () async {
-                  await ref.read(authProvider.notifier).logout();
-                  await saveServerUrl('');
-                  ref.invalidate(serverUrlProvider);
-                  if (context.mounted) context.go('/server');
-                },
-              ),
             ],
           ),
 
           const SizedBox(height: 40),
         ],
       ),
-    );
-  }
-
-  void _showServerInfo(BuildContext context, WidgetRef ref) {
-    final l10n = AppLocalizations.of(context);
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        final serverUrl = ref.read(authProvider).serverUrl;
-        return AlertDialog(
-          title: Text(l10n.serverInfo),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('${l10n.serverAddress}: $serverUrl'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(l10n.close),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showServerHistory(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _ServerHistorySheet(parentRef: ref),
     );
   }
 }
