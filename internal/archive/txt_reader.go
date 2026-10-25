@@ -26,8 +26,8 @@ const defaultCharsPerPage = 2000
 var chapterPatterns = []*regexp.Regexp{
 	// Chinese: 第X章, 第X节, 第X回, 第X卷
 	regexp.MustCompile(`^[ \t]*第[零一二三四五六七八九十百千万\d]+[章节回卷部篇集]`),
-	// Chinese: 章节 N, 卷 N
-	regexp.MustCompile(`^[ \t]*[章节卷][ \t]*[零一二三四五六七八九十百千万\d]+`),
+	// Chinese: 章节 N, 章 N, 节 N, 卷 N
+	regexp.MustCompile(`^[ \t]*(?:章节|[章节卷])[ \t]*[零一二三四五六七八九十百千万\d]+`),
 	// English: Chapter N, CHAPTER N
 	regexp.MustCompile(`(?i)^[ \t]*chapter\s+[\divxlc]+`),
 	// English: Part N
