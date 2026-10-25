@@ -28,6 +28,13 @@ flutter build apk --release
 flutter build appbundle --release
 ```
 
+客户端设置中的版本号读取自安装包。默认版本由 `pubspec.yaml` 的
+`version` 决定，也可以在发布构建时使用
+`flutter build apk --release --build-name=1.2.3 --build-number=4` 指定。
+每次发布应增加构建号，以便 Android 识别更新。
+
+正式版可由 GitHub Actions 统一构建，见 [发布指南](../docs/RELEASING.md)。
+Release 构建必须配置现有签名，不再回退为 debug 签名；`flutter run` 等调试构建不受影响。
 ## 项目结构
 
 ```
