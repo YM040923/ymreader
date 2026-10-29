@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/providers/auth_provider.dart';
 import '../../data/providers/comic_provider.dart';
+import '../../data/providers/server_branding_provider.dart';
 import '../../data/providers/work_provider.dart';
 import '../../widgets/continue_reading.dart';
+import '../../widgets/server_logo.dart';
 import '../../widgets/work_card.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -45,6 +47,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final libraries = ref.watch(accessibleLibrariesProvider);
     final viewMode = ref.watch(viewModeProvider);
     final serverUrl = ref.watch(authProvider).serverUrl;
+    final branding = ref.watch(currentServerBrandingProvider);
+    final cs = Theme.of(context).colorScheme;
+    final libraryList = libraries.valueOrNull;
+    final activeLibraryName =
+        libraryList != null && libraryList.length == 1 ? libraryList.first.name : '书库';
     final width = MediaQuery.sizeOf(context).width;
     final columns = width >= 900
         ? 7
@@ -57,8 +64,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: () async {
+          final brandingRefresh =
+              ref.read(serverBrandingProvider.notifier).refresh(force: true);
           ref.invalidate(accessibleLibrariesProvider);
           await ref.read(workListProvider.notifier).load();
+          await brandingRefresh;
         },
         child: CustomScrollView(
           controller: _scrollController,
@@ -66,7 +76,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             SliverAppBar(
               floating: true,
               snap: true,
-              title: const Text('书库'),
+              toolbarHeight:
+                  56 + (MediaQuery.textScalerOf(context).scale(16) - 16) * 2,
+              title: Row(
+                children: [
+                  ServerLogo(branding: branding, size: 30),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(branding.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 16)),
+                        Text(activeLibraryName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11, color: cs.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
               actions: [
                 IconButton(
                   tooltip: viewMode == ViewMode.grid ? '列表视图' : '封面墙',
