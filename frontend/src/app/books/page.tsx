@@ -5,6 +5,7 @@ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import ComicCard from "@/components/ComicCard";
+import DirectoryCard from "@/components/DirectoryCard";
 import TagFilter from "@/components/TagFilter";
 import StatsBar from "@/components/StatsBar";
 import CategoryFilter from "@/components/CategoryFilter";
@@ -15,7 +16,7 @@ import {
 } from "@/hooks/useComics";
 import { Comic } from "@/types/comic";
 import { useTranslation, useLocale } from "@/lib/i18n";
-import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2 } from "lucide-react";
+import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2, Folder, ChevronRight } from "lucide-react";
 import DuplicateDetector from "@/components/DuplicateDetector";
 import UploadDialog from "@/components/UploadDialog";
 import { LibraryTabsBar } from "@/components/home/LibraryTabsBar";
@@ -29,7 +30,7 @@ import { useWorks } from "@/hooks/useWorks";
 import { getWorkComicIds, indexWorksByComicId, workToComic } from "@/lib/work-model";
 import { batchWorkOperation, fetchAllWorks, reorderWorks } from "@/api/works";
 import type { Work } from "@/types/work";
-import { fetchLibraries, fetchAccessibleLibraries, type Library } from "@/api/libraries";
+import { fetchLibraries, fetchAccessibleLibraries, fetchLibraryDirectories, type Library, type LibraryDirectoryNode } from "@/api/libraries";
 import { useAuth } from "@/lib/auth-context";
 
 const DEFAULT_PAGE_SIZE = 24;
@@ -198,6 +199,23 @@ export default function BooksPage() {
     }
     return null;
   });
+
+  // 可选目录层级浏览
+  const [browseDirectories, setBrowseDirectories] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("books:browseDirectories") === "true";
+    }
+    return false;
+  });
+  const [directory, setDirectory] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("dir") || "";
+    }
+    return "";
+  });
+  const [directoryNodes, setDirectoryNodes] = useState<LibraryDirectoryNode[]>([]);
+  const [directoryCrumbs, setDirectoryCrumbs] = useState<{ name: string; path: string }[]>([]);
+  const [directoriesLoading, setDirectoriesLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
 
@@ -407,7 +425,57 @@ export default function BooksPage() {
     uncategorized: uncategorized || undefined,
     untagged: untagged || undefined,
     libraryIds: selectedLibraryIds.length > 0 ? selectedLibraryIds : undefined,
+    directory: browseDirectories ? directory : undefined,
   });
+
+  const onlyLibraryId =
+    accessibleLibraries.length === 1 ? accessibleLibraries[0].id : null;
+  const browseLibraryId =
+    selectedLibraryIds.length === 1 ? selectedLibraryIds[0] : onlyLibraryId;
+  const canBrowseDirectories = browseLibraryId !== null;
+
+  useEffect(() => {
+    if (!browseDirectories || !browseLibraryId) {
+      setDirectoryNodes([]);
+      setDirectoryCrumbs([]);
+      return;
+    }
+    let cancelled = false;
+    setDirectoriesLoading(true);
+    fetchLibraryDirectories(browseLibraryId, directory)
+      .then((data) => {
+        if (cancelled) return;
+        setDirectoryNodes(data.directories || []);
+        setDirectoryCrumbs(data.breadcrumbs || []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDirectoryNodes([]);
+        setDirectoryCrumbs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDirectoriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [browseDirectories, browseLibraryId, directory]);
+
+  useEffect(() => {
+    if (browseDirectories) safeSetCurrentPage(1);
+  }, [directory, browseDirectories, safeSetCurrentPage]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (browseDirectories && directory) params.set("dir", directory);
+    else params.delete("dir");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+    );
+  }, [browseDirectories, directory]);
 
   // 只显示有内容的分类（count > 0）
   const effectiveCategories = categories.filter(c => c.count > 0);
@@ -851,7 +919,7 @@ export default function BooksPage() {
       <div className={`mx-auto w-full max-w-[1760px] px-6 sm:px-8 lg:px-10 2xl:px-14 pt-14 sm:pt-16 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6 ${batchMode ? "pb-32" : "pb-20 sm:pb-12"}`}>
       <main className="min-w-0 space-y-4 pt-6 sm:pt-8">
         {/* Data Source Indicator — 空库提示 */}
-        {!loading && displayComics.length === 0 && apiTotal === 0 && !debouncedSearch && selectedTags.length === 0 && !favoritesOnly && !selectedCategory && selectedLibraryIds.length === 0 && (
+        {!loading && !browseDirectories && displayComics.length === 0 && apiTotal === 0 && !debouncedSearch && selectedTags.length === 0 && !favoritesOnly && !selectedCategory && selectedLibraryIds.length === 0 && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
             <span className="text-sm text-amber-400">
               {t.home.mockDataNotice}{" "}
@@ -956,10 +1024,12 @@ export default function BooksPage() {
             <section className="rounded-xl dashboard-glass px-3 py-2.5 sm:px-4 sm:py-3 space-y-2">
             {/* Stats + Sort Controls */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center justify-between gap-2 sm:gap-3">
-              <StatsBar
-                totalComics={apiTotal}
-                filteredCount={apiTotal}
-              />
+              {!browseDirectories && (
+                <StatsBar
+                  totalComics={apiTotal}
+                  filteredCount={apiTotal}
+                />
+              )}
 
               {/* Sort & Filter Controls — horizontally scrollable on mobile */}
               <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
@@ -1082,6 +1152,26 @@ export default function BooksPage() {
                 >
                   {sortOrder === "asc" ? "↑" : "↓"}
                 </button>
+
+                <button
+                  onClick={() => {
+                    const next = !browseDirectories;
+                    setBrowseDirectories(next);
+                    localStorage.setItem("books:browseDirectories", String(next));
+                    if (!next) setDirectory("");
+                    safeSetCurrentPage(1);
+                  }}
+                  disabled={!canBrowseDirectories}
+                  title={canBrowseDirectories ? "按目录浏览当前书库" : "目录浏览需要先选择一个书库"}
+                  className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+                    browseDirectories
+                      ? "bg-accent/15 text-accent"
+                      : "bg-card text-muted hover:text-foreground"
+                  }`}
+                >
+                  <Folder className="h-3.5 w-3.5" />
+                  目录
+                </button>
                 </div>
               </div>
             </div>
@@ -1180,21 +1270,57 @@ export default function BooksPage() {
               </div>
             )}
 
+            {browseDirectories && browseLibraryId && (
+              <div className="mt-5 flex flex-wrap items-center gap-1 text-xs text-muted">
+                <button
+                  onClick={() => setDirectory("")}
+                  className={`rounded-md px-2 py-1 transition-colors hover:bg-card-hover hover:text-foreground ${
+                    directory === "" ? "text-foreground" : ""
+                  }`}
+                >
+                  全部
+                </button>
+                {directoryCrumbs.map((crumb) => (
+                  <span key={crumb.path} className="flex items-center gap-1">
+                    <ChevronRight className="h-3 w-3 opacity-50" />
+                    <button
+                      onClick={() => setDirectory(crumb.path)}
+                      className={`rounded-md px-2 py-1 transition-colors hover:bg-card-hover hover:text-foreground ${
+                        directory === crumb.path ? "text-foreground" : ""
+                      }`}
+                    >
+                      {crumb.name}
+                    </button>
+                  </span>
+                ))}
+                {directoriesLoading && (
+                  <span className="ml-1 text-[11px] opacity-60">加载中…</span>
+                )}
+              </div>
+            )}
+
             {/* Library Content Header */}
             <div className="mt-6 mb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-1">
               <div>
                 <h2 className="text-base font-semibold text-foreground text-balance">
-                  全部作品
+                  {browseDirectories
+                    ? directory === ""
+                      ? "全部目录"
+                      : directoryCrumbs[directoryCrumbs.length - 1]?.name || "目录"
+                    : "全部作品"}
                 </h2>
                 <p className="text-[11px] text-muted mt-0.5">
                   {`${apiTotal} 项作品`}
+                  {browseDirectories && directoryNodes.length > 0
+                    ? ` · ${directoryNodes.length} 个目录`
+                    : ""}
                   {activePage > 1 ? ` · 第 ${activePage} 页` : ""}
                 </p>
               </div>
             </div>
             {/* Comics Grid */}
             <div className={`transition-opacity duration-200 ${fetching ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
-            {sortedComics.length > 0 ? (
+            {sortedComics.length > 0 || (browseDirectories && directoryNodes.length > 0) ? (
               <div
                 className={
                   viewMode === "grid"
@@ -1202,6 +1328,17 @@ export default function BooksPage() {
                     : "grid grid-cols-1 gap-2 sm:gap-3"
                 }
               >
+                {browseDirectories && directoryNodes.map((node) => (
+                  <DirectoryCard
+                    key={`dir:${node.path}`}
+                    node={node}
+                    viewMode={viewMode}
+                    onOpen={(target) => {
+                      setDirectory(target.path);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  />
+                ))}
                 {sortedComics.map((comic, index) => (
                     <ScrollReveal key={comic.id} disabled={index < 20} delay={index >= 20 ? (index - 20) % 6 * 50 : 0}>
                     <ComicCard

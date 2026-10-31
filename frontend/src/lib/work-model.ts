@@ -19,6 +19,7 @@ export function buildWorkQuery(options: WorkQueryOptions = {}): string {
   if (options.uncategorized) params.set("uncategorized", "true");
   if (options.untagged) params.set("untagged", "true");
   if (options.libraryIds?.length) params.set("libraryIds", options.libraryIds.join(","));
+  if (options.directory !== undefined) params.set("dir", options.directory);
   if (options.sortBy) params.set("sortBy", options.sortBy);
   if (options.sortOrder) params.set("sortOrder", options.sortOrder);
   if (options.page) params.set("page", String(options.page));

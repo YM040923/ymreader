@@ -258,3 +258,41 @@ export async function fetchAccessibleLibraries(): Promise<Library[]> {
     comicCount: library.workCount ?? library.comicCount ?? 0,
   }));
 }
+
+export interface LibraryDirectoryNode {
+  name: string;
+  path: string;
+  workCount: number;
+  hasChildren: boolean;
+  coverUrl?: string;
+  coverComicId?: string;
+}
+
+export interface LibraryDirectoryBreadcrumb {
+  name: string;
+  path: string;
+}
+
+export interface LibraryDirectoryListing {
+  libraryId: string;
+  parent: string;
+  breadcrumbs: LibraryDirectoryBreadcrumb[];
+  directories: LibraryDirectoryNode[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export async function fetchLibraryDirectories(
+  libraryId: string,
+  parent = ""
+): Promise<LibraryDirectoryListing> {
+  const params = new URLSearchParams();
+  if (parent) params.set("parent", parent);
+  const query = params.toString();
+  const res = await fetch(
+    apiPath(`/api/libraries/${encodeURIComponent(libraryId)}/directories${query ? `?${query}` : ""}`)
+  );
+  return safeJson<LibraryDirectoryListing>(res);
+}

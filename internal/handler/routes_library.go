@@ -30,6 +30,7 @@ func registerLibraryRoutes(api *gin.RouterGroup) {
 	accessibleGroup.Use(middleware.AuthRequired())
 	{
 		accessibleGroup.GET("/accessible", reconcileOwnershipBeforeList(), library.ListAccessibleLibraries)
+		accessibleGroup.GET("/:id/directories", library.ListWorkDirectories)
 		accessibleGroup.POST("/:id/scan", reconcileOwnershipAfterScan(), library.ScanLibrary)
 		accessibleGroup.POST("/:id/scrape", middleware.ScraperRequired(), library.ScrapeLibrary)
 	}

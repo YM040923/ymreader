@@ -324,9 +324,12 @@ type workFilters struct {
 	metaFilter    string
 	uncategorized bool
 	untagged      bool
+	directory     string
+	directorySet  bool
 }
 
 func parseWorkFilters(c *gin.Context) workFilters {
+	directory, directorySet := c.GetQuery("dir")
 	return workFilters{
 		search:        strings.TrimSpace(c.Query("search")),
 		tags:          splitQueryIDs(c.Query("tags")),
@@ -336,13 +339,15 @@ func parseWorkFilters(c *gin.Context) workFilters {
 		metaFilter:    strings.TrimSpace(c.Query("metaFilter")),
 		uncategorized: c.Query("uncategorized") == "true",
 		untagged:      c.Query("untagged") == "true",
+		directory:     normalizeWorkDirectory(directory),
+		directorySet:  directorySet,
 	}
 }
 
 func filterWorks(works []service.Work, filters workFilters) []service.Work {
 	if filters.search == "" && len(filters.tags) == 0 && !filters.favoritesOnly &&
 		filters.category == "" && filters.readingStatus == "" && filters.metaFilter == "" &&
-		!filters.uncategorized && !filters.untagged {
+		!filters.uncategorized && !filters.untagged && !filters.directorySet {
 		return works
 	}
 	result := make([]service.Work, 0, len(works))
@@ -356,6 +361,9 @@ func filterWorks(works []service.Work, filters workFilters) []service.Work {
 }
 
 func workMatchesFilters(work service.Work, filters workFilters) bool {
+	if filters.directorySet && workDirectoryPath(work) != filters.directory {
+		return false
+	}
 	if filters.search != "" && !workContainsSearch(work, filters.search) {
 		return false
 	}

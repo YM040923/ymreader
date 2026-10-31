@@ -71,6 +71,7 @@ export interface WorkQueryOptions {
   uncategorized?: boolean;
   untagged?: boolean;
   libraryIds?: string[];
+  directory?: string;
   sortBy?: string;
   sortOrder?: string;
   page?: number;
