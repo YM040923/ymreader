@@ -2,6 +2,10 @@ name: Debug APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [sync/upstream-deploy]
+    paths:
+      - '.github/workflows/flutter-apk-debug.yml'
 
 permissions:
   contents: read
