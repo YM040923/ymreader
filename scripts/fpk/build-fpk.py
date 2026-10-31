@@ -76,11 +76,12 @@ def resolve_branding(release, appname=None, display_name=None, port=None, icon_p
     return branding
 
 
-def render_templates(source, version, image, description, branding):
+def render_templates(source, version, image, description, branding, platform="all"):
     replacements = {
         "VERSION": version,
         "DESCRIPTION": description,
         "IMAGE": image,
+        "PLATFORM": platform,
         **{key.upper(): value for key, value in branding.items()},
     }
     for name in TEMPLATE_FILES:
@@ -102,7 +103,7 @@ def normalize_modes(source):
         path.chmod(0o755)
 
 
-def verify_package(package, version, image, description, branding):
+def verify_package(package, version, image, description, branding, platform="all"):
     appname = branding["appname"]
     with tarfile.open(package, "r:*") as outer:
         files = archive_files(outer)
@@ -113,7 +114,7 @@ def verify_package(package, version, image, description, branding):
             key, value = line.split("=", 1)
             fields[key.strip()] = value.strip().strip("`")
     expected = {"appname": appname, "display_name": branding["display_name"], "version": version,
-                "platform": "all", "desktop_applaunchname": branding["desktop_app"],
+                "platform": platform, "desktop_applaunchname": branding["desktop_app"],
                 "service_port": branding["service_port"]}
     for key, value in expected.items():
         if fields.get(key) != value:
@@ -171,6 +172,8 @@ def main():
     parser.add_argument("--display-name", help="Application center display name")
     parser.add_argument("--port", type=int, help="Exposed service port; defaults to 6680")
     parser.add_argument("--icon-prefix", help="Icon basename under docs/assets, without -fnos-icon-N.png")
+    parser.add_argument("--platform", choices=["x86", "arm", "all"], default="all",
+                        help="fnOS platform label; declare only architectures the image actually supports")
     args = parser.parse_args()
     if not args.fnpack:
         parser.error("Pass --fnpack /path/to/official/fnpack or set FNPACK_BIN")
@@ -193,7 +196,7 @@ def main():
         temporary = Path(temporary)
         source = temporary / appname
         shutil.copytree(HERE / "template", source)
-        render_templates(source, version, image, description, branding)
+        render_templates(source, version, image, description, branding, args.platform)
         for path in (source / "cmd").iterdir():
             path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
             path.chmod(0o755)
@@ -213,12 +216,13 @@ def main():
         if len(candidates) != 1:
             raise ValueError(f"Expected one generated FPK, found {len(candidates)}")
         package = candidates[0]
-        verify_package(package, version, image, description, branding)
+        verify_package(package, version, image, description, branding, args.platform)
         destination = args.out / f"{appname}-{version}.fpk"
         shutil.copyfile(package, destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     (args.out / "SHA256SUMS").write_text(f"{digest}  {destination.name}\n", encoding="utf-8", newline="\n")
-    metadata = {**release, **branding, "version": version, "image": image, "package": destination.name,
+    metadata = {**release, **branding, "version": version, "image": image, "platform": args.platform,
+                "package": destination.name,
                 "bytes": destination.stat().st_size,
                 "sha256": digest, "built_at": datetime.now(timezone.utc).isoformat(),
                 "fnpack": tool.split("Usage:")[0].strip(), "package_contents_verified": True,
