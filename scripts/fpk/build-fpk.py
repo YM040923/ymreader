@@ -93,6 +93,15 @@ def render_templates(source, version, image, description, branding):
         path.write_text(text, encoding="utf-8", newline="\n")
 
 
+def normalize_modes(source):
+    # fnOS reads package files as its own service user; files produced by a
+    # 0700 umask (manifest, config, icons) must not stay private to the builder.
+    for path in source.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    for path in (source / "cmd").iterdir():
+        path.chmod(0o755)
+
+
 def verify_package(package, version, image, description, branding):
     appname = branding["appname"]
     with tarfile.open(package, "r:*") as outer:
@@ -196,6 +205,7 @@ def main():
                 raise ValueError(f"Incorrect source icon size: {icon}")
             shutil.copyfile(icon, source / filename)
             shutil.copyfile(icon, icons / f"icon_{size}.png")
+        normalize_modes(source)
         tool = subprocess.run([fnpack, "--help"], check=True, capture_output=True, text=True).stdout
         print(tool.split("Usage:")[0].strip(), flush=True)
         subprocess.run([fnpack, "build", "-d", str(source)], cwd=temporary, check=True)
