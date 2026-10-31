@@ -2,7 +2,7 @@ package store
 
 func init() {
 	Migrations = append(Migrations, Migration{
-		Version:     43,
+		Version:     47,
 		Description: "Add configurable TXT novel chapter rules and per-book selection",
 		SQL: `CREATE TABLE IF NOT EXISTS "NovelChapterRule" (
 		        "id" TEXT NOT NULL PRIMARY KEY,
