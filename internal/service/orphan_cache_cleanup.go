@@ -5,10 +5,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/nowen-reader/nowen-reader/internal/config"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
+
+// Recently written caches are never treated as orphans: the Work cover writer
+// (work_<id>_WxH.webp) and concurrent readers run outside this GC's view.
+const orphanCacheMinAge = 24 * time.Hour
+
+func protectedCacheOwner(id string) bool {
+	return strings.HasPrefix(id, "work_") ||
+		strings.HasPrefix(id, "group_") ||
+		strings.HasPrefix(id, "series_")
+}
 
 // cleanupOrphanContentCaches removes disk caches whose owning Comic row no
 // longer exists. It never touches source library files. Group/series cover
@@ -44,8 +55,12 @@ func cleanupOrphanThumbnails(valid map[string]struct{}) int {
 		if entry.IsDir() {
 			continue
 		}
+		info, statErr := entry.Info()
+		if statErr != nil || time.Since(info.ModTime()) < orphanCacheMinAge {
+			continue
+		}
 		ownerID := thumbnailCacheOwnerID(entry.Name())
-		if ownerID == "" || strings.HasPrefix(ownerID, "group_") || strings.HasPrefix(ownerID, "series_") {
+		if ownerID == "" || protectedCacheOwner(ownerID) {
 			continue
 		}
 		if _, ok := valid[ownerID]; ok {
@@ -77,6 +92,13 @@ func cleanupOrphanPageCaches(valid map[string]struct{}) int {
 	removed := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr != nil || time.Since(info.ModTime()) < orphanCacheMinAge {
+			continue
+		}
+		if protectedCacheOwner(entry.Name()) {
 			continue
 		}
 		if _, ok := valid[entry.Name()]; ok {
