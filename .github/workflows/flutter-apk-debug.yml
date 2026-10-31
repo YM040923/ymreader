@@ -1,0 +1,40 @@
+name: Debug APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Use a side-by-side test package id
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('flutter_app/android/app/build.gradle.kts')
+          text = path.read_text(encoding='utf-8')
+          marker = '    buildTypes {\n        release {'
+          assert marker in text
+          text = text.replace(marker, '    buildTypes {\n        debug {\n            applicationIdSuffix = ".qadev"\n            versionNameSuffix = "-qadev"\n        }\n        release {')
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Build debug APK
+        working-directory: flutter_app
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nowen-reader-qadev-debug
+          path: flutter_app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
