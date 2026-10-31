@@ -505,6 +505,46 @@ Content-Type: application/json
 
 The manga collection (`ComicGroup`) feature has been removed. `/api/groups` and all child paths are no longer registered and return `404`. Manga aggregation now uses the Work model. `ComicSeries` remains the directory relationship and stable metadata host; `UserGroup`, `UserGroupMember`, and `GroupLibraryAccess` remain unchanged for permissions.
 
+## 可选目录层级（Work 原生）
+
+`GET /api/libraries/:id/directories` 列出书库某一层的子目录。目录直接从 `LogicalWork.rootPath` 推导，不依赖 `ComicSeries`。需要当前用户对书库有查看权限。
+
+| 参数 | 说明 |
+|:---|:---|
+| `parent` | 父目录相对路径，空表示书库根；不接受 `..`、反斜杠或绝对路径 |
+| `page` / `pageSize` | 目录分页，默认 100，最大 500 |
+
+每个目录节点包含 `name`、`path`、`workCount`（该目录下所有层级的作品数）、`hasChildren`、`coverUrl`/`coverComicId`。单文件作品如果 `RootPath` 存的是文件名主干，会归回它的父目录，不会显示成文件夹。
+
+```json
+{
+  "libraryId": "default",
+  "parent": "作者A",
+  "breadcrumbs": [{"name": "作者A", "path": "作者A"}],
+  "directories": [
+    {"name": "系列一", "path": "作者A/系列一", "workCount": 1, "hasChildren": false,
+     "coverComicId": "85c126f5210d"}
+  ],
+  "total": 2, "page": 1, "pageSize": 100, "totalPages": 1
+}
+```
+
+`GET /api/works` 增加 `dir` 参数：存在该参数时只返回 `RootPath` 恰好等于该目录的作品；`dir=`（空值）表示书库根目录的散本。目录浏览时前端通常同时请求目录列表与这一层作品。
+
+## TXT 小说自定义分章规则
+
+| 方法 | 路径 | 说明 |
+|:---|:---|:---|
+| GET | `/api/novel/chapter-rules` | 系统预设与用户规则列表 |
+| POST | `/api/novel/chapter-rules/preview` | 用候选正则预览标题匹配，不落库 |
+| POST | `/api/novel/chapter-rules` | 新建规则 🔒管理员 |
+| PUT | `/api/novel/chapter-rules/:ruleId` | 修改规则 🔒管理员 |
+| DELETE | `/api/novel/chapter-rules/:ruleId` | 删除规则 🔒管理员 |
+| GET | `/api/comics/:id/chapter-rule` | 读取单书当前规则与可选列表 |
+| PUT | `/api/comics/:id/chapter-rule` | 设置单书规则（`auto` 或规则 ID）🔒管理权限 |
+
+`auto` 表示沿用内置自动识别；系统规则（`preset-*`）不可修改或删除。规则保存后，章节列表与章节内容接口会立即按新规则重新分章。
+
 ## 🖼️ 图片 & 内容
 
 | 方法 | 路径 | 说明 |
