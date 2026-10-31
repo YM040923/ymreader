@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/api/comic_api.dart';
@@ -17,6 +16,7 @@ import '../../widgets/authenticated_image.dart';
 import '../../widgets/reader_settings_panel.dart';
 import 'novel_reader_screen.dart';
 import 'work_reader_context.dart';
+import 'work_webtoon_view.dart';
 
 class _ContinuousPage {
   final WorkUnit unit;
@@ -47,11 +47,8 @@ class ComicReaderScreen extends ConsumerStatefulWidget {
 class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   late PageController _pageController;
   final ScrollController _scrollController = ScrollController();
-  final ItemScrollController _continuousScrollController =
-      ItemScrollController();
-  final ItemPositionsListener _continuousPositions =
-      ItemPositionsListener.create();
-  int _currentPage = 0;
+  final WorkWebtoonController _continuousScrollController =
+      WorkWebtoonController();  int _currentPage = 0;
   int _totalPages = 0;
   int _physicalTotalPages = 0;
   bool _showOverlay = false;
@@ -85,9 +82,6 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       userKey: auth.user?.id ?? 'anonymous',
     );
     _warmup = ReaderWarmupSession(api: _api, comicId: widget.comicId);
-    _continuousPositions.itemPositions.addListener(
-      _onContinuousPositionChanged,
-    );
     // 全屏沉浸模式
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _loadSettings();
@@ -100,9 +94,6 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _activity.dispose();
     _warmup.dispose();
-    _continuousPositions.itemPositions.removeListener(
-      _onContinuousPositionChanged,
-    );
     _pageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -265,19 +256,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     return 0;
   }
 
-  void _onContinuousPositionChanged() {
+  void _onWebtoonPageChanged(int index) {
     if (!_settings.continuousReading ||
         _settings.mode != ComicReadingMode.webtoon) {
       return;
     }
-    final positions = _continuousPositions.itemPositions.value
-        .where((position) =>
-            position.itemTrailingEdge > 0 && position.itemLeadingEdge < 1)
-        .toList()
-      ..sort((a, b) => a.itemLeadingEdge.compareTo(b.itemLeadingEdge));
-    if (positions.isEmpty) return;
     final pages = _continuousPages;
-    final index = positions.first.index;
     if (index < 0 || index >= pages.length) return;
     final page = pages[index];
     if (_activeUnitId != page.unit.id) {
@@ -363,6 +347,20 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       _pageController = PageController(initialPage: _currentPage);
     }
     setState(() => _settings = s);
+    final enteredContinuous = s.continuousReading &&
+        s.mode == ComicReadingMode.webtoon &&
+        (!previous.continuousReading ||
+            previous.mode != ComicReadingMode.webtoon);
+    if (enteredContinuous) {
+      final unit = _activeReaderContext?.currentUnit;
+      if (unit != null) {
+        final index = _continuousIndexFor(unit, _currentPage);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _continuousScrollController.jumpToPage(index);
+        });
+      }
+    }
   }
 
   void _showSettings() {
@@ -632,62 +630,32 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       final pages = _continuousPages;
       final currentUnit = _activeReaderContext!.currentUnit;
       final initialIndex = _continuousIndexFor(currentUnit, _currentPage);
-      return ScrollablePositionedList.builder(
-        itemScrollController: _continuousScrollController,
-        itemPositionsListener: _continuousPositions,
-        initialScrollIndex: initialIndex,
-        itemCount: pages.length,
-        itemBuilder: (context, index) {
-          final page = pages[index];
-          final previousUnit = index == 0 ? null : pages[index - 1].unit;
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (previousUnit?.id != page.unit.id)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  color: Colors.black,
-                  child: Text(
-                    page.unit.displayLabel.isEmpty
-                        ? page.unit.title
-                        : page.unit.displayLabel,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                ),
-              AuthenticatedImage(
-                imageUrl: getImageUrl(
-                  serverUrl,
-                  page.unit.comicId,
-                  page: page.physicalPage,
-                ),
-                comicId: page.unit.comicId,
-                pageIndex: page.physicalPage,
-                fit: _settings.fitMode == FitMode.width
-                    ? BoxFit.fitWidth
-                    : BoxFit.contain,
-                placeholder: SizedBox(
-                  height: MediaQuery.of(context).size.height,
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
-                errorWidget: const SizedBox(
-                  height: 200,
-                  child: Center(
-                    child: Icon(
-                      Icons.broken_image,
-                      color: Colors.white54,
-                      size: 48,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+      final webtoonPages = <WorkWebtoonPage>[
+        for (var index = 0; index < pages.length; index++)
+          WorkWebtoonPage(
+            imageUrl: getImageUrl(
+              serverUrl,
+              pages[index].unit.comicId,
+              page: pages[index].physicalPage,
+            ),
+            comicId: pages[index].unit.comicId,
+            pageIndex: pages[index].physicalPage,
+            header: index == 0 ||
+                    pages[index - 1].unit.id != pages[index].unit.id
+                ? (pages[index].unit.displayLabel.isEmpty
+                    ? pages[index].unit.title
+                    : pages[index].unit.displayLabel)
+                : null,
+          ),
+      ];
+      return WorkWebtoonView(
+        controller: _continuousScrollController,
+        pages: webtoonPages,
+        initialPage: initialIndex,
+        fit: _settings.fitMode == FitMode.width
+            ? BoxFit.fitWidth
+            : BoxFit.contain,
+        onPageChanged: _onWebtoonPageChanged,
       );
     }
     return NotificationListener<ScrollNotification>(
@@ -788,13 +756,9 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     if (readerContext == null) return;
     if (_settings.continuousReading &&
         _settings.mode == ComicReadingMode.webtoon &&
-        _continuousScrollController.isAttached) {
+        _continuousScrollController.hasClients) {
       final index = _continuousIndexFor(unit, 0);
-      await _continuousScrollController.scrollTo(
-        index: index,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
+      _continuousScrollController.jumpToPage(index);
       return;
     }
     await _activity.finish();
@@ -945,9 +909,9 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                           if (_settings.mode == ComicReadingMode.webtoon) {
                             if (_settings.continuousReading &&
                                 readerContext != null &&
-                                _continuousScrollController.isAttached) {
-                              _continuousScrollController.jumpTo(
-                                index: _continuousIndexFor(
+                                _continuousScrollController.hasClients) {
+                              _continuousScrollController.jumpToPage(
+                                _continuousIndexFor(
                                   readerContext.currentUnit,
                                   page,
                                 ),
