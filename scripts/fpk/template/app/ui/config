@@ -1,11 +1,11 @@
 {
   ".url": {
-    "nowen-reader.Application": {
-      "title": "弄文阅读",
+    "{{DESKTOP_APP}}": {
+      "title": "{{DISPLAY_NAME}}",
       "icon": "images/icon_{0}.png",
       "type": "url",
       "protocol": "http",
-      "port": "6680",
+      "port": "{{SERVICE_PORT}}",
       "url": "/",
       "allUsers": true
     }

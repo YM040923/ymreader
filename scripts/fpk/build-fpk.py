@@ -17,6 +17,29 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 
+BRANDING_DEFAULTS = {
+    "appname": "nowen-reader",
+    "display_name": "弄文阅读",
+    "service_port": "6680",
+    "icon_prefix": "nowen-reader-fnos-icon",
+    "maintainer": "Nowen",
+    "maintainer_url": "https://github.com/cropflre/nowen-reader",
+    "distributor": "Nowen",
+    "distributor_url": "https://github.com/cropflre/nowen-reader",
+}
+
+TEMPLATE_FILES = (
+    "manifest",
+    "app/ui/config",
+    "config/resource",
+    "config/privilege",
+    "app/docker/docker-compose.yaml",
+    *[f"cmd/{name}" for name in (
+        "main", "install_init", "install_callback", "upgrade_init", "upgrade_callback",
+        "uninstall_init", "uninstall_callback", "config_init", "config_callback",
+    )],
+)
+
 
 def png_size(data):
     if data[:8] != b"\x89PNG\r\n\x1a\n":
@@ -33,7 +56,45 @@ def archive_files(archive):
     return result
 
 
-def verify_package(package, version, image, description):
+def resolve_branding(release, appname=None, display_name=None, port=None, icon_prefix=None):
+    branding = {key: release.get(key, value) for key, value in BRANDING_DEFAULTS.items()}
+    if appname:
+        branding["appname"] = appname
+    if display_name:
+        branding["display_name"] = display_name
+    if port:
+        branding["service_port"] = str(port)
+    if icon_prefix:
+        branding["icon_prefix"] = icon_prefix
+    branding["desktop_app"] = f"{branding['appname']}.Application"
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", branding["appname"]):
+        raise ValueError("App name must be lowercase letters, digits, or hyphens")
+    if not branding["display_name"].strip() or "`" in branding["display_name"]:
+        raise ValueError("Display name must be non-empty and cannot contain a backtick")
+    if not re.fullmatch(r"[1-9][0-9]{0,4}", branding["service_port"]) or int(branding["service_port"]) > 65535:
+        raise ValueError("Service port must be 1-65535")
+    return branding
+
+
+def render_templates(source, version, image, description, branding):
+    replacements = {
+        "VERSION": version,
+        "DESCRIPTION": description,
+        "IMAGE": image,
+        **{key.upper(): value for key, value in branding.items()},
+    }
+    for name in TEMPLATE_FILES:
+        path = source / name
+        text = path.read_text(encoding="utf-8")
+        for key, value in replacements.items():
+            text = text.replace("{{" + key + "}}", value)
+        if re.search(r"\{\{[A-Z_]+\}\}", text):
+            raise ValueError(f"Unresolved template variable: {name}")
+        path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def verify_package(package, version, image, description, branding):
+    appname = branding["appname"]
     with tarfile.open(package, "r:*") as outer:
         files = archive_files(outer)
     manifest = files["manifest"][1].decode("utf-8")
@@ -42,8 +103,9 @@ def verify_package(package, version, image, description):
         if "=" in line:
             key, value = line.split("=", 1)
             fields[key.strip()] = value.strip().strip("`")
-    expected = {"appname": "nowen-reader", "display_name": "弄文阅读", "version": version, "platform": "all",
-                "desktop_applaunchname": "nowen-reader.Application", "service_port": "6680"}
+    expected = {"appname": appname, "display_name": branding["display_name"], "version": version,
+                "platform": "all", "desktop_applaunchname": branding["desktop_app"],
+                "service_port": branding["service_port"]}
     for key, value in expected.items():
         if fields.get(key) != value:
             raise ValueError(f"Manifest mismatch: {key}")
@@ -58,18 +120,22 @@ def verify_package(package, version, image, description):
     compose = app_files["docker/docker-compose.yaml"][1].decode("utf-8")
     if f"image: {image}" not in compose or "{{IMAGE}}" in compose:
         raise ValueError("Packaged Docker image does not match release.json")
+    if f"container_name: {appname}" not in compose:
+        raise ValueError("Compose container name does not match the app name")
     for token in ("TRIM_PKGVAR", "TRIM_DATA_SHARE_PATHS", "TRIM_UID", "TRIM_GID"):
         if token not in compose:
             raise ValueError(f"Missing fnOS runtime variable: {token}")
-    ui = json.loads(app_files["ui/config"][1])[".url"]["nowen-reader.Application"]
-    if ui["port"] != "6680" or ui["protocol"] != "http" or ui["title"] != "弄文阅读":
+    ui = json.loads(app_files["ui/config"][1])[".url"][branding["desktop_app"]]
+    if ui["port"] != branding["service_port"] or ui["protocol"] != "http" or ui["title"] != branding["display_name"]:
         raise ValueError("Desktop entry name, protocol, or service port disagrees")
     for size in (64, 256):
         if app_files[f"ui/images/icon_{size}.png"][1] != files["ICON.PNG" if size == 64 else "ICON_256.PNG"][1]:
             raise ValueError("Desktop and application center icons disagree")
-    json.loads(files["config/privilege"][1])
+    privilege = json.loads(files["config/privilege"][1])
+    if privilege.get("username") != f"docker-{appname}" or privilege.get("groupname") != f"docker-{appname}":
+        raise ValueError("Package privilege identity does not match the app name")
     resource = json.loads(files["config/resource"][1])
-    if resource["data-share"]["shares"] != [{"name": "nowen-reader"}]:
+    if resource["data-share"]["shares"] != [{"name": appname}]:
         raise ValueError("Compose requires exactly one application book share")
     for hook in ("main", "install_init", "install_callback", "upgrade_init", "upgrade_callback",
                  "uninstall_init", "uninstall_callback", "config_init", "config_callback"):
@@ -90,43 +156,42 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fnpack", default=os.environ.get("FNPACK_BIN") or shutil.which("fnpack"))
     parser.add_argument("--out", type=Path, default=ROOT / "dist/fpk")
+    parser.add_argument("--version", help="Package version; defaults to release.json")
+    parser.add_argument("--image", help="Versioned image reference with registry digest; defaults to release.json")
+    parser.add_argument("--appname", help="fnOS app name, e.g. ymreader")
+    parser.add_argument("--display-name", help="Application center display name")
+    parser.add_argument("--port", type=int, help="Exposed service port; defaults to 6680")
+    parser.add_argument("--icon-prefix", help="Icon basename under docs/assets, without -fnos-icon-N.png")
     args = parser.parse_args()
     if not args.fnpack:
         parser.error("Pass --fnpack /path/to/official/fnpack or set FNPACK_BIN")
     fnpack = str(Path(args.fnpack).resolve())
     release = json.loads((HERE / "release.json").read_text(encoding="utf-8"))
-    version, image = release["version"], release["image"]
+    version = args.version or release["version"]
+    image = args.image or release["image"]
+    branding = resolve_branding(release, args.appname, args.display_name, args.port, args.icon_prefix)
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("FPK version must be X.Y.Z")
-    if not re.fullmatch(rf"cropflre/nowen-reader:v{re.escape(version)}@sha256:[a-f0-9]{{64}}", image):
+    if not re.fullmatch(rf"[A-Za-z0-9][A-Za-z0-9._/@:-]*:v{re.escape(version)}@sha256:[a-f0-9]{{64}}", image):
         raise ValueError("The versioned image must include its immutable registry digest")
     description = "".join(line.strip() for line in (HERE / "app-description.html").read_text(encoding="utf-8").splitlines())
     if "`" in description:
         raise ValueError("Description cannot contain fnpack's backtick delimiter")
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="nowen-reader-fpk-") as temporary:
+    appname = branding["appname"]
+    with tempfile.TemporaryDirectory(prefix=f"{appname}-fpk-") as temporary:
         temporary = Path(temporary)
-        source = temporary / "nowen-reader"
+        source = temporary / appname
         shutil.copytree(HERE / "template", source)
-        for name, replacements in (
-            ("manifest", {"VERSION": version, "DESCRIPTION": description}),
-            ("app/docker/docker-compose.yaml", {"IMAGE": image}),
-        ):
-            path = source / name
-            text = path.read_text(encoding="utf-8")
-            for key, value in replacements.items():
-                text = text.replace("{{" + key + "}}", value)
-            if re.search(r"\{\{[A-Z_]+\}\}", text):
-                raise ValueError(f"Unresolved template variable: {name}")
-            path.write_text(text, encoding="utf-8", newline="\n")
+        render_templates(source, version, image, description, branding)
         for path in (source / "cmd").iterdir():
             path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
             path.chmod(0o755)
         icons = source / "app/ui/images"
         icons.mkdir(parents=True, exist_ok=True)
         for size, filename in ((64, "ICON.PNG"), (256, "ICON_256.PNG")):
-            icon = ROOT / f"docs/assets/nowen-reader-fnos-icon-{size}.png"
+            icon = ROOT / f"docs/assets/{branding['icon_prefix']}-{size}.png"
             if png_size(icon.read_bytes()) != (size, size):
                 raise ValueError(f"Incorrect source icon size: {icon}")
             shutil.copyfile(icon, source / filename)
@@ -138,12 +203,13 @@ def main():
         if len(candidates) != 1:
             raise ValueError(f"Expected one generated FPK, found {len(candidates)}")
         package = candidates[0]
-        verify_package(package, version, image, description)
-        destination = args.out / f"nowen-reader-{version}.fpk"
+        verify_package(package, version, image, description, branding)
+        destination = args.out / f"{appname}-{version}.fpk"
         shutil.copyfile(package, destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     (args.out / "SHA256SUMS").write_text(f"{digest}  {destination.name}\n", encoding="utf-8", newline="\n")
-    metadata = {**release, "package": destination.name, "bytes": destination.stat().st_size,
+    metadata = {**release, **branding, "version": version, "image": image, "package": destination.name,
+                "bytes": destination.stat().st_size,
                 "sha256": digest, "built_at": datetime.now(timezone.utc).isoformat(),
                 "fnpack": tool.split("Usage:")[0].strip(), "package_contents_verified": True,
                 "physical_fnos_acceptance": "not performed"}

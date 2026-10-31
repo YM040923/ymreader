@@ -55,6 +55,20 @@ python3 scripts/fpk/build-fpk.py --fnpack /path/to/fnpack-1.2.3-linux-amd64
 
 输出：`dist/fpk/nowen-reader-1.2.3.fpk`、`SHA256SUMS` 与 `package-info.json`。
 
+### 分叉或自建镜像
+
+默认打包身份是 `nowen-reader` / 弄文阅读 / 6680 端口，镜像取自 `release.json`。使用自己的构建产物时，必须换成自己的带摘要镜像，并同时改掉应用名和端口，避免和已有实例 clash：
+
+```bash
+python3 scripts/fpk/build-fpk.py --fnpack /path/to/fnpack-1.2.3-linux-amd64 \
+  --appname ymreader \
+  --display-name "你的应用名" \
+  --port 6690 \
+  --image ghcr.io/<owner>/ymreader:v1.2.3@sha256:<digest>
+```
+
+`--appname` 同时决定数据目录、共享目录、Docker 容器名、数据库文件名和桌面入口键；`--display-name` 只改展示名。版本仍由 `release.json` 提供，必要时用 `--version` 覆盖。改动后输出文件名为 `<appname>-<version>.fpk`。
+
 版本及镜像摘要见 `scripts/fpk/release.json`；更新版本时应先确认对应镜像存在，并同步更新摘要。应用中心简介来自 `scripts/fpk/app-description.html`。打包脚本会检查归档中的配置、脚本权限和图标，并写入构建记录。
 
 `install_init` 不创建数据目录；平台准备好应用运行时目录和权限后，由 `install_callback` 以应用用户身份创建数据库目录及 `cache/thumbnails`、`cache/pages`。升级时沿用已有数据目录。

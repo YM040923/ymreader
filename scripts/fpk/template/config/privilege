@@ -1,5 +1,5 @@
 {
   "defaults": { "run-as": "package" },
-  "username": "docker-nowen-reader",
-  "groupname": "docker-nowen-reader"
+  "username": "docker-{{APPNAME}}",
+  "groupname": "docker-{{APPNAME}}"
 }

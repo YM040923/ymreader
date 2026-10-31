@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise fnOS install timing with a non-root package identity on Linux."""
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -93,13 +95,66 @@ class InstallLifecycleTests(unittest.TestCase):
 
 
 class PackageIdentityTests(unittest.TestCase):
-    def test_display_name_and_desktop_entry_are_chinese(self):
-        fields = dict(line.split("=", 1) for line in (HERE / "template/manifest").read_text(encoding="utf-8").splitlines() if "=" in line)
-        fields = {key.strip(): value.strip() for key, value in fields.items()}
-        ui = json.loads((HERE / "template/app/ui/config").read_text(encoding="utf-8"))
-        self.assertEqual(fields["display_name"], "弄文阅读")
-        self.assertEqual(ui[".url"][fields["desktop_applaunchname"]]["title"], "弄文阅读")
-        self.assertEqual(fields["appname"], "nowen-reader")
+    def setUp(self):
+        loader = importlib.machinery.SourceFileLoader("build_fpk", str(HERE / "build-fpk.py"))
+        spec = importlib.util.spec_from_loader("build_fpk", loader)
+        self.build = importlib.util.module_from_spec(spec)
+        loader.exec_module(self.build)
+        self.release = {"version": "1.2.3", "image": "registry.example/app:v1.2.3@sha256:" + "0" * 64}
+
+    def test_default_identity_matches_upstream(self):
+        branding = self.build.resolve_branding(self.release)
+        self.assertEqual(branding["appname"], "nowen-reader")
+        self.assertEqual(branding["display_name"], "弄文阅读")
+        self.assertEqual(branding["desktop_app"], "nowen-reader.Application")
+        self.assertEqual(branding["service_port"], "6680")
+
+    def test_override_branding_for_a_fork(self):
+        branding = self.build.resolve_branding(
+            self.release, appname="ymreader", display_name="YM 阅读", port=6690,
+            icon_prefix="nowen-reader-fnos-icon")
+        self.assertEqual(branding["appname"], "ymreader")
+        self.assertEqual(branding["display_name"], "YM 阅读")
+        self.assertEqual(branding["desktop_app"], "ymreader.Application")
+        self.assertEqual(branding["service_port"], "6690")
+
+    def test_branding_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            self.build.resolve_branding(self.release, appname="Bad Name")
+        with self.assertRaises(ValueError):
+            self.build.resolve_branding(self.release, appname="ymreader", port=70000)
+        with self.assertRaises(ValueError):
+            self.build.resolve_branding(self.release, display_name="`broken`")
+
+    def test_render_writes_override_identity(self):
+        branding = self.build.resolve_branding(self.release, appname="ymreader", display_name="YM 阅读", port=6690)
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "src"
+            shutil.copytree(HERE / "template", source)
+            self.build.render_templates(source, "1.2.3", self.release["image"], "desc", branding)
+            manifest = (source / "manifest").read_text(encoding="utf-8")
+            ui = json.loads((source / "app/ui/config").read_text(encoding="utf-8"))
+            compose = (source / "app/docker/docker-compose.yaml").read_text(encoding="utf-8")
+            self.assertIn("appname               = ymreader", manifest)
+            self.assertIn("service_port          = 6690", manifest)
+            self.assertIn("ymreader.Application", ui[".url"])
+            self.assertEqual(ui[".url"]["ymreader.Application"]["port"], "6690")
+            self.assertIn("DATABASE_URL: /data/ymreader.db", compose)
+            self.assertNotIn("{{", manifest + compose + json.dumps(ui, ensure_ascii=False))
+
+    def test_templates_are_parameterized(self):
+        manifest = (HERE / "template/manifest").read_text(encoding="utf-8")
+        ui = (HERE / "template/app/ui/config").read_text(encoding="utf-8")
+        resource = (HERE / "template/config/resource").read_text(encoding="utf-8")
+        compose = (HERE / "template/app/docker/docker-compose.yaml").read_text(encoding="utf-8")
+        self.assertIn("{{APPNAME}}", manifest)
+        self.assertIn("{{DISPLAY_NAME}}", manifest)
+        self.assertIn("{{SERVICE_PORT}}", manifest)
+        self.assertIn("{{DESKTOP_APP}}", ui)
+        self.assertIn("{{APPNAME}}", resource)
+        self.assertIn("{{APPNAME}}", compose)
+        for text in (manifest, ui, resource, compose):
+            self.assertNotIn("nowen-reader", text)
 
 
 if __name__ == "__main__":
