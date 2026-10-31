@@ -15,6 +15,8 @@ class WorkQuery {
   final List<String> tags;
   final String? category;
   final String? readingStatus;
+  final bool filterByDirectory;
+  final String directory;
 
   const WorkQuery({
     this.page = 1,
@@ -27,6 +29,8 @@ class WorkQuery {
     this.tags = const [],
     this.category,
     this.readingStatus,
+    this.filterByDirectory = false,
+    this.directory = '',
   });
 
   WorkQuery copyWith({
@@ -42,6 +46,9 @@ class WorkQuery {
     String? category,
     bool clearCategory = false,
     String? readingStatus,
+    bool? filterByDirectory,
+    String? directory,
+    bool clearDirectory = false,
   }) =>
       WorkQuery(
         page: page ?? this.page,
@@ -54,6 +61,8 @@ class WorkQuery {
         tags: tags ?? this.tags,
         category: clearCategory ? null : category ?? this.category,
         readingStatus: readingStatus ?? this.readingStatus,
+        filterByDirectory: filterByDirectory ?? this.filterByDirectory,
+        directory: clearDirectory ? '' : directory ?? this.directory,
       );
 }
 
@@ -77,6 +86,9 @@ Map<String, dynamic> buildWorkQuery(WorkQuery query) {
   }
   if (query.readingStatus?.trim().isNotEmpty == true) {
     result['readingStatus'] = query.readingStatus!.trim();
+  }
+  if (query.filterByDirectory) {
+    result['dir'] = query.directory;
   }
   return result;
 }
@@ -213,6 +225,96 @@ class WorkApi {
       data: {'status': value},
     );
   }
+  Future<LibraryDirectoryListing> listLibraryDirectories(
+    String libraryId, {
+    String parent = '',
+  }) async {
+    final response = await _dio.get(
+      '/libraries/${Uri.encodeComponent(libraryId)}/directories',
+      queryParameters: parent.isEmpty ? null : {'parent': parent},
+    );
+    return LibraryDirectoryListing.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+}
+
+class LibraryDirectoryNode {
+  final String name;
+  final String path;
+  final int workCount;
+  final bool hasChildren;
+  final String? coverUrl;
+  final String? coverComicId;
+
+  const LibraryDirectoryNode({
+    required this.name,
+    required this.path,
+    required this.workCount,
+    required this.hasChildren,
+    this.coverUrl,
+    this.coverComicId,
+  });
+
+  factory LibraryDirectoryNode.fromJson(Map<String, dynamic> json) =>
+      LibraryDirectoryNode(
+        name: json['name']?.toString() ?? '',
+        path: json['path']?.toString() ?? '',
+        workCount: _asInt(json['workCount'], 0),
+        hasChildren: json['hasChildren'] == true,
+        coverUrl: json['coverUrl']?.toString(),
+        coverComicId: json['coverComicId']?.toString(),
+      );
+}
+
+class LibraryDirectoryBreadcrumb {
+  final String name;
+  final String path;
+
+  const LibraryDirectoryBreadcrumb({required this.name, required this.path});
+
+  factory LibraryDirectoryBreadcrumb.fromJson(Map<String, dynamic> json) =>
+      LibraryDirectoryBreadcrumb(
+        name: json['name']?.toString() ?? '',
+        path: json['path']?.toString() ?? '',
+      );
+}
+
+class LibraryDirectoryListing {
+  final String libraryId;
+  final String parent;
+  final List<LibraryDirectoryBreadcrumb> breadcrumbs;
+  final List<LibraryDirectoryNode> directories;
+  final int total;
+
+  const LibraryDirectoryListing({
+    required this.libraryId,
+    required this.parent,
+    required this.breadcrumbs,
+    required this.directories,
+    required this.total,
+  });
+
+  factory LibraryDirectoryListing.fromJson(Map<String, dynamic> json) =>
+      LibraryDirectoryListing(
+        libraryId: json['libraryId']?.toString() ?? '',
+        parent: json['parent']?.toString() ?? '',
+        breadcrumbs: (json['breadcrumbs'] as List?)
+                ?.whereType<Map>()
+                .map((item) => LibraryDirectoryBreadcrumb.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ))
+                .toList() ??
+            const [],
+        directories: (json['directories'] as List?)
+                ?.whereType<Map>()
+                .map((item) => LibraryDirectoryNode.fromJson(
+                      Map<String, dynamic>.from(item),
+                    ))
+                .toList() ??
+            const [],
+        total: _asInt(json['total'], 0),
+      );
 }
 
 int _asInt(dynamic value, int fallback) {

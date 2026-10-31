@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/api/work_api.dart';
 import '../../data/providers/auth_provider.dart';
 import '../../data/providers/comic_provider.dart';
 import '../../data/providers/server_branding_provider.dart';
 import '../../data/providers/work_provider.dart';
 import '../../widgets/continue_reading.dart';
+import '../../widgets/directory_card.dart';
 import '../../widgets/server_logo.dart';
 import '../../widgets/work_card.dart';
 
@@ -18,6 +20,160 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _scrollController = ScrollController();
+
+  bool _directoryMode = false;
+  String _directory = '';
+  List<LibraryDirectoryNode> _directories = const [];
+  List<LibraryDirectoryBreadcrumb> _breadcrumbs = const [];
+  bool _loadingDirectories = false;
+
+  Future<void> _loadDirectories(String libraryId) async {
+    setState(() => _loadingDirectories = true);
+    try {
+      final listing = await ref
+          .read(workApiProvider)
+          .listLibraryDirectories(libraryId, parent: _directory);
+      if (!mounted || !_directoryMode) return;
+      setState(() {
+        _directories = listing.directories;
+        _breadcrumbs = listing.breadcrumbs;
+        _loadingDirectories = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _directories = const [];
+        _breadcrumbs = const [];
+        _loadingDirectories = false;
+      });
+    }
+  }
+
+  Future<void> _toggleDirectoryMode(String libraryId) async {
+    final notifier = ref.read(workListProvider.notifier);
+    if (_directoryMode) {
+      setState(() {
+        _directoryMode = false;
+        _directory = '';
+        _directories = const [];
+        _breadcrumbs = const [];
+      });
+      await notifier.load(
+        query: ref
+            .read(workListProvider)
+            .query
+            .copyWith(filterByDirectory: false, clearDirectory: true),
+      );
+      return;
+    }
+    setState(() {
+      _directoryMode = true;
+      _directory = '';
+      _directories = const [];
+      _breadcrumbs = const [];
+    });
+    await notifier.load(
+      query: ref.read(workListProvider).query.copyWith(
+            libraryIds: [libraryId],
+            filterByDirectory: true,
+            clearDirectory: true,
+          ),
+    );
+    await _loadDirectories(libraryId);
+  }
+
+  Future<void> _openDirectory(String path, String libraryId) async {
+    setState(() {
+      _directory = path;
+      _directories = const [];
+    });
+    await ref.read(workListProvider.notifier).load(
+          query: ref.read(workListProvider).query.copyWith(
+                directory: path,
+                filterByDirectory: true,
+                page: 1,
+              ),
+        );
+    await _loadDirectories(libraryId);
+  }
+
+  Future<void> _selectLibrary(String? libraryId) async {    final notifier = ref.read(workListProvider.notifier);
+    final query = ref.read(workListProvider).query;
+    if (!_directoryMode) {
+      await notifier.load(
+        query: query.copyWith(libraryIds: libraryId == null ? [] : [libraryId]),
+      );
+      return;
+    }
+    if (libraryId == null) {
+      setState(() {
+        _directoryMode = false;
+        _directory = '';
+        _directories = const [];
+        _breadcrumbs = const [];
+      });
+      await notifier.load(
+        query: query.copyWith(
+          libraryIds: [],
+          filterByDirectory: false,
+          clearDirectory: true,
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _directory = '';
+      _directories = const [];
+      _breadcrumbs = const [];
+    });
+    await notifier.load(
+      query: query.copyWith(
+        libraryIds: [libraryId],
+        filterByDirectory: true,
+        clearDirectory: true,
+        page: 1,
+      ),
+    );
+    await _loadDirectories(libraryId);
+  }
+
+  Widget _buildDirectoryBar(ColorScheme colors, String? libraryId) {
+    if (libraryId == null) return const SizedBox.shrink();
+    return SizedBox(
+      height: 42,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        children: [
+          _BreadcrumbChip(
+            label: '全部',
+            selected: _directory.isEmpty,
+            onTap: () => _openDirectory('', libraryId),
+          ),
+          for (final crumb in _breadcrumbs) ...[
+            Icon(Icons.chevron_right_rounded,
+                size: 16, color: colors.onSurfaceVariant),
+            _BreadcrumbChip(
+              label: crumb.name,
+              selected: crumb.path == _directory,
+              onTap: () => _openDirectory(crumb.path, libraryId),
+            ),
+          ],
+          if (_loadingDirectories)
+            const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: Center(
+                child: SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -52,6 +208,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final libraryList = libraries.valueOrNull;
     final activeLibraryName =
         libraryList != null && libraryList.length == 1 ? libraryList.first.name : '书库';
+    final String? activeLibraryId = libraryList != null && libraryList.length == 1
+        ? libraryList.first.id
+        : (state.query.libraryIds.length == 1 ? state.query.libraryIds.first : null);
     final width = MediaQuery.sizeOf(context).width;
     final columns = width >= 900
         ? 7
@@ -68,6 +227,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ref.read(serverBrandingProvider.notifier).refresh(force: true);
           ref.invalidate(accessibleLibrariesProvider);
           await ref.read(workListProvider.notifier).load();
+          if (_directoryMode && activeLibraryId != null) {
+            await _loadDirectories(activeLibraryId);
+          }
           await brandingRefresh;
         },
         child: CustomScrollView(
@@ -102,6 +264,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ],
               ),
               actions: [
+                IconButton(
+                  tooltip: _directoryMode ? '退出目录浏览' : '按目录浏览',
+                  onPressed: activeLibraryId == null
+                      ? null
+                      : () => _toggleDirectoryMode(activeLibraryId),
+                  icon: Icon(
+                    _directoryMode
+                        ? Icons.folder_open_rounded
+                        : Icons.folder_outlined,
+                    color: _directoryMode ? cs.primary : null,
+                  ),
+                ),
                 IconButton(
                   tooltip: viewMode == ViewMode.grid ? '列表视图' : '封面墙',
                   onPressed: () {
@@ -152,9 +326,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       _LibraryChip(
                         label: '全部',
                         selected: state.query.libraryIds.isEmpty,
-                        onTap: () => ref
-                            .read(workListProvider.notifier)
-                            .load(query: state.query.copyWith(libraryIds: [])),
+                        onTap: () => _selectLibrary(null),
                       ),
                       for (final library in items)
                         _LibraryChip(
@@ -162,21 +334,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           count: library.workCount,
                           selected: state.query.libraryIds.length == 1 &&
                               state.query.libraryIds.first == library.id,
-                          onTap: () => ref.read(workListProvider.notifier).load(
-                                query: state.query
-                                    .copyWith(libraryIds: [library.id]),
-                              ),
+                          onTap: () => _selectLibrary(library.id),
                         ),
                     ],
                   ),
                 ),
               ),
             ),
-            if (state.isLoading && state.works.isEmpty)
+            if (_directoryMode)
+              SliverToBoxAdapter(
+                child: _buildDirectoryBar(cs, activeLibraryId),
+              ),
+            if ((state.isLoading || _loadingDirectories) &&
+                state.works.isEmpty &&
+                _directories.isEmpty)
               const SliverFillRemaining(
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (state.error != null && state.works.isEmpty)
+            else if (state.error != null &&
+                state.works.isEmpty &&
+                _directories.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: _ErrorState(
@@ -184,10 +361,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   onRetry: () => ref.read(workListProvider.notifier).load(),
                 ),
               )
-            else if (state.works.isEmpty)
-              const SliverFillRemaining(
+            else if (state.works.isEmpty && _directories.isEmpty)
+              SliverFillRemaining(
                 hasScrollBody: false,
-                child: Center(child: Text('这个书库还没有漫画')),
+                child: Center(
+                  child: Text(
+                    _directoryMode ? '这个目录还没有内容' : '这个书库还没有漫画',
+                  ),
+                ),
               )
             else if (viewMode == ViewMode.grid)
               SliverPadding(
@@ -199,9 +380,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 14,
                   ),
-                  itemCount: state.works.length,
+                  itemCount: _directories.length + state.works.length,
                   itemBuilder: (_, index) {
-                    final work = state.works[index];
+                    if (index < _directories.length) {
+                      final node = _directories[index];
+                      return DirectoryCard(
+                        node: node,
+                        serverUrl: serverUrl,
+                        onTap: () =>
+                            _openDirectory(node.path, activeLibraryId!),
+                      );
+                    }
+                    final work = state.works[index - _directories.length];
                     return WorkCard(
                       work: work,
                       serverUrl: serverUrl,
@@ -211,9 +401,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               )
             else
               SliverList.builder(
-                itemCount: state.works.length,
+                itemCount: _directories.length + state.works.length,
                 itemBuilder: (_, index) {
-                  final work = state.works[index];
+                  if (index < _directories.length) {
+                    final node = _directories[index];
+                    return DirectoryCard(
+                      node: node,
+                      serverUrl: serverUrl,
+                      isGrid: false,
+                      onTap: () => _openDirectory(node.path, activeLibraryId!),
+                    );
+                  }
+                  final work = state.works[index - _directories.length];
                   return WorkCard(
                     work: work,
                     serverUrl: serverUrl,
@@ -286,6 +485,47 @@ class _ErrorState extends StatelessWidget {
               label: const Text('重试'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BreadcrumbChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _BreadcrumbChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? colors.primary.withValues(alpha: 0.15)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              color: selected ? colors.primary : colors.onSurfaceVariant,
+            ),
+          ),
         ),
       ),
     );
