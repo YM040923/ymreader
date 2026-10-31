@@ -8,7 +8,7 @@ on:
       - '.github/workflows/flutter-apk-debug.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   apk:
@@ -37,6 +37,15 @@ jobs:
       - name: Build debug APK
         working-directory: flutter_app
         run: flutter build apk --debug
+      - name: Publish APK branch
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp flutter_app/build/app/outputs/flutter-apk/app-debug.apk ./nowen-reader-qadev.apk
+          git add -f nowen-reader-qadev.apk
+          git commit -m "ci: debug apk ${GITHUB_SHA::7}"
+          git push --force origin HEAD:ci-artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: nowen-reader-qadev-debug
