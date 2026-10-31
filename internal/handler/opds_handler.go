@@ -111,10 +111,10 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 	coverByLibrary := make(map[string]string, len(libraryIDs))
 	for _, item := range works {
 		if _, exists := coverByLibrary[item.Work.LibraryID]; !exists {
-			coverByLibrary[item.Work.LibraryID] = "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=feed3"
+			coverByLibrary[item.Work.LibraryID] = "/api/opds/work-cover/" + url.PathEscape(item.Work.ID) + "?v=feed3"
 		}
 	}
-	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+2)
+	items := make([]service.OPDSNavigationItem, 0, len(libraryIDs)+3)
 	for _, libraryID := range libraryIDs {
 		library, libraryErr := store.GetLibraryByID(libraryID)
 		if libraryErr != nil || library == nil {
@@ -129,6 +129,7 @@ func (h *OPDSHandler) Root(c *gin.Context) {
 		})
 	}
 	items = append(items,
+		service.OPDSNavigationItem{ID: "all", Title: "全部作品", Href: "/api/opds/all", Summary: "浏览全部漫画"},
 		service.OPDSNavigationItem{ID: "recent", Title: "最近添加", Href: "/api/opds/recent", Summary: "最近加入书库的漫画"},
 		service.OPDSNavigationItem{ID: "favorites", Title: "收藏", Href: "/api/opds/favorites", Summary: "已收藏的漫画"},
 	)
@@ -210,7 +211,7 @@ func (h *OPDSHandler) Library(c *gin.Context) {
 	})
 	feedCoverHref := ""
 	if len(items) > 0 {
-		feedCoverHref = "/api/opds/public-work-cover/" + url.PathEscape(items[0].Work.ID) + "?v=feed3"
+		feedCoverHref = "/api/opds/work-cover/" + url.PathEscape(items[0].Work.ID) + "?v=feed3"
 	}
 	h.renderWorkItemsWithCover(c, library.Name, feedCoverHref, items)
 }
@@ -307,7 +308,8 @@ func (h *OPDSHandler) WorkUnitDetail(c *gin.Context) {
 				row = physicalOPDSComicRow(comic, []service.WorkUnit{unit})
 				displayTitle := opdsDisplayTitleForWork(row.Title, work.Title)
 				row.Title = displayTitle
-				row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID)
+				row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID) + "/" +
+					url.PathEscape(opdsAcquisitionFilename(displayTitle, comic.Filename))
 			} else {
 				row = virtualOPDSUnitRow(comic, unit)
 			}
@@ -316,7 +318,7 @@ func (h *OPDSHandler) WorkUnitDetail(c *gin.Context) {
 				BaseURL:       baseURL,
 				Title:         work.Title + " · " + row.Title,
 				FeedID:        opdsFeedID(baseURL, c),
-				FeedCoverHref: "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
+				FeedCoverHref: "/api/opds/work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
 				Comics:        []service.OPDSComic{row},
 				Pagination: service.OPDSPagination{
 					SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/units/" + url.PathEscape(unitKey),
@@ -374,7 +376,11 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 				if physicalComicCount > 1 {
 					displayTitle := opdsDisplayTitleForWork(row.Title, work.Title)
 					row.Title = displayTitle
-					row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID)
+					row.AcquisitionHref = "/api/opds/download/" + url.PathEscape(comic.ID) + "/" +
+						url.PathEscape(opdsAcquisitionFilename(displayTitle, comic.Filename))
+					// Each file is one chapter of a multi-file Work; a per-file
+					// PSE stream would compete with the direct acquisition link.
+					row.SuppressStream = true
 				}
 				rows = append(rows, row)
 				continue
@@ -383,7 +389,7 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			rows = append(rows, row)
 		}
 		if len(rows) > 0 {
-			rows[0].CoverHref = "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=parent4"
+			rows[0].CoverHref = "/api/opds/work-cover/" + url.PathEscape(work.ID) + "?v=parent4"
 		}
 		page, pageSize := parseOPDSPagination(c)
 		total := len(rows)
@@ -403,7 +409,7 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			BaseURL:       baseURL,
 			Title:         work.Title,
 			FeedID:        opdsFeedID(baseURL, c),
-			FeedCoverHref: "/api/opds/public-work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
+			FeedCoverHref: "/api/opds/work-cover/" + url.PathEscape(work.ID) + "?v=feed3",
 			Comics:        rows,
 			Pagination:    buildOPDSPagination(c, page, pageSize, total),
 			FeedType:      feedType,
@@ -509,17 +515,6 @@ func opdsDisplayTitleForWork(title, workTitle string) string {
 		base = strings.TrimSpace(base[len(workTitle):])
 		base = strings.TrimLeft(base, " -–—_:：·")
 		base = strings.TrimSpace(base)
-	}
-	if matches := opdsEnglishVolumePattern.FindStringSubmatch(base); len(matches) == 3 {
-		number := strings.TrimLeft(matches[1], "0")
-		if number == "" {
-			number = "0"
-		}
-		base = "第" + number + "卷"
-		if subtitle := strings.TrimSpace(matches[2]); subtitle != "" {
-			base += " " + subtitle
-		}
-		return base
 	}
 	return opdsDisplayTitle(base)
 }
@@ -735,7 +730,7 @@ type opdsWorkCatalogItem struct {
 func (item opdsWorkCatalogItem) OPDSWork() service.OPDSWork {
 	result := service.OPDSWork{
 		Work:      item.Work,
-		CoverHref: "/api/opds/public-work-cover/" + url.PathEscape(item.Work.ID) + "?v=jpeg2",
+		CoverHref: "/api/opds/work-cover/" + url.PathEscape(item.Work.ID) + "?v=jpeg2",
 		AddedAt:   item.AddedAt,
 		UpdatedAt: item.UpdatedAt,
 	}
@@ -849,9 +844,9 @@ func maxAtomTime(left, right string) string {
 
 func opdsUnitCoverHref(unit service.WorkUnit) string {
 	if unit.InternalPath != "" {
-		return fmt.Sprintf("/api/opds/public-unit-cover/%s?page=%d&v=jpeg2", url.PathEscape(unit.ComicID), unit.CoverPage)
+		return fmt.Sprintf("/api/opds/unit-cover/%s?page=%d", url.PathEscape(unit.ComicID), unit.CoverPage)
 	}
-	return "/api/opds/public-cover/" + url.PathEscape(unit.ComicID) + "?v=jpeg2"
+	return "/api/opds/cover/" + url.PathEscape(unit.ComicID)
 }
 
 // GET /api/opds/series
@@ -995,7 +990,14 @@ func opdsFeedID(baseURL string, c *gin.Context) string {
 	if search := strings.TrimSpace(c.Query("q")); search != "" {
 		query.Set("q", search)
 	}
-	feedURL := &url.URL{Path: c.Request.URL.Path, RawQuery: query.Encode()}
+	path := c.Request.URL.Path
+	// Routers mounted under BASE_PATH receive the prefix in the request path,
+	// while baseURL already carries it; strip it before joining to avoid
+	// producing /reader/reader/api/opds style IDs.
+	if prefix := strings.Trim(config.BasePath(), "/"); prefix != "" {
+		path = strings.TrimPrefix(path, "/"+prefix)
+	}
+	feedURL := &url.URL{Path: path, RawQuery: query.Encode()}
 	return strings.TrimRight(baseURL, "/") + feedURL.String()
 }
 

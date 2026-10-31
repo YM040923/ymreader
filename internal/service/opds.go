@@ -312,10 +312,14 @@ func GenerateWorkNavigationFeedWithCover(baseURL, title, feedID, feedCoverHref s
 					Length: opdsFileLength(direct.FileSize),
 				})
 			}
-		} else {
-			href := absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID+"?v=feed3")
-			links = append(links, atomLink{Rel: "subsection", Href: href, Type: OPDSAcquisitionMIME})
 		}
+		// Every Work also exposes its canonical unit feed so clients can browse
+		// chapters even when the Work itself is a single physical file.
+		links = append(links, atomLink{
+			Rel:  "subsection",
+			Href: absoluteOPDSURL(baseURL, "/api/opds/works/"+work.ID),
+			Type: OPDSAcquisitionMIME,
+		})
 		if item.CoverHref != "" {
 			cover := absoluteOPDSURL(baseURL, item.CoverHref)
 			links = append([]atomLink{
