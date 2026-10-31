@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/api/work_api.dart';
 import '../../data/providers/auth_provider.dart';
@@ -26,6 +27,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<LibraryDirectoryNode> _directories = const [];
   List<LibraryDirectoryBreadcrumb> _breadcrumbs = const [];
   bool _loadingDirectories = false;
+  bool _restoredDirectoryMode = false;
 
   Future<void> _loadDirectories(String libraryId) async {
     setState(() => _loadingDirectories = true);
@@ -58,6 +60,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _directories = const [];
         _breadcrumbs = const [];
       });
+      await _saveDirectoryMode(false);
       await notifier.load(
         query: ref
             .read(workListProvider)
@@ -72,6 +75,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _directories = const [];
       _breadcrumbs = const [];
     });
+    await _saveDirectoryMode(true);
     await notifier.load(
       query: ref.read(workListProvider).query.copyWith(
             libraryIds: [libraryId],
@@ -80,6 +84,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
     );
     await _loadDirectories(libraryId);
+  }
+
+  Future<void> _saveDirectoryMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('home:directoryMode', value);
   }
 
   Future<void> _openDirectory(String path, String libraryId) async {
@@ -112,6 +121,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _directories = const [];
         _breadcrumbs = const [];
       });
+      await _saveDirectoryMode(false);
       await notifier.load(
         query: query.copyWith(
           libraryIds: [],
@@ -211,6 +221,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final String? activeLibraryId = libraryList != null && libraryList.length == 1
         ? libraryList.first.id
         : (state.query.libraryIds.length == 1 ? state.query.libraryIds.first : null);
+    if (!_restoredDirectoryMode && libraryList != null) {
+      _restoredDirectoryMode = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted || _directoryMode) return;
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getBool('home:directoryMode') == true &&
+            libraryList.length == 1) {
+          await _toggleDirectoryMode(libraryList.first.id);
+        }
+      });
+    }
     final width = MediaQuery.sizeOf(context).width;
     final columns = width >= 900
         ? 7

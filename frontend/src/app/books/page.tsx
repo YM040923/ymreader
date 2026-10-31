@@ -216,6 +216,9 @@ export default function BooksPage() {
   const [directoryNodes, setDirectoryNodes] = useState<LibraryDirectoryNode[]>([]);
   const [directoryCrumbs, setDirectoryCrumbs] = useState<{ name: string; path: string }[]>([]);
   const [directoriesLoading, setDirectoriesLoading] = useState(false);
+  const [directoryPage, setDirectoryPage] = useState(1);
+  const [directoryTotalPages, setDirectoryTotalPages] = useState(1);
+  const [directoryTotal, setDirectoryTotal] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
 
@@ -243,6 +246,12 @@ export default function BooksPage() {
   const safeSetCurrentPage = useCallback((v: number | ((prev: number) => number)) => {
     if (pageResetGuardRef.current && typeof v === 'number' && v === 1) return;
     setCurrentPage(v as number);
+  }, []);
+
+  const navigateDirectory = useCallback((path: string) => {
+    setDirectory(path);
+    setDirectoryPage(1);
+    setDirectoryTotalPages(1);
   }, []);
 
   // 右键菜单状态
@@ -438,20 +447,29 @@ export default function BooksPage() {
     if (!browseDirectories || !browseLibraryId) {
       setDirectoryNodes([]);
       setDirectoryCrumbs([]);
+      setDirectoryTotal(0);
+      setDirectoryTotalPages(1);
       return;
     }
     let cancelled = false;
     setDirectoriesLoading(true);
-    fetchLibraryDirectories(browseLibraryId, directory)
+    fetchLibraryDirectories(browseLibraryId, directory, { page: directoryPage })
       .then((data) => {
         if (cancelled) return;
-        setDirectoryNodes(data.directories || []);
         setDirectoryCrumbs(data.breadcrumbs || []);
+        setDirectoryTotal(data.total || 0);
+        setDirectoryTotalPages(data.totalPages || 1);
+        setDirectoryNodes((prev) =>
+          directoryPage > 1 ? [...prev, ...(data.directories || [])] : (data.directories || [])
+        );
       })
       .catch(() => {
         if (cancelled) return;
-        setDirectoryNodes([]);
-        setDirectoryCrumbs([]);
+        if (directoryPage === 1) {
+          setDirectoryNodes([]);
+          setDirectoryCrumbs([]);
+          setDirectoryTotal(0);
+        }
       })
       .finally(() => {
         if (!cancelled) setDirectoriesLoading(false);
@@ -459,7 +477,7 @@ export default function BooksPage() {
     return () => {
       cancelled = true;
     };
-  }, [browseDirectories, browseLibraryId, directory]);
+  }, [browseDirectories, browseLibraryId, directory, directoryPage]);
 
   useEffect(() => {
     if (browseDirectories) safeSetCurrentPage(1);
@@ -1158,7 +1176,7 @@ export default function BooksPage() {
                     const next = !browseDirectories;
                     setBrowseDirectories(next);
                     localStorage.setItem("books:browseDirectories", String(next));
-                    if (!next) setDirectory("");
+                    navigateDirectory("");
                     safeSetCurrentPage(1);
                   }}
                   disabled={!canBrowseDirectories}
@@ -1273,7 +1291,7 @@ export default function BooksPage() {
             {browseDirectories && browseLibraryId && (
               <div className="mt-5 flex flex-wrap items-center gap-1 text-xs text-muted">
                 <button
-                  onClick={() => setDirectory("")}
+                  onClick={() => navigateDirectory("")}
                   className={`rounded-md px-2 py-1 transition-colors hover:bg-card-hover hover:text-foreground ${
                     directory === "" ? "text-foreground" : ""
                   }`}
@@ -1284,7 +1302,7 @@ export default function BooksPage() {
                   <span key={crumb.path} className="flex items-center gap-1">
                     <ChevronRight className="h-3 w-3 opacity-50" />
                     <button
-                      onClick={() => setDirectory(crumb.path)}
+                      onClick={() => navigateDirectory(crumb.path)}
                       className={`rounded-md px-2 py-1 transition-colors hover:bg-card-hover hover:text-foreground ${
                         directory === crumb.path ? "text-foreground" : ""
                       }`}
@@ -1311,8 +1329,8 @@ export default function BooksPage() {
                 </h2>
                 <p className="text-[11px] text-muted mt-0.5">
                   {`${apiTotal} 项作品`}
-                  {browseDirectories && directoryNodes.length > 0
-                    ? ` · ${directoryNodes.length} 个目录`
+                  {browseDirectories && directoryTotal > 0
+                    ? ` · ${directoryTotal} 个目录`
                     : ""}
                   {activePage > 1 ? ` · 第 ${activePage} 页` : ""}
                 </p>
@@ -1334,7 +1352,7 @@ export default function BooksPage() {
                     node={node}
                     viewMode={viewMode}
                     onOpen={(target) => {
-                      setDirectory(target.path);
+                      navigateDirectory(target.path);
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
                   />
@@ -1428,6 +1446,18 @@ export default function BooksPage() {
               </div>
             )}
             </div>
+
+            {browseDirectories && directoryPage < directoryTotalPages && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => setDirectoryPage((page) => page + 1)}
+                  disabled={directoriesLoading}
+                  className="rounded-lg border border-border/60 bg-card px-4 py-2 text-xs font-medium text-foreground transition-colors hover:bg-card-hover disabled:opacity-50"
+                >
+                  {directoriesLoading ? "加载中…" : "加载更多目录"}
+                </button>
+              </div>
+            )}
 
             {/* Pagination */}
             {effectiveTotalPages > 1 && (

@@ -231,7 +231,10 @@ class WorkApi {
   }) async {
     final response = await _dio.get(
       '/libraries/${Uri.encodeComponent(libraryId)}/directories',
-      queryParameters: parent.isEmpty ? null : {'parent': parent},
+      queryParameters: {
+        if (parent.isNotEmpty) 'parent': parent,
+        'pageSize': 200,
+      },
     );
     return LibraryDirectoryListing.fromJson(
       Map<String, dynamic>.from(response.data as Map),

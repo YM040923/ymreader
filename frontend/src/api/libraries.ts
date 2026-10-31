@@ -286,10 +286,13 @@ export interface LibraryDirectoryListing {
 
 export async function fetchLibraryDirectories(
   libraryId: string,
-  parent = ""
+  parent = "",
+  options: { page?: number; pageSize?: number } = {}
 ): Promise<LibraryDirectoryListing> {
   const params = new URLSearchParams();
   if (parent) params.set("parent", parent);
+  if (options.page && options.page > 1) params.set("page", String(options.page));
+  if (options.pageSize) params.set("pageSize", String(options.pageSize));
   const query = params.toString();
   const res = await fetch(
     apiPath(`/api/libraries/${encodeURIComponent(libraryId)}/directories${query ? `?${query}` : ""}`)
