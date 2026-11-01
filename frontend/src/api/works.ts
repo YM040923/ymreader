@@ -37,10 +37,10 @@ export async function batchWorkOperation(
   operation: string,
   works: Work[],
   payload: Record<string, unknown> = {},
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   const comicIds = [...new Set(works.flatMap(getWorkComicIds))];
-  if (comicIds.length === 0) return;
-  await apiClient.post("/api/comics/batch", {
+  if (comicIds.length === 0) return {};
+  return apiClient.post<Record<string, unknown>>("/api/comics/batch", {
     action: operation,
     comicIds,
     ...payload,

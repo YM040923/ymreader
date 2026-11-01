@@ -53,6 +53,29 @@ func ScrapeLibraryWorks(libraryID string, force bool) (ManualWorkScrapeResult, e
 		return ManualWorkScrapeResult{}, err
 	}
 	works := BuildWorksFromComicList(result.Comics, WorkBuildOptions{ProbeInternalArchive: true})
+	comicSources := make(map[string]store.ComicListItem, len(result.Comics))
+	for _, comic := range result.Comics {
+		comicSources[comic.ID] = comic
+	}
+	memberships, err := store.GetWorkMemberships([]string{libraryID}, true)
+	if err != nil {
+		return ManualWorkScrapeResult{}, err
+	}
+	if len(memberships) > 0 {
+		manualIDSet := make(map[string]struct{}, len(memberships))
+		for _, workID := range memberships {
+			manualIDSet[workID] = struct{}{}
+		}
+		manualIDs := make([]string, 0, len(manualIDSet))
+		for workID := range manualIDSet {
+			manualIDs = append(manualIDs, workID)
+		}
+		manualRows, manualErr := store.GetLogicalWorksByIDs(manualIDs)
+		if manualErr != nil {
+			return ManualWorkScrapeResult{}, manualErr
+		}
+		works = ApplyManualWorkMemberships(works, memberships, manualRows, comicSources)
+	}
 	if err := PersistAndApplyLogicalWorks(works); err != nil {
 		return ManualWorkScrapeResult{}, err
 	}

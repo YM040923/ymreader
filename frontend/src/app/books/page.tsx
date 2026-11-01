@@ -35,6 +35,12 @@ import { useAuth } from "@/lib/auth-context";
 
 const DEFAULT_PAGE_SIZE = 24;
 
+function unitDirectory(relativePath?: string): string {
+  const normalized = (relativePath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const index = normalized.lastIndexOf("/");
+  return index > 0 ? normalized.slice(0, index) : "";
+}
+
 /** Debounce hook: delays value updates to avoid rapid-fire API calls */
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -533,6 +539,21 @@ export default function BooksPage() {
         .filter((work): work is Work => Boolean(work)),
     [workById],
   );
+  const selectedWorksForDelete = useMemo(() => worksFor(selectedIds), [selectedIds, worksFor]);
+  const deleteFileCount = useMemo(() => {
+    const comicIds = new Set<string>();
+    selectedWorksForDelete.forEach((work) => {
+      work.units.forEach((unit) => comicIds.add(unit.comicId));
+    });
+    return comicIds.size;
+  }, [selectedWorksForDelete]);
+  const deleteDirectoryCount = useMemo(() => {
+    const directories = new Set<string>();
+    selectedWorksForDelete.forEach((work) => {
+      work.units.forEach((unit) => directories.add(unitDirectory(unit.relativePath)));
+    });
+    return directories.size;
+  }, [selectedWorksForDelete]);
 
   // Extract all unique tags — fetch from API once on mount (not on every apiComics change)
   const [allTags, setAllTags] = useState<string[]>([]);
@@ -694,18 +715,29 @@ export default function BooksPage() {
     setSelectedIds(new Set());
   }, []);
 
-  const handleBatchDelete = useCallback(async (deleteFiles?: boolean) => {
+  const handleBatchDelete = useCallback(async (deleteFiles?: boolean, confirmExpandedDelete?: boolean) => {
     const ids = Array.from(selectedIds);
     // 先播放删除动画
     setRemovingIds(new Set(ids));
     // 等动画播完后再真正删除
     setTimeout(async () => {
-      await batchWorkOperation("delete", worksFor(ids), deleteFiles ? { deleteFiles: true } : {});
-      setRemovingIds(new Set());
-      exitBatchMode();
-      await refetch();
+      try {
+        const result = await batchWorkOperation("delete", worksFor(ids), deleteFiles ? {
+          deleteFiles: true,
+          confirmExpandedDelete: Boolean(confirmExpandedDelete),
+        } : {});
+        if (deleteFiles && Array.isArray(result.fileErrors) && result.fileErrors.length > 0) {
+          toast.error(`记录已移除，但 ${result.fileErrors.length} 个文件删除失败`);
+        }
+        setRemovingIds(new Set());
+        exitBatchMode();
+        await refetch();
+      } catch (reason) {
+        setRemovingIds(new Set());
+        toast.error(reason instanceof Error ? reason.message : "删除失败");
+      }
     }, 400);
-  }, [selectedIds, exitBatchMode, refetch, worksFor]);
+  }, [selectedIds, exitBatchMode, refetch, worksFor, toast]);
 
   const handleBatchFavorite = useCallback(async () => {
     await batchWorkOperation("favorite", worksFor(selectedIds), { isFavorite: true });
@@ -1626,6 +1658,9 @@ export default function BooksPage() {
           onAISuggestCategory={aiConfigured ? handleAIBatchSuggestCategory : undefined}
           aiCategoryLoading={aiCategoryLoading}
           isAdmin={hasManageableLibrary}
+          deleteFileCount={deleteFileCount}
+          deleteDirectoryCount={deleteDirectoryCount}
+          deleteSpansDirectories={deleteDirectoryCount > 1}
         />
       )}
 

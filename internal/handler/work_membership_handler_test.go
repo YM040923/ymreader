@@ -3,11 +3,89 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nowen-reader/nowen-reader/internal/model"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
+
+func TestBatchDeleteExpandedWorkRequiresConfirmation(t *testing.T) {
+	router := setupTestRouter(t)
+	if err := store.RunMigrations(); err != nil {
+		t.Fatalf("RunMigrations failed: %v", err)
+	}
+	cookie := registerAndLogin(t, router)
+	libraryDir := t.TempDir()
+	if err := store.CreateLibrary(&model.Library{
+		ID: "delete-safety-lib", Name: "delete-safety-lib", Type: "comic",
+		RootPath: libraryDir, Enabled: true, DefaultAccess: "private", ScanEnabled: true,
+	}); err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+	files := map[string][]byte{
+		"Series A/01.cbz": []byte("a"),
+		"Series B/01.cbz": []byte("b"),
+	}
+	for relative, content := range files {
+		absolute := filepath.Join(libraryDir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+			t.Fatalf("create directory: %v", err)
+		}
+		if err := os.WriteFile(absolute, content, 0o600); err != nil {
+			t.Fatalf("create file: %v", err)
+		}
+	}
+	createOPDSHandlerComic(t, "delete-safety-c1", "Series A/01.cbz", "comic", "delete-safety-lib")
+	createOPDSHandlerComic(t, "delete-safety-c2", "Series B/01.cbz", "comic", "delete-safety-lib")
+
+	var works struct {
+		Works []struct {
+			ID string `json:"id"`
+		} `json:"works"`
+	}
+	response := performAuthedRequest(router, http.MethodGet, "/api/works?pageSize=100", nil, cookie)
+	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil || len(works.Works) != 2 {
+		t.Fatalf("load works status=%d body=%s err=%v", response.Code, response.Body.String(), err)
+	}
+	merge := performAuthedRequest(router, http.MethodPost, "/api/works/merge", map[string]interface{}{
+		"workIds": []string{works.Works[0].ID, works.Works[1].ID},
+	}, cookie)
+	if merge.Code != http.StatusOK {
+		t.Fatalf("merge status=%d body=%s", merge.Code, merge.Body.String())
+	}
+
+	deleteBody := map[string]interface{}{
+		"action":      "delete",
+		"comicIds":    []string{"delete-safety-c1", "delete-safety-c2"},
+		"deleteFiles": true,
+	}
+	blocked := performAuthedRequest(router, http.MethodPost, "/api/comics/batch", deleteBody, cookie)
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("expanded delete status=%d body=%s, want 409", blocked.Code, blocked.Body.String())
+	}
+	for relative := range files {
+		if _, err := os.Stat(filepath.Join(libraryDir, filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("file was removed before confirmation: %s: %v", relative, err)
+		}
+	}
+
+	deleteBody["confirmExpandedDelete"] = true
+	confirmed := performAuthedRequest(router, http.MethodPost, "/api/comics/batch", deleteBody, cookie)
+	if confirmed.Code != http.StatusOK {
+		t.Fatalf("confirmed delete status=%d body=%s", confirmed.Code, confirmed.Body.String())
+	}
+	for relative := range files {
+		if _, err := os.Stat(filepath.Join(libraryDir, filepath.FromSlash(relative))); !os.IsNotExist(err) {
+			t.Fatalf("confirmed delete left file %s: %v", relative, err)
+		}
+	}
+	if comic, err := store.GetComicByID("delete-safety-c1"); err != nil || comic != nil {
+		t.Fatalf("comic record was not deleted: %#v err=%v", comic, err)
+	}
+}
 
 func TestWorkMergeAndSplitAPI(t *testing.T) {
 	router := setupTestRouter(t)
@@ -91,13 +169,21 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 		t.Fatalf("merged work lost source user state: %#v", afterMerge.Works[0])
 	}
 	unitID := ""
+	allUnitIDs := make([]string, 0, len(afterMerge.Works[0].Units))
 	for _, unit := range afterMerge.Works[0].Units {
+		allUnitIDs = append(allUnitIDs, unit.ID)
 		if unit.ComicID == "merge-c1" {
 			unitID = unit.ID
 		}
 	}
 	if unitID == "" {
 		t.Fatal("merged Work is missing the read comic")
+	}
+	blockedSplit := performAuthedRequest(router, http.MethodPost, "/api/works/"+merged.WorkID+"/split", map[string]interface{}{
+		"unitIds": allUnitIDs,
+	}, cookie)
+	if blockedSplit.Code != http.StatusBadRequest {
+		t.Fatalf("all-unit split status=%d body=%s, want 400", blockedSplit.Code, blockedSplit.Body.String())
 	}
 	mergedTitle := afterMerge.Works[0].Title
 	mergedRootPath := afterMerge.Works[0].RootPath

@@ -88,9 +88,10 @@ func recordOnlyBatchDeleteGuard() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 		var payload struct {
-			Action      string   `json:"action"`
-			ComicIDs    []string `json:"comicIds"`
-			DeleteFiles bool     `json:"deleteFiles"`
+			Action                string   `json:"action"`
+			ComicIDs              []string `json:"comicIds"`
+			DeleteFiles           bool     `json:"deleteFiles"`
+			ConfirmExpandedDelete bool     `json:"confirmExpandedDelete"`
 		}
 		if json.Unmarshal(body, &payload) != nil || payload.Action != "delete" || len(payload.ComicIDs) == 0 {
 			c.Next()
@@ -105,6 +106,13 @@ func recordOnlyBatchDeleteGuard() gin.HandlerFunc {
 			}
 			if err := checkBatchManagePermission(user, payload.ComicIDs); err != nil {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+				return
+			}
+			if service.ComicDeleteDirectoryCount(payload.ComicIDs) > 1 && !payload.ConfirmExpandedDelete {
+				c.AbortWithStatusJSON(http.StatusConflict, gin.H{
+					"error": "Selected content spans multiple source directories; confirm expanded file deletion",
+					"code":  "delete_scope_expanded",
+				})
 				return
 			}
 

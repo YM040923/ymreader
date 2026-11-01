@@ -136,6 +136,12 @@ func (h *WorkHandler) Split(c *gin.Context) {
 			return
 		}
 	}
+	if len(selected) == len(work.Units) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "At least one unit must remain in the original Work",
+		})
+		return
+	}
 	manualID := store.ManualWorkIDPrefix + strings.ReplaceAll(uuid.New().String(), "-", "")
 	title := strings.TrimSpace(req.Title)
 	if title == "" {

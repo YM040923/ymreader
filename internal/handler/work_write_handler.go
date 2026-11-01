@@ -195,6 +195,10 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 		ReadingStatus string   `json:"readingStatus"`
 		Tags          []string `json:"tags"`
 		CategorySlugs []string `json:"categorySlugs"`
+		DeleteFiles   bool     `json:"deleteFiles"`
+		// ConfirmExpandedDelete acknowledges that one Work spans several source
+		// directories and its files will be removed from each of them.
+		ConfirmExpandedDelete bool `json:"confirmExpandedDelete"`
 	}
 	if c.ShouldBindJSON(&body) != nil || (len(body.WorkIDs) == 0 && len(body.ComicIDs) == 0) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workIds and action are required"})
@@ -216,6 +220,19 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 	for _, target := range targets {
 		targetWorkIDs = append(targetWorkIDs, target.Work.ID)
 	}
+	var deleteFileTargets []service.ComicFileTarget
+	var deleteFileWarnings, deleteFileErrors []string
+	if body.Action == "delete" && body.DeleteFiles {
+		if service.ComicDeleteDirectoryCount(comicIDs) > 1 && !body.ConfirmExpandedDelete {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "Selected content spans multiple source directories; confirm expanded file deletion",
+				"code":  "delete_scope_expanded",
+			})
+			return
+		}
+		deleteFileTargets, deleteFileWarnings = service.ResolveComicFileTargets(comicIDs)
+	}
+	deletedFiles := 0
 	var err error
 	switch body.Action {
 	case "favorite":
@@ -236,6 +253,9 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 		}
 	case "delete":
 		_, err = store.DeleteWorkComics(comicIDs)
+		if err == nil && body.DeleteFiles {
+			deletedFiles, deleteFileErrors = service.DeleteComicFileTargets(deleteFileTargets)
+		}
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported work batch action"})
 		return
@@ -244,7 +264,17 @@ func (h *WorkHandler) Batch(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
-	completeWorkMutation(c, gin.H{"success": true, "affectedWorks": len(targets)})
+	response := gin.H{"success": true, "affectedWorks": len(targets)}
+	if body.Action == "delete" && body.DeleteFiles {
+		response["deletedFiles"] = deletedFiles
+		if len(deleteFileWarnings) > 0 {
+			response["fileWarnings"] = deleteFileWarnings
+		}
+		if len(deleteFileErrors) > 0 {
+			response["fileErrors"] = deleteFileErrors
+		}
+	}
+	completeWorkMutation(c, response)
 }
 
 func (h *WorkHandler) Reorder(c *gin.Context) {

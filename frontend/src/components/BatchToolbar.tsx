@@ -20,7 +20,7 @@ import { useCategories, ApiCategory } from "@/hooks/useComics";
 interface BatchToolbarProps {
   selectedCount: number;
   onCancel: () => void;
-  onDelete?: (deleteFiles?: boolean) => void;
+  onDelete?: (deleteFiles?: boolean, confirmExpandedDelete?: boolean) => void;
   onFavorite?: () => void;
   onUnfavorite?: () => void;
   onAddTags?: (tags: string[]) => void;
@@ -32,6 +32,9 @@ interface BatchToolbarProps {
   isAdmin?: boolean;
   onRemoveTags?: (tags: string[]) => void;
   onSetReadingStatus?: (status: string) => void;
+  deleteFileCount?: number;
+  deleteDirectoryCount?: number;
+  deleteSpansDirectories?: boolean;
 }
 
 export default function BatchToolbar({
@@ -49,12 +52,16 @@ export default function BatchToolbar({
   isAdmin = true,
   onRemoveTags,
   onSetReadingStatus,
+  deleteFileCount,
+  deleteDirectoryCount,
+  deleteSpansDirectories = false,
 }: BatchToolbarProps) {
   const [showTagInput, setShowTagInput] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [batchDeleteFiles, setBatchDeleteFiles] = useState(false);
+  const [confirmExpandedDelete, setConfirmExpandedDelete] = useState(false);
   const [showRemoveTagInput, setShowRemoveTagInput] = useState(false);
   const [removeTagInput, setRemoveTagInput] = useState("");
   const [showStatusPicker, setShowStatusPicker] = useState(false);
@@ -182,7 +189,7 @@ export default function BatchToolbar({
             {/* Delete */}
             {isAdmin && onDelete && (
             <button
-              onClick={() => setShowDeleteConfirm(true)}
+              onClick={() => { setShowDeleteConfirm(true); setBatchDeleteFiles(false); setConfirmExpandedDelete(false); }}
               className="flex h-8 items-center gap-1.5 rounded-lg bg-card px-3 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20 btn-press"
               title={t.common.delete}
             >
@@ -332,7 +339,7 @@ export default function BatchToolbar({
             </p>
             {/* Delete mode options */}
             <div className="mt-4 space-y-2">
-              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 p-3 transition-colors hover:bg-card/80" onClick={() => setBatchDeleteFiles(false)}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border/60 p-3 transition-colors hover:bg-card/80" onClick={() => { setBatchDeleteFiles(false); setConfirmExpandedDelete(false); }}>
                 <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${!batchDeleteFiles ? "border-accent" : "border-muted/50"}`}>
                   {!batchDeleteFiles && <div className="h-2 w-2 rounded-full bg-accent" />}
                 </div>
@@ -351,20 +358,43 @@ export default function BatchToolbar({
                 </div>
               </label>
             </div>
+            {batchDeleteFiles && (
+              <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-amber-200/90">
+                将删除 {deleteFileCount ?? 0} 个物理文件/目录，分布在 {deleteDirectoryCount ?? 0} 个目录。
+                {deleteSpansDirectories && (
+                  <p className="mt-1 font-medium text-amber-200">
+                    所选内容跨越多个源目录，相关目录中的文件都会被清理。
+                  </p>
+                )}
+              </div>
+            )}
+            {batchDeleteFiles && deleteSpansDirectories && (
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-amber-200/90">
+                <input
+                  type="checkbox"
+                  checked={confirmExpandedDelete}
+                  onChange={(event) => setConfirmExpandedDelete(event.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 accent-rose-500"
+                />
+                我确认跨目录删除
+              </label>
+            )}
             <div className="mt-5 flex justify-end gap-3">
               <button
-                onClick={() => { setShowDeleteConfirm(false); setBatchDeleteFiles(false); }}
+                onClick={() => { setShowDeleteConfirm(false); setBatchDeleteFiles(false); setConfirmExpandedDelete(false); }}
                 className="rounded-lg bg-card px-4 py-2 text-sm text-foreground"
               >
                 {t.common.cancel}
               </button>
               <button
                 onClick={() => {
-                  onDelete(batchDeleteFiles);
+                  onDelete(batchDeleteFiles, batchDeleteFiles && deleteSpansDirectories ? confirmExpandedDelete : false);
                   setShowDeleteConfirm(false);
                   setBatchDeleteFiles(false);
+                  setConfirmExpandedDelete(false);
                 }}
-                className={`rounded-lg px-4 py-2 text-sm font-medium text-white ${batchDeleteFiles ? "bg-red-600 hover:bg-red-700" : "bg-red-500 hover:bg-red-600"}`}
+                disabled={batchDeleteFiles && deleteSpansDirectories && !confirmExpandedDelete}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 ${batchDeleteFiles ? "bg-red-600 hover:bg-red-700" : "bg-red-500 hover:bg-red-600"}`}
               >
                 {batchDeleteFiles ? (t.comicDetail?.deleteWithFiles || "删除文件") : t.batch.confirmDelete}
               </button>

@@ -424,6 +424,9 @@ func (h *ComicHandler) BatchOperation(c *gin.Context) {
 		CategorySlugs []string `json:"categorySlugs"`
 		DeleteFiles   bool     `json:"deleteFiles"`
 		ReadingStatus string   `json:"readingStatus"`
+		// ConfirmExpandedDelete acknowledges file deletion across multiple
+		// source directories (for example a merged Work).
+		ConfirmExpandedDelete bool `json:"confirmExpandedDelete"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -446,13 +449,17 @@ func (h *ComicHandler) BatchOperation(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		var pathsToDelete []string
+		var fileTargets []service.ComicFileTarget
+		var fileWarnings []string
 		if body.DeleteFiles {
-			for _, cid := range body.ComicIDs {
-				if resolved, err := service.GlobalFileResolver.ResolveContentPath(cid); err == nil && resolved.AbsolutePath != "" {
-					pathsToDelete = append(pathsToDelete, resolved.AbsolutePath)
-				}
+			if service.ComicDeleteDirectoryCount(body.ComicIDs) > 1 && !body.ConfirmExpandedDelete {
+				c.JSON(http.StatusConflict, gin.H{
+					"error": "Selected content spans multiple source directories; confirm expanded file deletion",
+					"code":  "delete_scope_expanded",
+				})
+				return
 			}
+			fileTargets, fileWarnings = service.ResolveComicFileTargets(body.ComicIDs)
 		}
 
 		n, err := store.BatchDeleteComics(body.ComicIDs)
@@ -460,26 +467,29 @@ func (h *ComicHandler) BatchOperation(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Batch delete failed"})
 			return
 		}
-
+		deletedFiles := 0
+		var fileErrors []string
 		if body.DeleteFiles {
-			var errs []string
-			for _, p := range pathsToDelete {
-				if err := os.RemoveAll(p); err != nil {
-					errs = append(errs, p)
-					log.Printf("[API] BatchDelete: failed to delete physical file %s: %v", p, err)
-				} else {
-					log.Printf("[API] BatchDelete: deleted physical file %s", p)
-				}
-			}
-			if len(errs) > 0 {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": fmt.Sprintf("Database records deleted, but failed to delete %d physical files (e.g. %s)", len(errs), errs[0]),
-				})
-				return
+			deletedFiles, fileErrors = service.DeleteComicFileTargets(fileTargets)
+			for _, failure := range fileErrors {
+				log.Printf("[API] BatchDelete: %s", failure)
 			}
 		}
 
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除 " + strconv.FormatInt(n, 10) + " 本漫画"})
+		response := gin.H{
+			"success": true,
+			"message": "已删除 " + strconv.FormatInt(n, 10) + " 本漫画",
+		}
+		if body.DeleteFiles {
+			response["deletedFiles"] = deletedFiles
+			if len(fileWarnings) > 0 {
+				response["fileWarnings"] = fileWarnings
+			}
+			if len(fileErrors) > 0 {
+				response["fileErrors"] = fileErrors
+			}
+		}
+		c.JSON(http.StatusOK, response)
 
 	case "favorite":
 		if err := checkBatchViewPermission(user, body.ComicIDs); err != nil {

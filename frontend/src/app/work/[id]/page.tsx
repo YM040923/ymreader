@@ -347,7 +347,7 @@ export default function WorkDetailPage() {
   };
 
   const confirmSplit = async () => {
-    if (selectedUnitIds.size === 0 || splitting) return;
+    if (selectedUnitIds.size === 0 || selectedUnitIds.size >= sortedUnits.length || splitting) return;
     setSplitting(true);
     setMembershipError("");
     try {
@@ -599,9 +599,11 @@ export default function WorkDetailPage() {
         {splitMode && (
           <div id="split-action-bar" className="fixed inset-x-0 bottom-0 z-40 bg-background/90 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl sm:px-6">
             <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 rounded-2xl border border-accent/30 bg-card p-3 shadow-2xl">
-              <span className="text-xs text-muted">已选 {selectedUnitIds.size} 个单元</span>
+              <span className={`text-xs ${selectedUnitIds.size >= sortedUnits.length ? "text-amber-300" : "text-muted"}`}>
+                {selectedUnitIds.size >= sortedUnits.length ? "至少保留一个单元" : `已选 ${selectedUnitIds.size} 个单元`}
+              </span>
               <input value={splitTitle} onChange={(event) => setSplitTitle(event.target.value)} placeholder="新作品标题（可选）" className="h-9 min-w-48 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
-              <button type="button" onClick={confirmSplit} disabled={selectedUnitIds.size === 0 || splitting} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{splitting ? "拆分中…" : "确认拆分"}</button>
+              <button type="button" onClick={confirmSplit} disabled={selectedUnitIds.size === 0 || selectedUnitIds.size >= sortedUnits.length || splitting} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{splitting ? "拆分中…" : "确认拆分"}</button>
               <button type="button" onClick={() => { setSplitMode(false); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className="h-9 rounded-lg border border-border px-3 text-sm text-muted">取消</button>
               {membershipError && <span className="text-xs text-rose-400">{membershipError}</span>}
             </div>
