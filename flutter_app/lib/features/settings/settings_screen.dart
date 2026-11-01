@@ -7,6 +7,7 @@ import '../../data/providers/auth_provider.dart';
 import '../../data/api/api_client.dart';
 import '../../data/api/comic_api.dart';
 import '../../data/providers/cache_provider.dart';
+import '../../data/providers/locale_provider.dart';
 import '../../data/services/cache_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../metadata/metadata_screen.dart';
@@ -147,6 +148,23 @@ class SettingsScreen extends ConsumerWidget {
                       : '${routes.activeUrl} · $serverSubtitle',
                   onTap: () => context.push('/settings/server'),
                 ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // ─── 通用 ───
+          SlideAndFade(
+            delay: const Duration(milliseconds: 250),
+            child: _SectionHeader(title: l10n.general),
+          ),
+          const SizedBox(height: 8),
+          SlideAndFade(
+            delay: const Duration(milliseconds: 275),
+            child: const _SettingsGroup(
+              children: [
+                _LanguageTile(),
               ],
             ),
           ),
@@ -764,6 +782,119 @@ class _OfflineCacheTile extends ConsumerWidget {
       title: '离线缓存',
       subtitle: subtitle,
       onTap: () => context.push('/cache'),
+    );
+  }
+}
+
+/// 界面语言入口
+class _LanguageTile extends ConsumerWidget {
+  const _LanguageTile();
+
+  static String label(AppLanguage language, AppLocalizations l10n) {
+    switch (language) {
+      case AppLanguage.system:
+        return l10n.languageFollowSystem;
+      case AppLanguage.chinese:
+        return '简体中文';
+      case AppLanguage.english:
+        return 'English';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
+    final current = ref.watch(appLanguageProvider);
+    return _SettingsTile(
+      icon: Icons.translate_rounded,
+      iconColor: Colors.indigo,
+      title: l10n.language,
+      subtitle: label(current, l10n),
+      onTap: () async {
+        final picked = await showDialog<AppLanguage>(
+          context: context,
+          builder: (_) => _LanguageDialog(current: current),
+        );
+        if (picked != null) {
+          await ref.read(appLanguageProvider.notifier).select(picked);
+        }
+      },
+    );
+  }
+}
+
+class _LanguageDialog extends StatelessWidget {
+  final AppLanguage current;
+
+  const _LanguageDialog({required this.current});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context);
+    return AlertDialog(
+      title: Text(l10n.language),
+      // `AlertDialog` measures its content, so the option rows get a fixed
+      // width instead of an `Expanded` that would be laid out unbounded.
+      content: SizedBox(
+        width: 260,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in AppLanguage.values)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Material(
+                  color: option == current
+                      ? colors.primary.withOpacity(0.08)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => Navigator.pop(context, option),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _LanguageTile.label(option, l10n),
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: option == current
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                                color: option == current
+                                    ? colors.primary
+                                    : colors.onSurface,
+                              ),
+                            ),
+                          ),
+                          if (option == current)
+                            Icon(
+                              Icons.check_rounded,
+                              size: 20,
+                              color: colors.primary,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 160),
+          child: TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.cancel),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -82,6 +82,10 @@ class AppLocalizations {
   // 设置
   // ============================================================
   String get settings => translate('settings');
+  String get general => translate('general');
+  String get language => translate('language');
+  String get languageDesc => translate('language_desc');
+  String get languageFollowSystem => translate('language_follow_system');
   String get account => translate('account');
   String get admin => translate('admin');
   String get user => translate('user');
@@ -210,6 +214,10 @@ const Map<String, String> _zhStrings = {
 
   // 设置
   'settings': '设置',
+  'general': '通用',
+  'language': '语言',
+  'language_desc': '界面显示语言',
+  'language_follow_system': '跟随系统',
   'account': '账户',
   'admin': '管理员',
   'user': '普通用户',
@@ -312,6 +320,10 @@ const Map<String, String> _enStrings = {
 
   // Settings
   'settings': 'Settings',
+  'general': 'General',
+  'language': 'Language',
+  'language_desc': 'Interface display language',
+  'language_follow_system': 'Follow system',
   'account': 'Account',
   'admin': 'Admin',
   'user': 'User',

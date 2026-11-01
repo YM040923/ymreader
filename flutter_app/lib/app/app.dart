@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../l10n/app_localizations.dart';
+import '../data/providers/locale_provider.dart';
 import '../data/providers/server_route_provider.dart';
 import '../data/providers/server_branding_provider.dart';
 import 'router.dart';
@@ -43,6 +44,7 @@ class _NowenReaderAppState extends ConsumerState<NowenReaderApp>
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final branding = ref.watch(currentServerBrandingProvider);
+    final language = ref.watch(appLanguageProvider);
 
     return MaterialApp.router(
       title: branding.name,
@@ -52,6 +54,7 @@ class _NowenReaderAppState extends ConsumerState<NowenReaderApp>
       themeMode: ThemeMode.system,
       routerConfig: router,
       // 国际化支持
+      locale: language.locale,
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,

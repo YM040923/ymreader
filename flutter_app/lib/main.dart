@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
 import 'data/api/api_client.dart';
+import 'data/providers/locale_provider.dart';
 import 'data/services/cache_service.dart';
 
 void main() async {
@@ -37,6 +38,9 @@ void main() async {
       // 初始化离线缓存服务
       await cacheService.init();
 
+      // 恢复界面语言，避免首帧按系统语言渲染后再切换
+      final language = await loadStoredAppLanguage();
+
       // 适配安卓15 edge-to-edge
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -45,7 +49,12 @@ void main() async {
         systemNavigationBarDividerColor: Colors.transparent,
       ));
 
-      runApp(const ProviderScope(child: NowenReaderApp()));
+      runApp(ProviderScope(
+        overrides: [
+          appLanguageProvider.overrideWith((ref) => AppLanguageNotifier(language)),
+        ],
+        child: const NowenReaderApp(),
+      ));
     },
     (Object error, StackTrace stack) {
       _reportError(error, stack);
