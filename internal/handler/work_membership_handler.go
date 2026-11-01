@@ -62,6 +62,9 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		if err := store.UpdateLogicalWorkMetadata(target.ID, store.LogicalWorkMetadataUpdate{Title: &title}); err != nil {
+			// Membership rows are already committed; drop the cached catalog so
+			// the next read reflects the grouping even though the title failed.
+			resetWorkCatalogCache()
 			writeWorkMutationError(c, err)
 			return
 		}

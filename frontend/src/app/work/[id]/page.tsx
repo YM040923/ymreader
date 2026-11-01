@@ -331,6 +331,12 @@ export default function WorkDetailPage() {
     }
   };
 
+  const closeMergeDialog = () => {
+    setShowMerge(false);
+    setMergeTargetId("");
+    setMembershipError("");
+  };
+
   const toggleSplitUnit = (unitId: string) => {
     setSelectedUnitIds((current) => {
       const next = new Set(current);
@@ -542,7 +548,7 @@ export default function WorkDetailPage() {
                 {target && <button type="button" onClick={() => router.push(buildWorkReaderPath(work, target.unit, target.page))} className="flex h-10 items-center gap-2 rounded-xl bg-accent px-4 text-sm font-medium text-white shadow-lg shadow-accent/20"><BookOpen className="h-4 w-4" />{target.isContinue ? "继续阅读" : "开始阅读"}</button>}
                 <button type="button" onClick={async () => { await toggleWorkFavorite(work); await load(); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Heart className={`h-4 w-4 ${work.isFavorite ? "fill-rose-400 text-rose-400" : ""}`} />{work.isFavorite ? "取消收藏" : "收藏"}</button>
                 {canManage && <button type="button" onClick={openMergeDialog} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><GitMerge className="h-4 w-4" />合并作品</button>}
-                {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
+                {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
                 {canManage && <button type="button" onClick={() => setShowMetadata((value) => !value)} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>}
               </div>
 
@@ -596,7 +602,7 @@ export default function WorkDetailPage() {
               <span className="text-xs text-muted">已选 {selectedUnitIds.size} 个单元</span>
               <input value={splitTitle} onChange={(event) => setSplitTitle(event.target.value)} placeholder="新作品标题（可选）" className="h-9 min-w-48 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
               <button type="button" onClick={confirmSplit} disabled={selectedUnitIds.size === 0 || splitting} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{splitting ? "拆分中…" : "确认拆分"}</button>
-              <button type="button" onClick={() => { setSplitMode(false); setSelectedUnitIds(new Set()); setMembershipError(""); }} className="h-9 rounded-lg border border-border px-3 text-sm text-muted">取消</button>
+              <button type="button" onClick={() => { setSplitMode(false); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className="h-9 rounded-lg border border-border px-3 text-sm text-muted">取消</button>
               {membershipError && <span className="text-xs text-rose-400">{membershipError}</span>}
             </div>
           </div>
@@ -614,14 +620,14 @@ export default function WorkDetailPage() {
 
       {showMerge && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={() => setShowMerge(false)} />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeMergeDialog} />
           <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-base font-semibold text-foreground">合并作品</h2>
                 <p className="mt-0.5 text-xs text-muted">把当前作品并入所选作品，章节与阅读进度随之合并</p>
               </div>
-              <button type="button" onClick={() => setShowMerge(false)} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
+              <button type="button" onClick={closeMergeDialog} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
             </div>
             <input value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
             {membershipError && <p className="mb-2 text-xs text-rose-400">{membershipError}</p>}

@@ -18,14 +18,34 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 	createOPDSHandlerLibrary(t, "merge-lib", "comic", true)
 	createOPDSHandlerComic(t, "merge-c1", "Series A/01.cbz", "comic", "merge-lib")
 	createOPDSHandlerComic(t, "merge-c2", "Series B/01.cbz", "comic", "merge-lib")
+	if _, err := store.DB().Exec(`UPDATE "Comic" SET "pageCount" = 3 WHERE "id" IN ('merge-c1', 'merge-c2')`); err != nil {
+		t.Fatalf("set page counts: %v", err)
+	}
+	var userID string
+	if err := store.DB().QueryRow(`SELECT "id" FROM "User" WHERE "username" = 'admin'`).Scan(&userID); err != nil {
+		t.Fatalf("resolve admin user: %v", err)
+	}
+	if _, err := store.DB().Exec(`
+		INSERT INTO "UserComicState" ("userId", "comicId", "lastReadPage", "lastReadAt", "isFavorite", "totalReadTime", "readingStatus")
+		VALUES (?, 'merge-c1', 2, '2026-11-01T10:00:00Z', 1, 120, 'finished')
+	`, userID); err != nil {
+		t.Fatalf("seed reading state: %v", err)
+	}
 
 	type workList struct {
 		Works []struct {
-			ID       string `json:"id"`
-			Title    string `json:"title"`
-			RootPath string `json:"rootPath"`
-			Units    []struct {
-				ID string `json:"id"`
+			ID                 string `json:"id"`
+			Title              string `json:"title"`
+			RootPath           string `json:"rootPath"`
+			IsFavorite         bool   `json:"isFavorite"`
+			CompletedItemCount int    `json:"completedItemCount"`
+			ReadingStatus      string `json:"readingStatus"`
+			TotalReadTime      int    `json:"totalReadTime"`
+			Units              []struct {
+				ID        string `json:"id"`
+				ComicID   string `json:"comicId"`
+				StartPage int    `json:"startPage"`
+				PageCount int    `json:"pageCount"`
 			} `json:"units"`
 		} `json:"works"`
 	}
@@ -66,9 +86,35 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 	if len(afterMerge.Works[0].Units) != 2 {
 		t.Fatalf("merged units = %d, want 2", len(afterMerge.Works[0].Units))
 	}
-	unitID := afterMerge.Works[0].Units[0].ID
+	if !afterMerge.Works[0].IsFavorite || afterMerge.Works[0].CompletedItemCount != 1 ||
+		afterMerge.Works[0].TotalReadTime != 120 || afterMerge.Works[0].ReadingStatus != "reading" {
+		t.Fatalf("merged work lost source user state: %#v", afterMerge.Works[0])
+	}
+	unitID := ""
+	for _, unit := range afterMerge.Works[0].Units {
+		if unit.ComicID == "merge-c1" {
+			unitID = unit.ID
+		}
+	}
+	if unitID == "" {
+		t.Fatal("merged Work is missing the read comic")
+	}
 	mergedTitle := afterMerge.Works[0].Title
 	mergedRootPath := afterMerge.Works[0].RootPath
+	progressUnit := afterMerge.Works[0].Units[1]
+	activity := performAuthedRequest(router, http.MethodPost, "/api/reading/"+progressUnit.ComicID+"/activity", map[string]interface{}{
+		"clientSessionId": "merged-work-session",
+		"page":            1,
+		"totalPages":      progressUnit.PageCount,
+		"activeSeconds":   2,
+		"sequence":        1,
+		"workId":          merged.WorkID,
+		"unitId":          progressUnit.ID,
+		"relativePage":    1,
+	}, cookie)
+	if activity.Code != http.StatusOK {
+		t.Fatalf("merged Work progress status=%d body=%s", activity.Code, activity.Body.String())
+	}
 
 	split := performAuthedRequest(router, http.MethodPost, "/api/works/"+merged.WorkID+"/split", map[string]interface{}{
 		"unitIds": []string{unitID},
@@ -97,10 +143,39 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 			if work.RootPath != mergedRootPath || strings.Contains(work.RootPath, "\x1f") {
 				t.Fatalf("split work rootPath = %q, want %q", work.RootPath, mergedRootPath)
 			}
+			if !work.IsFavorite || work.CompletedItemCount != 1 || work.TotalReadTime != 120 ||
+				work.ReadingStatus != "finished" {
+				t.Fatalf("split work lost source user state: %#v", work)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("split work %s not visible", splitResponse.WorkID)
+	}
+
+	var splitUnit struct {
+		ID        string `json:"id"`
+		ComicID   string `json:"comicId"`
+		StartPage int    `json:"startPage"`
+		PageCount int    `json:"pageCount"`
+	}
+	for _, work := range afterSplit.Works {
+		if work.ID == splitResponse.WorkID && len(work.Units) > 0 {
+			splitUnit = work.Units[0]
+		}
+	}
+	splitActivity := performAuthedRequest(router, http.MethodPost, "/api/reading/"+splitUnit.ComicID+"/activity", map[string]interface{}{
+		"clientSessionId": "split-work-session",
+		"page":            2,
+		"totalPages":      splitUnit.PageCount,
+		"activeSeconds":   2,
+		"sequence":        1,
+		"workId":          splitResponse.WorkID,
+		"unitId":          splitUnit.ID,
+		"relativePage":    2,
+	}, cookie)
+	if splitActivity.Code != http.StatusOK {
+		t.Fatalf("split Work progress status=%d body=%s", splitActivity.Code, splitActivity.Body.String())
 	}
 
 	// A later write must persist only the manual Work and leave the automatic

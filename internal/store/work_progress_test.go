@@ -125,6 +125,65 @@ func TestWorkProgressAllowsCurrentSequenceRollbackButRejectsOlderSequence(t *tes
 	}
 }
 
+func TestWorkProgressUsesManualMembershipForMergedAndSplitWorks(t *testing.T) {
+	setupWorkProgressTest(t)
+
+	if _, err := DB().Exec(`
+		INSERT INTO "Comic" (
+			"id", "filename", "title", "pageCount", "libraryId", "relativePath"
+		) VALUES
+			('merged-comic', 'merged/01.cbz', '合并章节', 50, 'progress-library', 'merged/01.cbz'),
+			('split-comic', 'split/01.cbz', '拆分章节', 50, 'progress-library', 'split/01.cbz');
+		INSERT INTO "LogicalWork" ("id", "libraryId", "rootPath", "title", "sortTitle") VALUES
+			('work_manual_split', 'progress-library', '作品.zip` + "\x1f" + `work_manual_split', '拆分作品', '拆分作品');
+		INSERT INTO "WorkMembership" ("comicId", "workId", "libraryId") VALUES
+			('merged-comic', 'work-progress', 'progress-library'),
+			('split-comic', 'work_manual_split', 'progress-library');
+	`); err != nil {
+		t.Fatalf("seed manual memberships: %v", err)
+	}
+
+	// A cross-directory comic merged into an automatic Work.
+	if _, applied, err := upsertWorkProgressForTest(t, WorkProgressUpdate{
+		UserID: "progress-user", WorkID: "work-progress", UnitID: "unit-merged",
+		ComicID: "merged-comic", RelativePage: 4, UnitStartPage: 0, UnitPageCount: 10,
+		ClientSessionID: "merged-session", Sequence: 1,
+	}); err != nil || !applied {
+		t.Fatalf("merged Work cursor = applied:%v err:%v", applied, err)
+	}
+
+	// A manual Split Work stores a marker suffix that cannot match its comics.
+	if _, applied, err := upsertWorkProgressForTest(t, WorkProgressUpdate{
+		UserID: "progress-user", WorkID: "work_manual_split", UnitID: "unit-split",
+		ComicID: "split-comic", RelativePage: 5, UnitStartPage: 0, UnitPageCount: 10,
+		ClientSessionID: "split-session", Sequence: 1,
+	}); err != nil || !applied {
+		t.Fatalf("manual Work cursor = applied:%v err:%v", applied, err)
+	}
+}
+
+func TestWorkSourceFingerprintTracksManualMemberships(t *testing.T) {
+	setupWorkProgressTest(t)
+
+	before, err := GetWorkSourceFingerprint("", nil, false)
+	if err != nil {
+		t.Fatalf("fingerprint before membership: %v", err)
+	}
+	if _, err := DB().Exec(`
+		INSERT INTO "WorkMembership" ("comicId", "workId", "libraryId")
+		VALUES ('progress-comic', 'work-progress', 'progress-library')
+	`); err != nil {
+		t.Fatalf("insert manual membership: %v", err)
+	}
+	after, err := GetWorkSourceFingerprint("", nil, false)
+	if err != nil {
+		t.Fatalf("fingerprint after membership: %v", err)
+	}
+	if before == after {
+		t.Fatal("manual membership did not invalidate the Work fingerprint")
+	}
+}
+
 func TestWorkProgressRejectsInvalidRelationshipsAndPagesWithoutWriting(t *testing.T) {
 	setupWorkProgressTest(t)
 

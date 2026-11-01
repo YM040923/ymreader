@@ -338,8 +338,35 @@ func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryI
 		}
 	}
 
+	membershipCount, membershipUpdated := int64(0), ""
+	if workTableExists("WorkMembership") {
+		membershipConditions := []string{"1=1"}
+		membershipArgs := []interface{}{}
+		if filterLibraryIDs {
+			if len(libraryIDs) == 0 {
+				membershipConditions = append(membershipConditions, "1=0")
+			} else {
+				placeholders := make([]string, len(libraryIDs))
+				for index, id := range libraryIDs {
+					placeholders[index] = "?"
+					membershipArgs = append(membershipArgs, id)
+				}
+				membershipConditions = append(membershipConditions,
+					fmt.Sprintf(`m."libraryId" IN (%s)`, strings.Join(placeholders, ",")))
+			}
+		}
+		if err := db.QueryRow(`
+			SELECT COUNT(*), COALESCE(MAX(CAST(m."updatedAt" AS TEXT)), '')
+			FROM "WorkMembership" m
+			WHERE `+strings.Join(membershipConditions, " AND "), membershipArgs...).Scan(
+			&membershipCount, &membershipUpdated,
+		); err != nil {
+			return "", err
+		}
+	}
+
 	return fmt.Sprintf(
-		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s|w:%d:%s:%d|wt:%s|wc:%s|p:%d:%s:%d",
+		"c:%d:%s:%d|t:%s|cat:%s|u:%d:%s:%d|s:%d:%s:%d|st:%s|w:%d:%s:%d|wt:%s|wc:%s|p:%d:%s:%d|m:%d:%s",
 		comicCount, comicUpdated, comicShape,
 		tagHash, categoryHash,
 		stateCount, stateUpdated, stateShape,
@@ -348,6 +375,7 @@ func GetWorkSourceFingerprint(userID string, libraryIDs []string, filterLibraryI
 		logicalCount, logicalUpdated, logicalShape,
 		logicalTagsHash, logicalCategoriesHash,
 		progressCount, progressUpdated, progressShape,
+		membershipCount, membershipUpdated,
 	), nil
 }
 

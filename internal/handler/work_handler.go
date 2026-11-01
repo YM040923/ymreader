@@ -244,11 +244,11 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 			if manualErr != nil {
 				return nil, manualErr
 			}
-			fileSizes := make(map[string]int64, len(result.Comics))
+			comicSources := make(map[string]store.ComicListItem, len(result.Comics))
 			for _, comic := range result.Comics {
-				fileSizes[comic.ID] = comic.FileSize
+				comicSources[comic.ID] = comic
 			}
-			works = service.ApplyManualWorkMemberships(works, memberships, manualRows, fileSizes)
+			works = service.ApplyManualWorkMemberships(works, memberships, manualRows, comicSources)
 		}
 		comicIDs := make([]string, 0, len(result.Comics))
 		for _, comic := range result.Comics {

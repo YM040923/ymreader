@@ -20,7 +20,7 @@ func ApplyManualWorkMemberships(
 	works []Work,
 	memberships map[string]string,
 	manuals map[string]store.LogicalWork,
-	comicFileSizes map[string]int64,
+	comics map[string]store.ComicListItem,
 ) []Work {
 	if len(memberships) == 0 {
 		return works
@@ -96,12 +96,54 @@ func ApplyManualWorkMemberships(
 		work.Units = units
 		work.ItemCount = len(units)
 		work.PageCount = totalPages
-		if comicFileSizes != nil {
+
+		sources := make([]store.ComicListItem, 0, len(comicIDs))
+		for comicID := range comicIDs {
+			if comic, ok := comics[comicID]; ok {
+				sources = append(sources, comic)
+			}
+		}
+		sort.SliceStable(sources, func(i, j int) bool {
+			left := normalizeWorkPath(firstNonEmpty(sources[i].RelativePath, sources[i].Filename))
+			right := normalizeWorkPath(firstNonEmpty(sources[j].RelativePath, sources[j].Filename))
+			if left != right {
+				return naturalLess(left, right)
+			}
+			return sources[i].ID < sources[j].ID
+		})
+		if len(sources) == len(comicIDs) {
 			var totalSize int64
-			for comicID := range comicIDs {
-				totalSize += comicFileSizes[comicID]
+			var earliestAdded string
+			work.TotalReadTime = 0
+			work.IsFavorite = false
+			work.Rating = nil
+			work.Tags = []store.ComicTagInfo{}
+			work.Categories = []store.ComicCategoryInfo{}
+			for _, source := range sources {
+				totalSize += source.FileSize
+				work.TotalReadTime += source.TotalReadTime
+				mergeWorkUserState(work, source)
+				work.Tags = mergeTags(work.Tags, source.Tags)
+				work.Categories = mergeCategories(work.Categories, source.Categories)
+				if earliestAdded == "" || source.AddedAt < earliestAdded {
+					earliestAdded = source.AddedAt
+				}
 			}
 			work.FileSize = totalSize
+			work.ReadingStatus = aggregateWorkReadingStatus(sources)
+			if work.AddedAt == "" {
+				work.AddedAt = earliestAdded
+			}
+			sort.SliceStable(work.Tags, func(i, j int) bool { return naturalLess(work.Tags[i].Name, work.Tags[j].Name) })
+			sort.SliceStable(work.Categories, func(i, j int) bool {
+				return naturalLess(work.Categories[i].Name, work.Categories[j].Name)
+			})
+			work.LastReadAt = nil
+			work.ContinueComicID = ""
+			work.ContinueUnitID = ""
+			work.ContinuePage = 0
+			projectReadingProgress(work, comics)
+			projectCompletedUnits(work, comics)
 		}
 		if work.RepresentativeComicID == "" || !containsComicID(comicIDs, work.RepresentativeComicID) {
 			work.RepresentativeComicID = units[0].ComicID

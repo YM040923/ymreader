@@ -1323,66 +1323,83 @@ func continuousOPDSComicRow(work service.Work, totalPages int) service.OPDSComic
 	}
 }
 
+func loadOPDSWorkForContinuous(c *gin.Context, workID string) (*service.Work, bool, error) {
+	libraryIDs, err := getOPDSDownloadableComicLibraryIDs(c)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(libraryIDs) == 0 {
+		return nil, false, nil
+	}
+	allowed := make(map[string]struct{}, len(libraryIDs))
+	for _, id := range libraryIDs {
+		allowed[id] = struct{}{}
+	}
+	works, err := NewWorkHandler().loadWorks(c, false)
+	if err != nil {
+		return nil, false, err
+	}
+	for index := range works {
+		if works[index].ID != workID {
+			continue
+		}
+		if _, ok := allowed[works[index].LibraryID]; !ok {
+			return nil, false, nil
+		}
+		work := works[index]
+		return &work, true, nil
+	}
+	return nil, false, nil
+}
+
 // ContinuousFeed returns a single PSE publication spanning every unit of a
 // Work, so manga clients can read all chapters as one stream.
 func (h *OPDSHandler) ContinuousFeed(c *gin.Context) {
-	items, err := loadOPDSWorks(c)
+	work, ok, err := loadOPDSWorkForContinuous(c, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load works"})
 		return
 	}
-	workID := c.Param("id")
-	for _, item := range items {
-		work := item.Work
-		if work.ID != workID || len(work.Units) <= 1 {
-			continue
-		}
-		totalPages := 0
-		for _, unit := range work.Units {
-			totalPages += unit.PageCount
-		}
-		if totalPages <= 0 {
-			break
-		}
-		baseURL := getBaseURL(c)
-		row := continuousOPDSComicRow(work, totalPages)
-		xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
-			BaseURL:       baseURL,
-			Title:         work.Title + " · 连续阅读",
-			FeedID:        opdsFeedID(baseURL, c),
-			FeedCoverHref: "/api/opds/work-cover/" + url.PathEscape(work.ID),
-			Comics:        []service.OPDSComic{row},
-			Pagination: service.OPDSPagination{
-				SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous",
-				TotalResults: 1,
-				ItemsPerPage: 1,
-				StartIndex:   0,
-			},
-			FeedType: service.OPDSAcquisitionMIME,
-		})
-		setOPDSPrivateResponseHeaders(c)
-		c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
+	if !ok || len(work.Units) <= 1 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
 		return
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+	totalPages := 0
+	for _, unit := range work.Units {
+		totalPages += unit.PageCount
+	}
+	if totalPages <= 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+		return
+	}
+	baseURL := getBaseURL(c)
+	row := continuousOPDSComicRow(*work, totalPages)
+	xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
+		BaseURL:       baseURL,
+		Title:         work.Title + " · 连续阅读",
+		FeedID:        opdsFeedID(baseURL, c),
+		FeedCoverHref: "/api/opds/work-cover/" + url.PathEscape(work.ID),
+		Comics:        []service.OPDSComic{row},
+		Pagination: service.OPDSPagination{
+			SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous",
+			TotalResults: 1,
+			ItemsPerPage: 1,
+			StartIndex:   0,
+		},
+		FeedType: service.OPDSAcquisitionMIME,
+	})
+	setOPDSPrivateResponseHeaders(c)
+	c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
 }
 
 // ContinuousStream serves absolute page N across the whole Work.
 func (h *OPDSHandler) ContinuousStream(c *gin.Context) {
-	items, err := loadOPDSWorks(c)
+	work, ok, err := loadOPDSWorkForContinuous(c, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load works"})
 		return
 	}
-	workID := c.Param("id")
-	var work *service.Work
-	for index := range items {
-		if items[index].Work.ID == workID && len(items[index].Work.Units) > 1 {
-			work = &items[index].Work
-			break
-		}
-	}
-	if work == nil {
+	if !ok || len(work.Units) <= 1 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
 		return
 	}

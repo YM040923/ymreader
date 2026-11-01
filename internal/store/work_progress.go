@@ -69,7 +69,14 @@ func UpsertUserWorkProgressTx(tx *sql.Tx, update WorkProgressUpdate) (UserWorkPr
 	).Scan(&comicLibraryID, &relativePath, &comicPageCount); err != nil {
 		return UserWorkProgress{}, false, fmt.Errorf("resolve Comic: %w", err)
 	}
-	if workLibraryID != comicLibraryID || !comicPathBelongsToWork(relativePath, rootPath) {
+	if workLibraryID != comicLibraryID {
+		return UserWorkProgress{}, false, fmt.Errorf("Comic does not belong to Work")
+	}
+	belongs, err := comicBelongsToWorkTx(tx, update.WorkID, update.ComicID, relativePath, rootPath)
+	if err != nil {
+		return UserWorkProgress{}, false, fmt.Errorf("resolve Work membership: %w", err)
+	}
+	if !belongs {
 		return UserWorkProgress{}, false, fmt.Errorf("Comic does not belong to Work")
 	}
 
@@ -190,6 +197,29 @@ func getUserWorkProgressRow(row workProgressScanner) (UserWorkProgress, error) {
 		&progress.LastSequence,
 	)
 	return progress, err
+}
+
+// comicBelongsToWorkTx accepts manual Work membership as the authority when a
+// Work no longer maps to one physical directory (merged/split Works).
+func comicBelongsToWorkTx(tx *sql.Tx, workID, comicID, comicPath, rootPath string) (bool, error) {
+	if comicPathBelongsToWork(comicPath, rootPath) {
+		return true, nil
+	}
+	if !WorkMembershipTableAvailable() {
+		return false, nil
+	}
+	var exists int
+	err := tx.QueryRow(
+		`SELECT 1 FROM "WorkMembership" WHERE "comicId" = ? AND "workId" = ?`,
+		comicID, workID,
+	).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func comicPathBelongsToWork(comicPath, rootPath string) bool {
