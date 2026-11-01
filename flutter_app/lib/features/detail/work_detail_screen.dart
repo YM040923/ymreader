@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/api/api_client.dart';
 import '../../data/api/library_api.dart';
 import '../../data/api/work_api.dart';
 import '../../data/models/work.dart';
@@ -17,21 +18,45 @@ class WorkDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = Theme.of(context).colorScheme;
     final asyncWork = ref.watch(workDetailProvider(workId));
     return asyncWork.when(
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (error, _) => Scaffold(
-        appBar: AppBar(),
-        body: Center(
-          child: FilledButton.icon(
-            onPressed: () => ref.invalidate(workDetailProvider(workId)),
-            icon: const Icon(Icons.refresh_rounded),
-            label: Text('加载失败，点击重试\n$error'),
+      error: (error, _) {
+        debugPrint('[work-detail] $workId load failed: $error');
+        return Scaffold(
+          appBar: AppBar(),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.cloud_off_rounded,
+                  size: 40,
+                  color: colors.onSurfaceVariant,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  apiErrorLabel(error),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colors.onSurfaceVariant),
+                ),
+                const SizedBox(height: 18),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 160),
+                  child: FilledButton.icon(
+                    onPressed: () => ref.invalidate(workDetailProvider(workId)),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('重试'),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
       data: (work) => _WorkDetailBody(work: work),
     );
   }
@@ -66,10 +91,14 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
       builder: (_) => MergeWorkDialog(work: work),
     );
     if (!mounted || targetId == null || targetId.isEmpty) return;
-    ref.invalidate(workDetailProvider(work.id));
-    ref.invalidate(workDetailProvider(targetId));
+    // Refresh the list first and only then drop the cached Work details: this
+    // screen still shows the Work that the merge absorbed, and invalidating it
+    // before the list round trip surfaces a raw 404 for a Work that no longer
+    // exists. The family-wide invalidate also clears the cached failure of the
+    // absorbed Work so it reloads once the server has it again.
     await ref.read(workListProvider.notifier).load();
     if (!mounted) return;
+    ref.invalidate(workDetailProvider);
     context.go('/work/${Uri.encodeComponent(targetId)}');
   }
 
@@ -81,9 +110,9 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
       builder: (_) => SplitWorkSheet(work: work),
     );
     if (!mounted || newWorkId == null || newWorkId.isEmpty) return;
-    ref.invalidate(workDetailProvider(work.id));
     await ref.read(workListProvider.notifier).load();
     if (!mounted) return;
+    ref.invalidate(workDetailProvider);
     context.go('/work/${Uri.encodeComponent(newWorkId)}');
   }
 
@@ -100,9 +129,14 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
             onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('取消'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('确认恢复'),
+          // The app-wide button theme asks for an infinite minimum width,
+          // which would drop this action onto its own full-width row.
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('确认恢复'),
+            ),
           ),
         ],
       ),
@@ -110,13 +144,13 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
     if (!mounted || confirmed != true) return;
     try {
       await ref.read(workApiProvider).restoreWorkAutoGrouping(work.id);
-      ref.invalidate(workDetailProvider(work.id));
+      ref.invalidate(workDetailProvider);
       await ref.read(workListProvider.notifier).load();
       if (mounted) context.go('/');
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('恢复失败：$error')),
+          SnackBar(content: Text('恢复失败：${apiErrorLabel(error)}')),
         );
       }
     }
@@ -135,9 +169,14 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
             onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('取消'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('确认撤销'),
+          // The app-wide button theme asks for an infinite minimum width,
+          // which would drop this action onto its own full-width row.
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('确认撤销'),
+            ),
           ),
         ],
       ),
@@ -145,13 +184,13 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
     if (!mounted || confirmed != true) return;
     try {
       await ref.read(workApiProvider).undoLastWorkOperation(work.id);
-      ref.invalidate(workDetailProvider(work.id));
+      ref.invalidate(workDetailProvider);
       await ref.read(workListProvider.notifier).load();
       if (mounted) context.go('/');
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('撤销失败：$error')),
+          SnackBar(content: Text('撤销失败：${apiErrorLabel(error)}')),
         );
       }
     }

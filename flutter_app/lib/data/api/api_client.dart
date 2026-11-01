@@ -451,3 +451,41 @@ Future<void> removeServerRecord(String url) async {
   final json = jsonEncode(history.map((e) => e.toJson()).toList());
   await prefs.setString(_kServerHistoryKey, json);
 }
+
+/// Renders a transport failure as one short Chinese sentence.
+///
+/// `DioException.toString()` is several paragraphs of English boilerplate, and
+/// screens that interpolated it raw filled the whole viewport with it.
+String apiErrorLabel(Object error) {
+  if (error is DioException) {
+    switch (error.response?.statusCode) {
+      case 400:
+        return _serverErrorText(error) ?? '请求无效，请检查选择后重试';
+      case 401:
+        return '登录已失效，请重新登录';
+      case 403:
+        return '没有权限执行该操作';
+      case 404:
+        return '作品已不存在，可能刚被合并或移走';
+      case 503:
+        return '服务器正忙，请稍后重试';
+    }
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout) {
+      return '连接超时，请检查网络后重试';
+    }
+    return '网络异常，请稍后重试';
+  }
+  return '操作失败，请稍后重试';
+}
+
+/// Surfaces the `error` field the Go handlers return for rejected requests,
+/// which is already Chinese and far more useful than the transport text.
+String? _serverErrorText(DioException error) {
+  final data = error.response?.data;
+  if (data is Map && data['error'] is String) {
+    final message = (data['error'] as String).trim();
+    if (message.isNotEmpty && !message.startsWith('<')) return message;
+  }
+  return null;
+}

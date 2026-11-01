@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/api/api_client.dart';
 import '../../data/api/work_api.dart';
 import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
@@ -70,7 +71,7 @@ class _MergeWorkDialogState extends ConsumerState<MergeWorkDialog> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = '$error';
+        _error = apiErrorLabel(error);
         _loading = false;
       });
     }
@@ -89,7 +90,7 @@ class _MergeWorkDialogState extends ConsumerState<MergeWorkDialog> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _error = '$error';
+          _error = apiErrorLabel(error);
           _merging = false;
         });
       }
@@ -267,6 +268,18 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
     super.dispose();
   }
 
+  /// Units that all come from the same archive can only ever move together, and
+  /// moving every unit is not a split — so no selection can succeed. The confirm
+  /// button stays disabled from the start instead of leaving a dead end.
+  bool get _splitImpossible {
+    if (widget.work.units.length < 2) return true;
+    final archives = <String>{};
+    for (final unit in widget.work.units) {
+      archives.add(unit.comicId);
+    }
+    return archives.length < 2;
+  }
+
   bool get _hasPartialArchive {
     final totalByComic = <String, int>{};
     final selectedByComic = <String, int>{};
@@ -284,7 +297,8 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
   }
 
   Future<void> _confirm() async {
-    if (_selected.isEmpty ||
+    if (_splitImpossible ||
+        _selected.isEmpty ||
         _selected.length >= widget.work.units.length ||
         _hasPartialArchive ||
         _splitting) {
@@ -309,7 +323,7 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _error = '$error';
+          _error = apiErrorLabel(error);
           _splitting = false;
         });
       }
@@ -321,6 +335,7 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
     final colors = Theme.of(context).colorScheme;
     final allSelected = _selected.length >= widget.work.units.length;
     final partialArchive = _hasPartialArchive;
+    final deadEnd = _splitImpossible;
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.viewInsetsOf(context).bottom,
@@ -391,7 +406,7 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                     },
                   ),
                 ),
-                if (allSelected)
+                if (allSelected && !deadEnd)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
@@ -399,7 +414,7 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                       style: TextStyle(color: colors.tertiary),
                     ),
                   ),
-                if (partialArchive)
+                if (partialArchive && !deadEnd)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
@@ -436,7 +451,8 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 148),
                       child: FilledButton(
-                        onPressed: _selected.isEmpty ||
+                        onPressed: deadEnd ||
+                                _selected.isEmpty ||
                                 allSelected ||
                                 partialArchive ||
                                 _splitting

@@ -57,6 +57,60 @@ Work _work(String id, String title) {
   });
 }
 
+/// A Work built from [archiveIds], one unit per entry, so a test can model a
+/// single archive (every unit shares an id) or several archives.
+Work _archiveWork(List<String> archiveIds) {
+  return Work.fromJson({
+    'id': 'work-a',
+    'libraryId': 'default',
+    'title': '当前作品',
+    'coverUrl': '',
+    'itemCount': archiveIds.length,
+    'pageCount': archiveIds.length * 2,
+    'units': [
+      for (var index = 0; index < archiveIds.length; index++)
+        {
+          'id': 'unit-$index',
+          'workId': 'work-a',
+          'comicId': archiveIds[index],
+          'title': '第$index话',
+          'displayLabel': '第$index话',
+          'startPage': index * 2,
+          'pageCount': 2,
+          'sortIndex': index + 1,
+        },
+    ],
+  });
+}
+
+Future<void> _openSplit(WidgetTester tester, Work work) async {
+  await tester.binding.setSurfaceSize(const Size(400, 800));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [workApiProvider.overrideWithValue(_FakeWorkApi(const []))],
+      child: MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: true,
+                builder: (_) => SplitWorkSheet(work: work),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('merge dialog lays out inside a bounded dialog surface',
       (tester) async {
@@ -145,5 +199,33 @@ void main() {
     expect(confirm, findsOneWidget);
     expect(tester.getSize(confirm).width, greaterThan(0));
     expect(tester.getSize(confirm).width, lessThan(400));
+  });
+
+  testWidgets('single-archive work keeps 确认拆分 disabled without extra copy',
+      (tester) async {
+    await _openSplit(tester, _archiveWork(['comic-a', 'comic-a', 'comic-a']));
+
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.pumpAndSettle();
+
+    final confirm = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '确认拆分'),
+    );
+    expect(confirm.onPressed, isNull);
+    // The greyed-out button is the whole message: no explanatory line.
+    expect(find.text('同一压缩包内的单元不能只拆出一部分'), findsNothing);
+    expect(find.text('至少保留一个单元'), findsNothing);
+  });
+
+  testWidgets('two archives make the first unit a valid split', (tester) async {
+    await _openSplit(tester, _archiveWork(['comic-a', 'comic-a', 'comic-b']));
+
+    await tester.tap(find.byType(CheckboxListTile).last);
+    await tester.pumpAndSettle();
+
+    final confirm = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '确认拆分'),
+    );
+    expect(confirm.onPressed, isNotNull);
   });
 }
