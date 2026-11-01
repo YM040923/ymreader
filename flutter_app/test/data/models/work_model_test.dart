@@ -17,6 +17,7 @@ void main() {
         'continueUnitId': 'unit-2',
         'continuePage': 135,
         'lastReadAt': '2026-08-08T01:00:00Z',
+        'manualMembership': true,
         'tags': [
           {'id': 1, 'name': '校园', 'color': '#fff000'}
         ],
@@ -53,6 +54,7 @@ void main() {
       expect(work.continueTarget?.relativePage, 35);
       expect(work.tags.single.name, '校园');
       expect(work.categories.single.slug, 'jp');
+      expect(work.manualMembership, isTrue);
       expect(work.progress, 68);
     });
 
