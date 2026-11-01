@@ -37,15 +37,29 @@ class _MergeWorkDialogState extends ConsumerState<MergeWorkDialog> {
 
   Future<void> _load() async {
     try {
-      final response = await ref.read(workApiProvider).listWorks(
-            WorkQuery(
-              libraryIds: [widget.work.libraryId],
-              pageSize: 200,
-            ),
-          );
+      final collected = <Work>[];
+      var page = 1;
+      var totalPages = 1;
+      while (page <= totalPages && page <= 50) {
+        final response = await ref.read(workApiProvider).listWorks(
+              WorkQuery(
+                page: page,
+                pageSize: 200,
+                libraryIds: [widget.work.libraryId],
+              ),
+            );
+        collected.addAll(response.works);
+        totalPages = response.totalPages;
+        if (response.works.isEmpty) break;
+        page += 1;
+      }
+      final unique = <String, Work>{};
+      for (final work in collected) {
+        unique[work.id] = work;
+      }
       if (!mounted) return;
       setState(() {
-        _works = response.works
+        _works = unique.values
             .where((candidate) =>
                 candidate.id != widget.work.id &&
                 (widget.work.libraryId.isEmpty ||

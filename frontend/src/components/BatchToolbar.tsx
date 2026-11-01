@@ -15,6 +15,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import { useCategories, ApiCategory } from "@/hooks/useComics";
 
 interface BatchToolbarProps {
@@ -67,6 +68,12 @@ export default function BatchToolbar({
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const t = useTranslation();
   const { categories } = useCategories();
+  const closeDeleteDialog = () => {
+    setShowDeleteConfirm(false);
+    setBatchDeleteFiles(false);
+    setConfirmExpandedDelete(false);
+  };
+  useDialogA11y(showDeleteConfirm, "batch-delete-dialog", closeDeleteDialog);
 
   return (
     <>
@@ -331,9 +338,9 @@ export default function BatchToolbar({
       {/* Delete Confirm Modal */}
       {showDeleteConfirm && onDelete && (
         <>
-          <div className="fixed inset-0 z-[60] bg-black/60 animate-backdrop-in" onClick={() => setShowDeleteConfirm(false)} />
-          <div className="fixed left-1/2 top-1/2 z-[60] w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-card border border-border p-6 shadow-2xl animate-modal-in">
-            <h3 className="text-lg font-semibold text-foreground">{t.batch.confirmDelete}</h3>
+          <div className="fixed inset-0 z-[60] bg-black/60 animate-backdrop-in" onClick={closeDeleteDialog} />
+          <div id="batch-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-delete-title" className="fixed left-1/2 top-1/2 z-[60] w-[calc(100%-2rem)] max-w-96 -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-card border border-border p-6 shadow-2xl animate-modal-in">
+            <h3 id="batch-delete-title" className="text-lg font-semibold text-foreground">{t.batch.confirmDelete}</h3>
             <p className="mt-2 text-sm text-muted">
               {t.batch.confirmDeleteMsg.replace("{count}", String(selectedCount))}
             </p>
@@ -381,7 +388,9 @@ export default function BatchToolbar({
             )}
             <div className="mt-5 flex justify-end gap-3">
               <button
-                onClick={() => { setShowDeleteConfirm(false); setBatchDeleteFiles(false); setConfirmExpandedDelete(false); }}
+                type="button"
+                data-autofocus
+                onClick={closeDeleteDialog}
                 className="rounded-lg bg-card px-4 py-2 text-sm text-foreground"
               >
                 {t.common.cancel}
@@ -389,9 +398,7 @@ export default function BatchToolbar({
               <button
                 onClick={() => {
                   onDelete(batchDeleteFiles, batchDeleteFiles && deleteSpansDirectories ? confirmExpandedDelete : false);
-                  setShowDeleteConfirm(false);
-                  setBatchDeleteFiles(false);
-                  setConfirmExpandedDelete(false);
+                  closeDeleteDialog();
                 }}
                 disabled={batchDeleteFiles && deleteSpansDirectories && !confirmExpandedDelete}
                 className={`rounded-lg px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 ${batchDeleteFiles ? "bg-red-600 hover:bg-red-700" : "bg-red-500 hover:bg-red-600"}`}

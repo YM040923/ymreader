@@ -957,3 +957,18 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+func TestContinuousOPDSCBZIsOmittedForOversizedWorks(t *testing.T) {
+	work := service.Work{ID: "oversized-work", Title: "Oversized"}
+	limited := continuousOPDSComicRow(work, opdsContinuousCBZPageLimit+1)
+	if limited.AcquisitionHref != "" || limited.AcquisitionType != "" {
+		t.Fatalf("oversized Work advertised a CBZ acquisition: %#v", limited)
+	}
+	if limited.StreamHref == "" || limited.StreamPageCount != opdsContinuousCBZPageLimit+1 {
+		t.Fatalf("oversized Work lost its PSE stream: %#v", limited)
+	}
+	allowed := continuousOPDSComicRow(work, opdsContinuousCBZPageLimit)
+	if allowed.AcquisitionHref == "" {
+		t.Fatal("Work at the CBZ page limit should keep its acquisition")
+	}
+}

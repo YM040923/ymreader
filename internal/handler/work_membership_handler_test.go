@@ -328,7 +328,21 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 		}
 	}
 
-	restore := performAuthedRequest(router, http.MethodPost, "/api/works/"+splitResponse.WorkID+"/restore-auto", nil, cookie)
+	undo := performAuthedRequest(router, http.MethodPost, "/api/works/"+splitResponse.WorkID+"/undo-last", nil, cookie)
+	if undo.Code != http.StatusOK {
+		t.Fatalf("undo split status=%d body=%s", undo.Code, undo.Body.String())
+	}
+	afterUndo := loadWorks()
+	if len(afterUndo.Works) != 1 {
+		t.Fatalf("works after split undo = %d, want merged Work only: %#v", len(afterUndo.Works), afterUndo.Works)
+	}
+	for _, work := range afterUndo.Works {
+		if work.ID == splitResponse.WorkID {
+			t.Fatalf("split Work still visible after operation undo: %#v", work)
+		}
+	}
+
+	restore := performAuthedRequest(router, http.MethodPost, "/api/works/"+merged.WorkID+"/restore-auto", nil, cookie)
 	if restore.Code != http.StatusOK {
 		t.Fatalf("restore auto status=%d body=%s", restore.Code, restore.Body.String())
 	}

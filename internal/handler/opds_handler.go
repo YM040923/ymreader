@@ -1300,8 +1300,10 @@ func opdsDownloadAliasPath(comicID, filename string) string {
 // continuousOPDSComicRow presents every unit of a Work as one PSE-streamed
 // publication. It has no download acquisition on purpose: generating one CBZ
 // for a long Work would materialise every page image on the server.
+const opdsContinuousCBZPageLimit = 2000
+
 func continuousOPDSComicRow(work service.Work, totalPages int) service.OPDSComic {
-	return service.OPDSComic{
+	row := service.OPDSComic{
 		ID:                  work.ID + "-continuous",
 		EntryID:             "continuous:" + work.ID,
 		Title:               work.Title + " · 连续阅读",
@@ -1323,6 +1325,13 @@ func continuousOPDSComicRow(work service.Work, totalPages int) service.OPDSComic
 		StreamStartPage:     0,
 		StreamPageCount:     totalPages,
 	}
+	if totalPages > opdsContinuousCBZPageLimit {
+		// PSE streaming stays available; do not advertise an on-demand CBZ that
+		// would materialise thousands of page images on disk.
+		row.AcquisitionHref = ""
+		row.AcquisitionType = ""
+	}
+	return row
 }
 
 // ContinuousDownload builds a single CBZ for clients without PSE support.
@@ -1342,6 +1351,12 @@ func (h *OPDSHandler) ContinuousDownload(c *gin.Context) {
 	}
 	if totalPages <= 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+		return
+	}
+	if totalPages > opdsContinuousCBZPageLimit {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": "Continuous CBZ is too large for on-demand generation; use the PSE stream",
+		})
 		return
 	}
 	h.renderVirtualCBZ(c, work.Title+" · 连续阅读", work.Units)

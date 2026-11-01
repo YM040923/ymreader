@@ -106,3 +106,7 @@ export async function splitWork(
 export async function restoreWorkAutoGrouping(workId: string): Promise<void> {
   await apiClient.post(`/api/works/${encodeURIComponent(workId)}/restore-auto`);
 }
+
+export async function undoLastWorkOperation(workId: string): Promise<void> {
+  await apiClient.post(`/api/works/${encodeURIComponent(workId)}/undo-last`);
+}

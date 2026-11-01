@@ -251,6 +251,12 @@ class WorkApi {
       '/works/${Uri.encodeComponent(workId)}/restore-auto',
     );
   }
+
+  Future<void> undoLastWorkOperation(String workId) async {
+    await _dio.post(
+      '/works/${Uri.encodeComponent(workId)}/undo-last',
+    );
+  }
   Future<LibraryDirectoryListing> listLibraryDirectories(
     String libraryId, {
     String parent = '',

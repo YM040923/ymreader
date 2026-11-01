@@ -19,6 +19,7 @@ func registerWorkRoutes(api *gin.RouterGroup) {
 		works.POST("/merge", handler.Merge)
 		works.POST("/:id/split", handler.Split)
 		works.POST("/:id/restore-auto", handler.RestoreAuto)
+		works.POST("/:id/undo-last", handler.UndoLast)
 		works.GET("/:id/units", handler.Units)
 		works.PUT("/:id/favorite", handler.SetFavorite)
 		works.PUT("/:id/rating", handler.SetRating)

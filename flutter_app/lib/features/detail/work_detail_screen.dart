@@ -122,6 +122,41 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
     }
   }
 
+  Future<void> _undoLastOperation() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('撤销上次整理'),
+        content: const Text(
+          '只恢复最近一次合并或拆分前的作品归属。文件、阅读进度和已保存的元数据不会被删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认撤销'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    try {
+      await ref.read(workApiProvider).undoLastWorkOperation(work.id);
+      ref.invalidate(workDetailProvider(work.id));
+      await ref.read(workListProvider.notifier).load();
+      if (mounted) context.go('/');
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('撤销失败：$error')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -150,6 +185,8 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                         _splitWork();
                       case 'restore':
                         _restoreAutoGrouping();
+                      case 'undo':
+                        _undoLastOperation();
                     }
                   },
                   itemBuilder: (context) => [
@@ -167,6 +204,15 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                         child: ListTile(
                           leading: Icon(Icons.call_split_rounded),
                           title: Text('拆分单元'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    if (work.manualMembership)
+                      const PopupMenuItem(
+                        value: 'undo',
+                        child: ListTile(
+                          leading: Icon(Icons.undo_rounded),
+                          title: Text('撤销上次整理'),
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),

@@ -35,12 +35,14 @@ void main() {
       final newWorkId =
           await api.splitWork('work_a', ['unit_1', 'unit_2'], title: '拆分');
       await api.restoreWorkAutoGrouping('work_a');
+      await api.undoLastWorkOperation('work_a');
 
       expect(newWorkId, 'work_manual_new');
       expect(requests.map((request) => '${request['method']} ${request['path']}'), [
         'POST /api/works/merge',
         'POST /api/works/work_a/split',
         'POST /api/works/work_a/restore-auto',
+        'POST /api/works/work_a/undo-last',
       ]);
       expect(jsonDecode(requests[0]['body'] as String), {
         'workIds': ['work_a', 'work_b'],
@@ -50,6 +52,7 @@ void main() {
         'title': '拆分',
       });
       expect(requests[2]['body'], isEmpty);
+      expect(requests[3]['body'], isEmpty);
     } finally {
       await subscription.cancel();
       await server.close(force: true);

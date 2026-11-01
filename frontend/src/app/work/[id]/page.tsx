@@ -21,12 +21,14 @@ import {
   Settings2,
   Heart,
   GitMerge,
+  RotateCcw,
   Scissors,
   Undo2,
   X,
 } from "lucide-react";
-import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, restoreWorkAutoGrouping, splitWork } from "@/api/works";
+import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, restoreWorkAutoGrouping, splitWork, undoLastWorkOperation } from "@/api/works";
 import { apiPath } from "@/lib/base-path";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import {
   buildWorkReaderPath,
   selectWorkReadingTarget,
@@ -137,6 +139,8 @@ export default function WorkDetailPage() {
   const [splitting, setSplitting] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [showUndo, setShowUndo] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const [membershipError, setMembershipError] = useState("");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [savingMetadata, setSavingMetadata] = useState(false);
@@ -148,6 +152,23 @@ export default function WorkDetailPage() {
   const canManage = work
     ? canManageWorkLibrary(user, work.libraryId, libraries)
     : user?.role === "admin";
+
+  useDialogA11y(showUndo, "undo-dialog", () => {
+    if (undoing) return;
+    setShowUndo(false);
+    setMembershipError("");
+  });
+  useDialogA11y(showRestore, "restore-dialog", () => {
+    if (restoring) return;
+    setShowRestore(false);
+    setMembershipError("");
+  });
+  useDialogA11y(showMerge, "merge-dialog", () => {
+    if (merging) return;
+    setShowMerge(false);
+    setMergeTargetId("");
+    setMembershipError("");
+  });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -335,6 +356,7 @@ export default function WorkDetailPage() {
   };
 
   const closeMergeDialog = () => {
+    if (merging) return;
     setShowMerge(false);
     setMergeTargetId("");
     setMembershipError("");
@@ -361,30 +383,26 @@ export default function WorkDetailPage() {
     }
   };
 
-  useEffect(() => {
-    if (!showRestore) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !restoring) {
-        setShowRestore(false);
-        setMembershipError("");
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showRestore, restoring]);
+  const closeUndoDialog = () => {
+    if (undoing) return;
+    setShowUndo(false);
+    setMembershipError("");
+  };
 
-  useEffect(() => {
-    if (!showMerge) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !merging) {
-        setShowMerge(false);
-        setMergeTargetId("");
-        setMembershipError("");
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showMerge, merging]);
+  const confirmUndo = async () => {
+    if (undoing) return;
+    setUndoing(true);
+    setMembershipError("");
+    try {
+      await undoLastWorkOperation(work.id);
+      setShowUndo(false);
+      router.push("/books");
+      router.refresh();
+    } catch (error) {
+      setMembershipError(error instanceof Error ? error.message : "撤销失败");
+      setUndoing(false);
+    }
+  };
 
   const toggleSplitUnit = (unitId: string) => {
     setSelectedUnitIds((current) => {
@@ -598,6 +616,7 @@ export default function WorkDetailPage() {
                 <button type="button" onClick={async () => { await toggleWorkFavorite(work); await load(); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Heart className={`h-4 w-4 ${work.isFavorite ? "fill-rose-400 text-rose-400" : ""}`} />{work.isFavorite ? "取消收藏" : "收藏"}</button>
                 {canManage && <button type="button" onClick={openMergeDialog} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><GitMerge className="h-4 w-4" />合并作品</button>}
                 {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
+                {canManage && work.manualMembership && <button type="button" onClick={() => { setMembershipError(""); setShowUndo(true); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><RotateCcw className="h-4 w-4" />撤销上次整理</button>}
                 {canManage && work.manualMembership && <button type="button" onClick={() => { setMembershipError(""); setShowRestore(true); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Undo2 className="h-4 w-4" />恢复自动分组</button>}
                 {canManage && <button type="button" onClick={() => setShowMetadata((value) => !value)} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>}
               </div>
@@ -652,7 +671,7 @@ export default function WorkDetailPage() {
               <span className={`text-xs ${selectedUnitIds.size >= sortedUnits.length ? "text-amber-300" : "text-muted"}`}>
                 {selectedUnitIds.size >= sortedUnits.length ? "至少保留一个单元" : `已选 ${selectedUnitIds.size} 个单元`}
               </span>
-              <input value={splitTitle} onChange={(event) => setSplitTitle(event.target.value)} placeholder="新作品标题（可选）" className="h-9 min-w-48 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
+              <input aria-label="新作品标题" value={splitTitle} onChange={(event) => setSplitTitle(event.target.value)} placeholder="新作品标题（可选）" className="h-9 min-w-48 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
               <button type="button" onClick={confirmSplit} disabled={selectedUnitIds.size === 0 || selectedUnitIds.size >= sortedUnits.length || splitting} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{splitting ? "拆分中…" : "确认拆分"}</button>
               <button type="button" onClick={() => { setSplitMode(false); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className="h-9 rounded-lg border border-border px-3 text-sm text-muted">取消</button>
               {membershipError && <span className="text-xs text-rose-400">{membershipError}</span>}
@@ -673,7 +692,7 @@ export default function WorkDetailPage() {
       {showMerge && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeMergeDialog} />
-          <div role="dialog" aria-modal="true" aria-labelledby="merge-dialog-title" className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+          <div id="merge-dialog" role="dialog" aria-modal="true" aria-labelledby="merge-dialog-title" className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 id="merge-dialog-title" className="text-base font-semibold text-foreground">合并作品</h2>
@@ -681,7 +700,7 @@ export default function WorkDetailPage() {
               </div>
               <button type="button" onClick={closeMergeDialog} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
             </div>
-            <input autoFocus value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
+            <input autoFocus data-autofocus value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
             {membershipError && <p className="mb-2 text-xs text-rose-400">{membershipError}</p>}
             <div className="max-h-80 space-y-1 overflow-y-auto">
               {mergeLoading && <p className="py-6 text-center text-sm text-muted">加载中…</p>}
@@ -711,10 +730,29 @@ export default function WorkDetailPage() {
           </div>
         </div>
       )}
+      {showUndo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeUndoDialog} />
+          <div id="undo-dialog" role="dialog" aria-modal="true" aria-labelledby="undo-dialog-title" className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 id="undo-dialog-title" className="text-base font-semibold text-foreground">撤销上次整理</h2>
+                <p className="mt-1 text-xs text-muted">只恢复最近一次合并或拆分前的作品归属。文件、阅读进度和已经保存的元数据不会删除。</p>
+              </div>
+              <button type="button" onClick={closeUndoDialog} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
+            </div>
+            {membershipError && <p className="mb-3 text-xs text-rose-400">{membershipError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" data-autofocus onClick={closeUndoDialog} disabled={undoing} className="h-9 rounded-lg border border-border px-4 text-sm text-muted disabled:opacity-40">取消</button>
+              <button type="button" onClick={confirmUndo} disabled={undoing} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{undoing ? "撤销中…" : "确认撤销"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showRestore && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeRestoreDialog} />
-          <div role="dialog" aria-modal="true" aria-labelledby="restore-dialog-title" className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+          <div id="restore-dialog" role="dialog" aria-modal="true" aria-labelledby="restore-dialog-title" className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h2 id="restore-dialog-title" className="text-base font-semibold text-foreground">恢复自动分组</h2>
@@ -724,7 +762,7 @@ export default function WorkDetailPage() {
             </div>
             {membershipError && <p className="mb-3 text-xs text-rose-400">{membershipError}</p>}
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={closeRestoreDialog} disabled={restoring} className="h-9 rounded-lg border border-border px-4 text-sm text-muted disabled:opacity-40">取消</button>
+              <button type="button" data-autofocus onClick={closeRestoreDialog} disabled={restoring} className="h-9 rounded-lg border border-border px-4 text-sm text-muted disabled:opacity-40">取消</button>
               <button type="button" onClick={confirmRestore} disabled={restoring} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{restoring ? "恢复中…" : "确认恢复"}</button>
             </div>
           </div>

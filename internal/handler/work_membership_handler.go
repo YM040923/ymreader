@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -38,6 +39,15 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 		}
 	}
 	target := targets[0].Work
+	comicIDs := make([]string, 0)
+	for _, work := range targets {
+		comicIDs = append(comicIDs, work.ComicIDs...)
+	}
+	snapshot, err := captureWorkMembershipSnapshot(comicIDs, libraryID)
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
 	if err := store.EnsureLogicalWorkRecord(store.LogicalWork{
 		ID:               target.ID,
 		LibraryID:        target.LibraryID,
@@ -61,6 +71,14 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	recordWorkOperation(c, store.WorkOperation{
+		ID:              uuid.NewString(),
+		OperationType:   "merge",
+		TargetWorkID:    target.ID,
+		AffectedWorkIDs: workIDs,
+		Snapshot:        snapshot,
+		CreatedBy:       getUserID(c),
+	})
 	if title := strings.TrimSpace(req.Title); title != "" {
 		if err := store.UpdateLogicalWorkMetadata(target.ID, store.LogicalWorkMetadataUpdate{Title: &title}); err != nil {
 			// Membership rows are already committed; drop the cached catalog so
@@ -188,6 +206,11 @@ func (h *WorkHandler) Split(c *gin.Context) {
 		title = work.Title + " 拆分"
 	}
 	first := work.Units[unitsByID[unitIDs[0]]]
+	snapshot, err := captureWorkMembershipSnapshot(comicIDs, work.LibraryID)
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
 	if err := store.EnsureLogicalWorkRecord(store.LogicalWork{
 		ID:               manualID,
 		LibraryID:        work.LibraryID,
@@ -213,5 +236,80 @@ func (h *WorkHandler) Split(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	recordWorkOperation(c, store.WorkOperation{
+		ID:              uuid.NewString(),
+		OperationType:   "split",
+		TargetWorkID:    work.ID,
+		AffectedWorkIDs: []string{work.ID, manualID},
+		Snapshot:        snapshot,
+		CreatedBy:       getUserID(c),
+	})
 	completeWorkMutation(c, gin.H{"workId": manualID, "units": len(unitIDs)})
+}
+
+func captureWorkMembershipSnapshot(comicIDs []string, libraryID string) ([]store.WorkMembershipSnapshot, error) {
+	memberships, err := store.GetWorkMemberships(nil, false)
+	if err != nil {
+		return nil, err
+	}
+	ids := uniqueStrings(comicIDs)
+	snapshot := make([]store.WorkMembershipSnapshot, 0, len(ids))
+	for _, comicID := range ids {
+		snapshot = append(snapshot, store.WorkMembershipSnapshot{
+			ComicID:   comicID,
+			WorkID:    memberships[comicID],
+			LibraryID: libraryID,
+		})
+	}
+	return snapshot, nil
+}
+
+func recordWorkOperation(c *gin.Context, operation store.WorkOperation) {
+	if err := store.RecordWorkOperation(operation); err != nil {
+		// The grouping itself is already committed; log the missing history
+		// entry instead of turning a successful edit into a failure.
+		log.Printf("[works] failed to record %s operation for %s: %v", operation.OperationType, operation.TargetWorkID, err)
+	}
+}
+
+// UndoLast restores the membership snapshot of the latest merge/split that
+// touched this Work.
+func (h *WorkHandler) UndoLast(c *gin.Context) {
+	workID := strings.TrimSpace(c.Param("id"))
+	if workID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Work ID is required"})
+		return
+	}
+	if _, ok := h.requireManageTargets(c, []string{workID}); !ok {
+		return
+	}
+	operation, err := store.LatestWorkOperation([]string{workID})
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
+	if operation == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No manual operation to undo"})
+		return
+	}
+	userID := getUserID(c)
+	for _, entry := range operation.Snapshot {
+		if entry.LibraryID == "" {
+			continue
+		}
+		allowed, permissionErr := store.UserCanManageLibrary(userID, entry.LibraryID)
+		if permissionErr != nil {
+			writeWorkMutationError(c, permissionErr)
+			return
+		}
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "No permission to undo one or more affected libraries"})
+			return
+		}
+	}
+	if err := store.UndoWorkOperation(operation.ID, operation.Snapshot); err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
+	completeWorkMutation(c, gin.H{"success": true, "operation": operation.OperationType})
 }
