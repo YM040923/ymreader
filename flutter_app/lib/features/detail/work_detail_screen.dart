@@ -66,7 +66,10 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
       builder: (_) => MergeWorkDialog(work: work),
     );
     if (!mounted || targetId == null || targetId.isEmpty) return;
-    ref.invalidate(workListProvider);
+    ref.invalidate(workDetailProvider(work.id));
+    ref.invalidate(workDetailProvider(targetId));
+    await ref.read(workListProvider.notifier).load();
+    if (!mounted) return;
     context.go('/work/${Uri.encodeComponent(targetId)}');
   }
 
@@ -78,7 +81,9 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
       builder: (_) => SplitWorkSheet(work: work),
     );
     if (!mounted || newWorkId == null || newWorkId.isEmpty) return;
-    ref.invalidate(workListProvider);
+    ref.invalidate(workDetailProvider(work.id));
+    await ref.read(workListProvider.notifier).load();
+    if (!mounted) return;
     context.go('/work/${Uri.encodeComponent(newWorkId)}');
   }
 
@@ -105,7 +110,8 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
     if (!mounted || confirmed != true) return;
     try {
       await ref.read(workApiProvider).restoreWorkAutoGrouping(work.id);
-      ref.invalidate(workListProvider);
+      ref.invalidate(workDetailProvider(work.id));
+      await ref.read(workListProvider.notifier).load();
       if (mounted) context.go('/');
     } catch (error) {
       if (mounted) {

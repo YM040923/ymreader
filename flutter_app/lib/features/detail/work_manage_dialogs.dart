@@ -46,7 +46,10 @@ class _MergeWorkDialogState extends ConsumerState<MergeWorkDialog> {
       if (!mounted) return;
       setState(() {
         _works = response.works
-            .where((candidate) => candidate.id != widget.work.id)
+            .where((candidate) =>
+                candidate.id != widget.work.id &&
+                (widget.work.libraryId.isEmpty ||
+                    candidate.libraryId == widget.work.libraryId))
             .toList();
         _loading = false;
       });
@@ -231,9 +234,26 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
     super.dispose();
   }
 
+  bool get _hasPartialArchive {
+    final totalByComic = <String, int>{};
+    final selectedByComic = <String, int>{};
+    for (final unit in widget.work.units) {
+      totalByComic[unit.comicId] = (totalByComic[unit.comicId] ?? 0) + 1;
+      if (_selected.contains(unit.id)) {
+        selectedByComic[unit.comicId] =
+            (selectedByComic[unit.comicId] ?? 0) + 1;
+      }
+    }
+    return selectedByComic.entries.any((entry) {
+      final total = totalByComic[entry.key] ?? 0;
+      return entry.value > 0 && entry.value < total;
+    });
+  }
+
   Future<void> _confirm() async {
     if (_selected.isEmpty ||
         _selected.length >= widget.work.units.length ||
+        _hasPartialArchive ||
         _splitting) {
       return;
     }
@@ -247,7 +267,10 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
             _selected.toList(),
             title: _title.text,
           );
-      if (mounted && newWorkId.isNotEmpty) {
+      if (newWorkId.isEmpty) {
+        throw StateError('服务器未返回新作品 ID');
+      }
+      if (mounted) {
         Navigator.pop(context, newWorkId);
       }
     } catch (error) {
@@ -264,6 +287,7 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final allSelected = _selected.length >= widget.work.units.length;
+    final partialArchive = _hasPartialArchive;
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.viewInsetsOf(context).bottom,
@@ -342,6 +366,14 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                       style: TextStyle(color: colors.tertiary),
                     ),
                   ),
+                if (partialArchive)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '同一压缩包内的单元不能只拆出一部分',
+                      style: TextStyle(color: colors.error),
+                    ),
+                  ),
                 TextField(
                   controller: _title,
                   decoration: const InputDecoration(
@@ -366,7 +398,10 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                     ),
                     const SizedBox(width: 8),
                     FilledButton(
-                      onPressed: _selected.isEmpty || allSelected || _splitting
+                      onPressed: _selected.isEmpty ||
+                              allSelected ||
+                              partialArchive ||
+                              _splitting
                           ? null
                           : _confirm,
                       child: Text(_splitting ? '拆分中…' : '确认拆分'),
