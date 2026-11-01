@@ -98,128 +98,147 @@ class _MergeWorkDialogState extends ConsumerState<MergeWorkDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final serverUrl = ref.watch(authProvider).serverUrl;
     final filtered = _works.where((candidate) {
       final query = _search.text.trim().toLowerCase();
       return query.isEmpty || candidate.title.toLowerCase().contains(query);
     }).toList();
-    return Dialog(
-      insetPadding: const EdgeInsets.all(18),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.78,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    // Material `Dialog` measures its child with `IntrinsicWidth`, which hands
+    // unbounded width to the `Row`/`Expanded` layout below and breaks it, so
+    // the dialog surface is built here instead.
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Material(
+          color:
+              theme.dialogTheme.backgroundColor ?? colors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(28),
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 560,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.78,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      '合并作品',
-                      style: Theme.of(context).textTheme.titleLarge,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '合并作品',
+                          style: theme.textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '把当前作品并入所选作品，章节、阅读进度和元数据会保留。',
+                    style: TextStyle(color: colors.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _search,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search_rounded),
+                      hintText: '搜索目标作品',
+                      border: OutlineInputBorder(),
+                      isDense: true,
                     ),
                   ),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-              Text(
-                '把当前作品并入所选作品，章节、阅读进度和元数据会保留。',
-                style: TextStyle(color: colors.onSurfaceVariant),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _search,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search_rounded),
-                  hintText: '搜索目标作品',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(_error!, style: TextStyle(color: colors.error)),
-              ],
-              const SizedBox(height: 10),
-              Flexible(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : filtered.isEmpty
-                        ? const Center(child: Text('没有可合并的作品'))
-                        : ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: filtered.length,
-                            itemBuilder: (context, index) {
-                              final candidate = filtered[index];
-                              final selected = candidate.id == _target?.id;
-                              return ListTile(
-                                selected: selected,
-                                contentPadding: EdgeInsets.zero,
-                                leading: ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: SizedBox(
-                                    width: 36,
-                                    height: 50,
-                                    child: AuthenticatedImage(
-                                      imageUrl:
-                                          candidate.resolvedCoverUrl(serverUrl),
-                                      fit: BoxFit.cover,
-                                      placeholder: ColoredBox(
-                                        color: colors.surfaceContainerHighest,
-                                      ),
-                                      errorWidget: ColoredBox(
-                                        color: colors.surfaceContainerHighest,
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!, style: TextStyle(color: colors.error)),
+                  ],
+                  const SizedBox(height: 10),
+                  Flexible(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : filtered.isEmpty
+                            ? const Center(child: Text('没有可合并的作品'))
+                            : ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: filtered.length,
+                                itemBuilder: (context, index) {
+                                  final candidate = filtered[index];
+                                  final selected = candidate.id == _target?.id;
+                                  return ListTile(
+                                    selected: selected,
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: SizedBox(
+                                        width: 36,
+                                        height: 50,
+                                        child: AuthenticatedImage(
+                                          imageUrl: candidate
+                                              .resolvedCoverUrl(serverUrl),
+                                          fit: BoxFit.cover,
+                                          placeholder: ColoredBox(
+                                            color:
+                                                colors.surfaceContainerHighest,
+                                          ),
+                                          errorWidget: ColoredBox(
+                                            color:
+                                                colors.surfaceContainerHighest,
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ),
-                                title: Text(
-                                  candidate.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: Text(
-                                  '${candidate.itemCount} 话/卷 · ${candidate.pageCount} 页',
-                                ),
-                                trailing: selected
-                                    ? Icon(
-                                        Icons.check_circle_rounded,
-                                        color: colors.primary,
-                                      )
-                                    : null,
-                                onTap: () =>
-                                    setState(() => _target = candidate),
-                              );
-                            },
-                          ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _target == null ? '选择目标作品' : '并入《${_target!.title}》',
-                      style: TextStyle(color: colors.onSurfaceVariant),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                                    title: Text(
+                                      candidate.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Text(
+                                      '${candidate.itemCount} 话/卷 · ${candidate.pageCount} 页',
+                                    ),
+                                    trailing: selected
+                                        ? Icon(
+                                            Icons.check_circle_rounded,
+                                            color: colors.primary,
+                                          )
+                                        : null,
+                                    onTap: () =>
+                                        setState(() => _target = candidate),
+                                  );
+                                },
+                              ),
                   ),
-                  FilledButton(
-                    onPressed: _target == null || _merging ? null : _confirm,
-                    child: Text(_merging ? '合并中…' : '确认合并'),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _target == null ? '选择目标作品' : '并入《${_target!.title}》',
+                          style: TextStyle(color: colors.onSurfaceVariant),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        child: FilledButton(
+                          onPressed:
+                              _target == null || _merging ? null : _confirm,
+                          child: Text(_merging ? '合并中…' : '确认合并'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -405,20 +424,26 @@ class _SplitWorkSheetState extends ConsumerState<SplitWorkSheet> {
                         style: TextStyle(color: colors.onSurfaceVariant),
                       ),
                     ),
-                    OutlinedButton(
-                      onPressed:
-                          _splitting ? null : () => Navigator.pop(context),
-                      child: const Text('取消'),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 112),
+                      child: OutlinedButton(
+                        onPressed:
+                            _splitting ? null : () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: _selected.isEmpty ||
-                              allSelected ||
-                              partialArchive ||
-                              _splitting
-                          ? null
-                          : _confirm,
-                      child: Text(_splitting ? '拆分中…' : '确认拆分'),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 148),
+                      child: FilledButton(
+                        onPressed: _selected.isEmpty ||
+                                allSelected ||
+                                partialArchive ||
+                                _splitting
+                            ? null
+                            : _confirm,
+                        child: Text(_splitting ? '拆分中…' : '确认拆分'),
+                      ),
                     ),
                   ],
                 ),
