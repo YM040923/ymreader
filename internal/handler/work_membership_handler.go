@@ -48,6 +48,11 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	progressSnapshot, err := store.SnapshotUserWorkProgress(workIDs)
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
 	if err := store.EnsureLogicalWorkRecord(store.LogicalWork{
 		ID:               target.ID,
 		LibraryID:        target.LibraryID,
@@ -71,13 +76,15 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	remapWorkProgress(workIDs)
 	recordWorkOperation(c, store.WorkOperation{
-		ID:              uuid.NewString(),
-		OperationType:   "merge",
-		TargetWorkID:    target.ID,
-		AffectedWorkIDs: workIDs,
-		Snapshot:        snapshot,
-		CreatedBy:       getUserID(c),
+		ID:               uuid.NewString(),
+		OperationType:    "merge",
+		TargetWorkID:     target.ID,
+		AffectedWorkIDs:  workIDs,
+		Snapshot:         snapshot,
+		ProgressSnapshot: progressSnapshot,
+		CreatedBy:        getUserID(c),
 	})
 	if title := strings.TrimSpace(req.Title); title != "" {
 		if err := store.UpdateLogicalWorkMetadata(target.ID, store.LogicalWorkMetadataUpdate{Title: &title}); err != nil {
@@ -122,11 +129,18 @@ func (h *WorkHandler) RestoreAuto(c *gin.Context) {
 		}
 	}
 	comicIDs = uniqueStrings(comicIDs)
+	affected, err := store.WorkIDsWithCursorsForComics(comicIDs)
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
+	affected = uniqueStrings(append(affected, work.ID))
 	removed, err := store.DeleteWorkMemberships(comicIDs)
 	if err != nil {
 		writeWorkMutationError(c, err)
 		return
 	}
+	remapWorkProgress(affected)
 	completeWorkMutation(c, gin.H{"success": true, "removedMemberships": removed, "affectedComics": len(comicIDs)})
 }
 
@@ -211,6 +225,11 @@ func (h *WorkHandler) Split(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	progressSnapshot, err := store.SnapshotUserWorkProgress([]string{work.ID, manualID})
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
 	if err := store.EnsureLogicalWorkRecord(store.LogicalWork{
 		ID:               manualID,
 		LibraryID:        work.LibraryID,
@@ -236,13 +255,17 @@ func (h *WorkHandler) Split(c *gin.Context) {
 		writeWorkMutationError(c, err)
 		return
 	}
+	// A cursor left on the original Work while its archive moved out would make
+	// 继续阅读 open the wrong book, so the split takes it along.
+	remapWorkProgress([]string{work.ID, manualID})
 	recordWorkOperation(c, store.WorkOperation{
-		ID:              uuid.NewString(),
-		OperationType:   "split",
-		TargetWorkID:    work.ID,
-		AffectedWorkIDs: []string{work.ID, manualID},
-		Snapshot:        snapshot,
-		CreatedBy:       getUserID(c),
+		ID:               uuid.NewString(),
+		OperationType:    "split",
+		TargetWorkID:     work.ID,
+		AffectedWorkIDs:  []string{work.ID, manualID},
+		Snapshot:         snapshot,
+		ProgressSnapshot: progressSnapshot,
+		CreatedBy:        getUserID(c),
 	})
 	completeWorkMutation(c, gin.H{"workId": manualID, "units": len(unitIDs)})
 }
@@ -262,6 +285,20 @@ func captureWorkMembershipSnapshot(comicIDs []string, libraryID string) ([]store
 		})
 	}
 	return snapshot, nil
+}
+
+// remapWorkProgress re-points reading cursors that a grouping change stranded
+// on another Work. The grouping is already committed at this point, so a
+// failure is logged instead of turning a successful edit into an error.
+func remapWorkProgress(workIDs []string) {
+	moved, err := store.RemapUserWorkProgress(workIDs)
+	if err != nil {
+		log.Printf("[works] failed to remap reading cursors for %d work(s): %v", len(workIDs), err)
+		return
+	}
+	if moved > 0 {
+		log.Printf("[works] moved %d reading cursor(s) after a grouping change", moved)
+	}
 }
 
 func recordWorkOperation(c *gin.Context, operation store.WorkOperation) {
@@ -307,7 +344,7 @@ func (h *WorkHandler) UndoLast(c *gin.Context) {
 			return
 		}
 	}
-	if err := store.UndoWorkOperation(operation.ID, operation.Snapshot); err != nil {
+	if err := store.UndoWorkOperation(*operation); err != nil {
 		writeWorkMutationError(c, err)
 		return
 	}

@@ -21,6 +21,10 @@ func init() {
 		        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		      );
 		      CREATE INDEX IF NOT EXISTS "WorkOperation_createdAt_idx" ON "WorkOperation"("createdAt" DESC);`,
+	}, Migration{
+		Version:     51,
+		Description: "Capture per-user Work cursors so undo restores reading positions too",
+		SQL:         `ALTER TABLE "WorkOperation" ADD COLUMN "progressSnapshot" TEXT NOT NULL DEFAULT '[]';`,
 	})
 }
 
@@ -31,13 +35,14 @@ type WorkMembershipSnapshot struct {
 }
 
 type WorkOperation struct {
-	ID              string
-	OperationType   string
-	TargetWorkID    string
-	AffectedWorkIDs []string
-	Snapshot        []WorkMembershipSnapshot
-	CreatedBy       string
-	CreatedAt       time.Time
+	ID               string
+	OperationType    string
+	TargetWorkID     string
+	AffectedWorkIDs  []string
+	Snapshot         []WorkMembershipSnapshot
+	ProgressSnapshot []WorkProgressSnapshot
+	CreatedBy        string
+	CreatedAt        time.Time
 }
 
 func RecordWorkOperation(operation WorkOperation) error {
@@ -52,11 +57,17 @@ func RecordWorkOperation(operation WorkOperation) error {
 	if err != nil {
 		return err
 	}
+	progress, err := json.Marshal(operation.ProgressSnapshot)
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`
 		INSERT INTO "WorkOperation" (
-			"id", "operationType", "targetWorkId", "affectedWorkIds", "snapshot", "createdBy", "createdAt"
-		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, operation.ID, operation.OperationType, operation.TargetWorkID, string(affected), string(snapshot), operation.CreatedBy)
+			"id", "operationType", "targetWorkId", "affectedWorkIds", "snapshot",
+			"progressSnapshot", "createdBy", "createdAt"
+		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, operation.ID, operation.OperationType, operation.TargetWorkID, string(affected),
+		string(snapshot), string(progress), operation.CreatedBy)
 	return err
 }
 
@@ -67,7 +78,8 @@ func LatestWorkOperation(workIDs []string) (*WorkOperation, error) {
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT "id", "operationType", "targetWorkId", "affectedWorkIds", "snapshot", "createdBy", "createdAt"
+		SELECT "id", "operationType", "targetWorkId", "affectedWorkIds", "snapshot",
+		       "createdBy", "createdAt", "progressSnapshot"
 		FROM "WorkOperation"
 		ORDER BY rowid DESC
 		LIMIT 100
@@ -82,10 +94,11 @@ func LatestWorkOperation(workIDs []string) (*WorkOperation, error) {
 	}
 	for rows.Next() {
 		var operation WorkOperation
-		var affectedJSON, snapshotJSON string
+		var affectedJSON, snapshotJSON, progressJSON string
 		if err := rows.Scan(
 			&operation.ID, &operation.OperationType, &operation.TargetWorkID,
 			&affectedJSON, &snapshotJSON, &operation.CreatedBy, &operation.CreatedAt,
+			&progressJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -94,6 +107,11 @@ func LatestWorkOperation(workIDs []string) (*WorkOperation, error) {
 		}
 		if err := json.Unmarshal([]byte(snapshotJSON), &operation.Snapshot); err != nil {
 			return nil, fmt.Errorf("decode Work snapshot: %w", err)
+		}
+		if progressJSON != "" {
+			if err := json.Unmarshal([]byte(progressJSON), &operation.ProgressSnapshot); err != nil {
+				return nil, fmt.Errorf("decode Work cursor snapshot: %w", err)
+			}
 		}
 		for _, workID := range operation.AffectedWorkIDs {
 			if _, ok := wanted[workID]; ok {
@@ -104,12 +122,13 @@ func LatestWorkOperation(workIDs []string) (*WorkOperation, error) {
 	return nil, rows.Err()
 }
 
-// UndoWorkOperation restores membership rows captured before an operation and
-// removes the operation record in one transaction.
-func UndoWorkOperation(operationID string, snapshot []WorkMembershipSnapshot) error {
+// UndoWorkOperation restores the membership and reading cursors captured before
+// an operation and removes the operation record in one transaction.
+func UndoWorkOperation(operation WorkOperation) error {
 	if db == nil || !workTableExists("WorkOperation") {
 		return nil
 	}
+	snapshot := operation.Snapshot
 	logicalWorkWriteMu.Lock()
 	defer logicalWorkWriteMu.Unlock()
 	tx, err := db.Begin()
@@ -151,7 +170,10 @@ func UndoWorkOperation(operationID string, snapshot []WorkMembershipSnapshot) er
 			}
 		}
 	}
-	if _, err := tx.Exec(`DELETE FROM "WorkOperation" WHERE "id" = ?`, operationID); err != nil {
+	if err := RestoreUserWorkProgressTx(tx, operation.AffectedWorkIDs, operation.ProgressSnapshot); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM "WorkOperation" WHERE "id" = ?`, operation.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
