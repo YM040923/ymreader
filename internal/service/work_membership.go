@@ -1,0 +1,129 @@
+package service
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/nowen-reader/nowen-reader/internal/store"
+)
+
+const manualWorkIDPrefix = store.ManualWorkIDPrefix
+
+func isManualWorkID(workID string) bool {
+	return strings.HasPrefix(workID, manualWorkIDPrefix)
+}
+
+// ApplyManualWorkMemberships moves physical units between Works according to
+// user-defined membership. It runs after automatic directory grouping and
+// before metadata overlays, so merged/split Works keep stable IDs and metadata.
+func ApplyManualWorkMemberships(
+	works []Work,
+	memberships map[string]string,
+	manuals map[string]store.LogicalWork,
+	comicFileSizes map[string]int64,
+) []Work {
+	if len(memberships) == 0 {
+		return works
+	}
+
+	byID := make(map[string]*Work, len(works)+len(manuals))
+	order := make([]string, 0, len(works)+len(manuals))
+	for index := range works {
+		work := &works[index]
+		byID[work.ID] = work
+		order = append(order, work.ID)
+	}
+	for workID, row := range manuals {
+		if _, exists := byID[workID]; exists {
+			continue
+		}
+		byID[workID] = &Work{
+			ID:               workID,
+			LibraryID:        row.LibraryID,
+			Title:            row.Title,
+			RootPath:         store.DisplayWorkRootPath(workID, row.RootPath),
+			CoverComicID:     row.CoverComicID,
+			CoverAspectRatio: row.CoverAspectRatio,
+			Tags:             []store.ComicTagInfo{},
+			Categories:       []store.ComicCategoryInfo{},
+			Units:            []WorkUnit{},
+		}
+		order = append(order, workID)
+	}
+
+	groupedUnits := make(map[string][]WorkUnit, len(byID))
+	for index := range works {
+		work := &works[index]
+		for _, unit := range work.Units {
+			targetID := memberships[unit.ComicID]
+			if targetID == "" {
+				targetID = work.ID
+			}
+			if _, exists := byID[targetID]; !exists {
+				targetID = work.ID
+			}
+			groupedUnits[targetID] = append(groupedUnits[targetID], unit)
+		}
+	}
+
+	result := make([]Work, 0, len(order))
+	for _, workID := range order {
+		work := byID[workID]
+		units := groupedUnits[workID]
+		if len(units) == 0 {
+			work.Units = []WorkUnit{}
+			work.ItemCount = 0
+			continue
+		}
+		sort.SliceStable(units, func(i, j int) bool {
+			if units[i].DisplayLabel != units[j].DisplayLabel {
+				return NaturalLess(units[i].DisplayLabel, units[j].DisplayLabel)
+			}
+			if units[i].StartPage != units[j].StartPage {
+				return units[i].StartPage < units[j].StartPage
+			}
+			return units[i].ID < units[j].ID
+		})
+
+		comicIDs := make(map[string]struct{}, len(units))
+		totalPages := 0
+		for index := range units {
+			units[index].WorkID = workID
+			units[index].SortIndex = index
+			comicIDs[units[index].ComicID] = struct{}{}
+			totalPages += units[index].PageCount
+		}
+		work.Units = units
+		work.ItemCount = len(units)
+		work.PageCount = totalPages
+		if comicFileSizes != nil {
+			var totalSize int64
+			for comicID := range comicIDs {
+				totalSize += comicFileSizes[comicID]
+			}
+			work.FileSize = totalSize
+		}
+		if work.RepresentativeComicID == "" || !containsComicID(comicIDs, work.RepresentativeComicID) {
+			work.RepresentativeComicID = units[0].ComicID
+		}
+		if work.CoverComicID == "" || !containsComicID(comicIDs, work.CoverComicID) {
+			if work.StoredCoverURL == "" {
+				work.CoverComicID = units[0].ComicID
+			}
+		}
+		result = append(result, *work)
+	}
+
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Title != result[j].Title {
+			return NaturalLess(result[i].Title, result[j].Title)
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+func containsComicID(set map[string]struct{}, comicID string) bool {
+	_, ok := set[comicID]
+	return ok
+}

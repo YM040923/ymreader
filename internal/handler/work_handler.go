@@ -227,6 +227,29 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 			return nil, hydrateErr
 		}
 		works := service.BuildWorksFromComicList(result.Comics, service.WorkBuildOptions{ProbeInternalArchive: true})
+		memberships, membershipErr := store.GetWorkMemberships(libraryIDs, filterLibraries)
+		if membershipErr != nil {
+			return nil, membershipErr
+		}
+		if len(memberships) > 0 {
+			manualIDSet := make(map[string]struct{}, len(memberships))
+			for _, workID := range memberships {
+				manualIDSet[workID] = struct{}{}
+			}
+			manualIDs := make([]string, 0, len(manualIDSet))
+			for workID := range manualIDSet {
+				manualIDs = append(manualIDs, workID)
+			}
+			manualRows, manualErr := store.GetLogicalWorksByIDs(manualIDs)
+			if manualErr != nil {
+				return nil, manualErr
+			}
+			fileSizes := make(map[string]int64, len(result.Comics))
+			for _, comic := range result.Comics {
+				fileSizes[comic.ID] = comic.FileSize
+			}
+			works = service.ApplyManualWorkMemberships(works, memberships, manualRows, fileSizes)
+		}
 		comicIDs := make([]string, 0, len(result.Comics))
 		for _, comic := range result.Comics {
 			comicIDs = append(comicIDs, comic.ID)

@@ -87,3 +87,18 @@ export async function fetchAllWorks(
   }
   return result;
 }
+
+export async function mergeWorks(workIds: string[], title?: string): Promise<void> {
+  await apiClient.post("/api/works/merge", { workIds, title: title?.trim() || undefined });
+}
+
+export async function splitWork(
+  workId: string,
+  unitIds: string[],
+  title?: string,
+): Promise<{ workId: string }> {
+  return apiClient.post<{ workId: string }>(
+    `/api/works/${encodeURIComponent(workId)}/split`,
+    { unitIds, title: title?.trim() || undefined },
+  );
+}

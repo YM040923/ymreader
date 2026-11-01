@@ -9,6 +9,12 @@ func PersistAndApplyLogicalWorks(works []Work) error {
 	seeds := make([]store.LogicalWorkSeed, 0, len(works))
 	workIDs := make([]string, 0, len(works))
 	for _, work := range works {
+		workIDs = append(workIDs, work.ID)
+		// Manual Works share their source directory with an automatic Work, so
+		// re-deriving an ID from RootPath would overwrite that other row.
+		if isManualWorkID(work.ID) {
+			continue
+		}
 		seeds = append(seeds, store.LogicalWorkSeed{
 			ID:               work.ID,
 			LibraryID:        work.LibraryID,
@@ -18,12 +24,14 @@ func PersistAndApplyLogicalWorks(works []Work) error {
 			CoverComicID:     work.CoverComicID,
 			CoverAspectRatio: work.CoverAspectRatio,
 		})
-		workIDs = append(workIDs, work.ID)
 	}
 	if err := store.UpsertDetectedLogicalWorks(seeds); err != nil {
 		return err
 	}
 	for _, work := range works {
+		if isManualWorkID(work.ID) {
+			continue
+		}
 		if err := store.SeedLogicalWorkRelations(work.ID, work.Tags, work.Categories); err != nil {
 			return err
 		}

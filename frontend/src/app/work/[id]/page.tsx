@@ -20,8 +20,11 @@ import {
   Star,
   Settings2,
   Heart,
+  GitMerge,
+  Scissors,
+  X,
 } from "lucide-react";
-import { fetchWork, fetchWorkComics } from "@/api/works";
+import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, splitWork } from "@/api/works";
 import { apiPath } from "@/lib/base-path";
 import {
   buildWorkReaderPath,
@@ -121,6 +124,17 @@ export default function WorkDetailPage() {
     if (typeof window === "undefined") return "grid";
     return localStorage.getItem("work:unitView") === "list" ? "list" : "grid";
   });
+  const [showMerge, setShowMerge] = useState(false);
+  const [mergeCandidates, setMergeCandidates] = useState<Work[]>([]);
+  const [mergeQuery, setMergeQuery] = useState("");
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [selectedUnitIds, setSelectedUnitIds] = useState<Set<string>>(new Set());
+  const [splitTitle, setSplitTitle] = useState("");
+  const [splitting, setSplitting] = useState(false);
+  const [membershipError, setMembershipError] = useState("");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [savingMetadata, setSavingMetadata] = useState(false);
   const [draft, setDraft] = useState({
@@ -285,6 +299,64 @@ export default function WorkDetailPage() {
     );
   }
 
+  const openMergeDialog = async () => {
+    setShowMerge(true);
+    setMergeQuery("");
+    setMergeTargetId("");
+    setMergeCandidates([]);
+    setMergeLoading(true);
+    setMembershipError("");
+    try {
+      const list = await fetchAllWorks({ libraryIds: [work.libraryId] });
+      setMergeCandidates(list.filter((candidate) => candidate.id !== work.id));
+    } catch (error) {
+      setMergeCandidates([]);
+      setMembershipError(error instanceof Error ? error.message : "加载作品列表失败");
+    } finally {
+      setMergeLoading(false);
+    }
+  };
+
+  const confirmMerge = async (target: Work) => {
+    if (merging) return;
+    setMerging(true);
+    setMembershipError("");
+    try {
+      await mergeWorks([target.id, work.id]);
+      router.push(`/work/${encodeURIComponent(target.id)}`);
+      router.refresh();
+    } catch (error) {
+      setMembershipError(error instanceof Error ? error.message : "合并失败");
+      setMerging(false);
+    }
+  };
+
+  const toggleSplitUnit = (unitId: string) => {
+    setSelectedUnitIds((current) => {
+      const next = new Set(current);
+      if (next.has(unitId)) next.delete(unitId);
+      else next.add(unitId);
+      return next;
+    });
+  };
+
+  const confirmSplit = async () => {
+    if (selectedUnitIds.size === 0 || splitting) return;
+    setSplitting(true);
+    setMembershipError("");
+    try {
+      const result = await splitWork(work.id, [...selectedUnitIds], splitTitle);
+      setSplitMode(false);
+      setSelectedUnitIds(new Set());
+      setSplitTitle("");
+      router.push(`/work/${encodeURIComponent(result.workId)}`);
+    } catch (error) {
+      setMembershipError(error instanceof Error ? error.message : "拆分失败");
+    } finally {
+      setSplitting(false);
+    }
+  };
+
   const metadata = {
     author: work.author || coverComic?.author || "",
     publisher: work.publisher || coverComic?.publisher || "",
@@ -320,6 +392,10 @@ export default function WorkDetailPage() {
   const overallProgress = work.itemCount > 0
     ? Math.round((completedItemCount / work.itemCount) * 100)
     : 0;
+  const mergeMatches = mergeCandidates.filter((candidate) =>
+    candidate.title.toLowerCase().includes(mergeQuery.trim().toLowerCase()),
+  );
+  const mergeTarget = mergeCandidates.find((candidate) => candidate.id === mergeTargetId) || null;
 
   const renderUnit = (unit: WorkUnit, index: number) => {
     const fallbackState = comicStates[unit.comicId];
@@ -328,7 +404,14 @@ export default function WorkDetailPage() {
     const isCurrent = target?.unit.id === unit.id && target.isContinue;
     const unitCover = unit.coverUrl || comicMap.get(unit.comicId)?.coverUrl || workCover(work);
     const title = unit.displayLabel || unit.title || `第 ${index + 1} 话`;
-    const openUnit = () => router.push(buildWorkReaderPath(work, unit, unit.startPage));
+    const openUnit = () => {
+      if (splitMode) {
+        toggleSplitUnit(unit.id);
+        return;
+      }
+      router.push(buildWorkReaderPath(work, unit, unit.startPage));
+    };
+    const selectedForSplit = selectedUnitIds.has(unit.id);
 
     if (viewMode === "grid") {
       return (
@@ -336,7 +419,7 @@ export default function WorkDetailPage() {
           key={unit.id}
           type="button"
           onClick={openUnit}
-          className="group overflow-hidden rounded-2xl border border-border/50 bg-card/65 text-left transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-lg"
+          className={`group overflow-hidden rounded-2xl border bg-card/65 text-left transition-all hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-lg ${selectedForSplit ? "border-accent ring-2 ring-accent/40" : "border-border/50"}`}
         >
           <div
             className="relative w-full overflow-hidden bg-background"
@@ -347,6 +430,7 @@ export default function WorkDetailPage() {
               {finished ? "已读" : progress.started ? `${progress.percentage}%` : "未读"}
             </span>
             {isCurrent && <span className="absolute right-2 top-2 rounded-full bg-accent px-2 py-1 text-[10px] text-white">续读</span>}
+            {splitMode && <span className={`absolute bottom-3 right-2 rounded-full px-2 py-1 text-[10px] text-white ${selectedForSplit ? "bg-accent" : "bg-black/65"}`}>{selectedForSplit ? "已选" : "选择"}</span>}
             <div className="absolute inset-x-0 bottom-0 h-1.5 bg-black/30">
               <div className="h-full bg-accent" style={{ width: `${progress.percentage}%` }} />
             </div>
@@ -367,8 +451,13 @@ export default function WorkDetailPage() {
         key={unit.id}
         type="button"
         onClick={openUnit}
-        className="group flex w-full items-center gap-3 rounded-2xl border border-border/50 bg-card/55 p-2.5 text-left transition-all hover:border-accent/30 hover:bg-card-hover"
+        className={`group flex w-full items-center gap-3 rounded-2xl border p-2.5 text-left transition-all hover:border-accent/30 hover:bg-card-hover ${selectedForSplit ? "border-accent bg-accent/5" : "border-border/50 bg-card/55"}`}
       >
+        {splitMode && (
+          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-xs ${selectedForSplit ? "border-accent bg-accent text-white" : "border-border text-transparent"}`}>
+            ✓
+          </span>
+        )}
         <div
           className="relative w-14 shrink-0 overflow-hidden rounded-lg bg-background"
           style={{ aspectRatio: unit.coverAspectRatio && unit.coverAspectRatio > 0 ? String(unit.coverAspectRatio) : "5 / 7" }}
@@ -394,7 +483,7 @@ export default function WorkDetailPage() {
   };
 
   return (
-    <main className="min-h-screen bg-background pb-24">
+    <main className={`min-h-screen bg-background ${splitMode ? "pb-52" : "pb-24"}`}>
       <header className="sticky top-0 z-30 border-b border-border/50 bg-background/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
           <button onClick={() => router.push("/books")} className="flex h-9 w-9 items-center justify-center rounded-full border border-border/60 text-muted hover:text-foreground" title="返回书库">
@@ -452,6 +541,8 @@ export default function WorkDetailPage() {
               <div className="mt-5 flex flex-wrap gap-2">
                 {target && <button type="button" onClick={() => router.push(buildWorkReaderPath(work, target.unit, target.page))} className="flex h-10 items-center gap-2 rounded-xl bg-accent px-4 text-sm font-medium text-white shadow-lg shadow-accent/20"><BookOpen className="h-4 w-4" />{target.isContinue ? "继续阅读" : "开始阅读"}</button>}
                 <button type="button" onClick={async () => { await toggleWorkFavorite(work); await load(); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Heart className={`h-4 w-4 ${work.isFavorite ? "fill-rose-400 text-rose-400" : ""}`} />{work.isFavorite ? "取消收藏" : "收藏"}</button>
+                {canManage && <button type="button" onClick={openMergeDialog} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><GitMerge className="h-4 w-4" />合并作品</button>}
+                {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
                 {canManage && <button type="button" onClick={() => setShowMetadata((value) => !value)} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>}
               </div>
 
@@ -499,6 +590,18 @@ export default function WorkDetailPage() {
           </nav>
         )}
 
+        {splitMode && (
+          <div id="split-action-bar" className="fixed inset-x-0 bottom-0 z-40 bg-background/90 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl sm:px-6">
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 rounded-2xl border border-accent/30 bg-card p-3 shadow-2xl">
+              <span className="text-xs text-muted">已选 {selectedUnitIds.size} 个单元</span>
+              <input value={splitTitle} onChange={(event) => setSplitTitle(event.target.value)} placeholder="新作品标题（可选）" className="h-9 min-w-48 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
+              <button type="button" onClick={confirmSplit} disabled={selectedUnitIds.size === 0 || splitting} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{splitting ? "拆分中…" : "确认拆分"}</button>
+              <button type="button" onClick={() => { setSplitMode(false); setSelectedUnitIds(new Set()); setMembershipError(""); }} className="h-9 rounded-lg border border-border px-3 text-sm text-muted">取消</button>
+              {membershipError && <span className="text-xs text-rose-400">{membershipError}</span>}
+            </div>
+          </div>
+        )}
+
         <section className="mt-6">
           <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-semibold">阅读单元</h2><p className="mt-0.5 text-xs text-muted">卷、话、内部 ZIP/CBZ 章节和 PDF 全文统一显示</p></div><span className="text-xs text-muted">{visibleUnits.length} 项</span></div>
           <div className={viewMode === "grid" ? "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" : "space-y-2"}>
@@ -508,6 +611,48 @@ export default function WorkDetailPage() {
 
         {(work.representativeComicId || work.coverComicId) && <SimilarComics comicId={work.representativeComicId || work.coverComicId} />}
       </div>
+
+      {showMerge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={() => setShowMerge(false)} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">合并作品</h2>
+                <p className="mt-0.5 text-xs text-muted">把当前作品并入所选作品，章节与阅读进度随之合并</p>
+              </div>
+              <button type="button" onClick={() => setShowMerge(false)} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
+            </div>
+            <input value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
+            {membershipError && <p className="mb-2 text-xs text-rose-400">{membershipError}</p>}
+            <div className="max-h-80 space-y-1 overflow-y-auto">
+              {mergeLoading && <p className="py-6 text-center text-sm text-muted">加载中…</p>}
+              {!mergeLoading && mergeMatches.map((candidate) => {
+                const selected = candidate.id === mergeTargetId;
+                return (
+                  <button key={candidate.id} type="button" disabled={merging} onClick={() => setMergeTargetId(selected ? "" : candidate.id)} className={`flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors disabled:opacity-50 ${selected ? "bg-accent/10" : "hover:bg-background"}`}>
+                    <img src={workCover(candidate)} alt="" className="h-12 w-9 shrink-0 rounded object-cover" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-foreground">{candidate.title}</span>
+                      <span className="block text-[11px] text-muted">{candidate.itemCount} 话/卷 · {candidate.pageCount} 页</span>
+                    </span>
+                    <GitMerge className={`h-4 w-4 shrink-0 ${selected ? "text-accent" : "text-muted"}`} />
+                  </button>
+                );
+              })}
+              {!mergeLoading && mergeMatches.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted">没有可合并的作品</p>
+              )}
+            </div>
+            {mergeTarget && (
+              <div className="mt-3 flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate text-xs text-muted">当前作品将并入《{mergeTarget.title}》</span>
+                <button type="button" disabled={merging} onClick={() => confirmMerge(mergeTarget)} className="h-9 shrink-0 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{merging ? "合并中…" : "确认合并"}</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

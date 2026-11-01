@@ -1030,12 +1030,22 @@ func MarkMissingLogicalWorks(libraryID string, visibleWorkIDs []string) error {
 	defer logicalWorkWriteMu.Unlock()
 	now := time.Now().UTC()
 	visibleWorkIDs = uniqueWorkIDs(visibleWorkIDs)
+	hasMemberships := WorkMembershipTableAvailable()
 	if len(visibleWorkIDs) == 0 {
+		if !hasMemberships {
+			_, err := db.Exec(`
+				UPDATE "LogicalWork"
+				SET "missingSince" = COALESCE("missingSince", ?), "updatedAt" = ?
+				WHERE "libraryId" = ?
+			`, now, now, libraryID)
+			return err
+		}
 		_, err := db.Exec(`
 			UPDATE "LogicalWork"
 			SET "missingSince" = COALESCE("missingSince", ?), "updatedAt" = ?
 			WHERE "libraryId" = ?
-		`, now, now, libraryID)
+			  AND "id" NOT IN (SELECT DISTINCT "workId" FROM "WorkMembership" WHERE "libraryId" = ?)
+		`, now, now, libraryID, libraryID)
 		return err
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(visibleWorkIDs)), ",")
@@ -1043,10 +1053,18 @@ func MarkMissingLogicalWorks(libraryID string, visibleWorkIDs []string) error {
 	for _, id := range visibleWorkIDs {
 		args = append(args, id)
 	}
+	if hasMemberships {
+		args = append(args, libraryID)
+	}
 	_, err := db.Exec(fmt.Sprintf(`
 		UPDATE "LogicalWork"
 		SET "missingSince" = COALESCE("missingSince", ?), "updatedAt" = ?
 		WHERE "libraryId" = ? AND "id" NOT IN (%s)
-	`, placeholders), args...)
+	`, placeholders)+func() string {
+		if hasMemberships {
+			return ` AND "id" NOT IN (SELECT DISTINCT "workId" FROM "WorkMembership" WHERE "libraryId" = ?)`
+		}
+		return ""
+	}(), args...)
 	return err
 }
