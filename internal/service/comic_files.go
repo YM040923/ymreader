@@ -13,6 +13,33 @@ import (
 // ComicDeleteDirectoryCount reports how many source directories the selected
 // comics occupy before their database rows disappear.
 func ComicDeleteDirectoryCount(comicIDs []string) int {
+	return comicDirectoryCount(comicIDs)
+}
+
+// ManualWorkDeleteSpansDirectories only treats a manual/merged Work as
+// expanded when its own member comics span several source directories. A bulk
+// selection of independent single-directory Works does not need confirmation.
+func ManualWorkDeleteSpansDirectories(comicIDs []string) (bool, error) {
+	memberships, err := store.GetWorkMemberships(nil, false)
+	if err != nil {
+		return false, err
+	}
+	groups := make(map[string][]string)
+	for _, comicID := range comicIDs {
+		comicID = strings.TrimSpace(comicID)
+		if workID := memberships[comicID]; workID != "" {
+			groups[workID] = append(groups[workID], comicID)
+		}
+	}
+	for _, group := range groups {
+		if comicDirectoryCount(group) > 1 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func comicDirectoryCount(comicIDs []string) int {
 	directories := make(map[string]struct{}, len(comicIDs))
 	seen := make(map[string]struct{}, len(comicIDs))
 	for _, comicID := range comicIDs {

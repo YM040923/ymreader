@@ -225,6 +225,32 @@ class WorkApi {
       data: {'status': value},
     );
   }
+
+  Future<void> mergeWorks(List<String> workIds) async {
+    await _dio.post('/works/merge', data: {'workIds': workIds});
+  }
+
+  Future<String> splitWork(
+    String workId,
+    List<String> unitIds, {
+    String? title,
+  }) async {
+    final response = await _dio.post(
+      '/works/${Uri.encodeComponent(workId)}/split',
+      data: {
+        'unitIds': unitIds,
+        if (title?.trim().isNotEmpty == true) 'title': title!.trim(),
+      },
+    );
+    final data = Map<String, dynamic>.from(response.data as Map);
+    return data['workId']?.toString() ?? '';
+  }
+
+  Future<void> restoreWorkAutoGrouping(String workId) async {
+    await _dio.post(
+      '/works/${Uri.encodeComponent(workId)}/restore-auto',
+    );
+  }
   Future<LibraryDirectoryListing> listLibraryDirectories(
     String libraryId, {
     String parent = '',

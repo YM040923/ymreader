@@ -99,6 +99,33 @@ func SetWorkMemberships(entries []WorkMembershipEntry) error {
 	return tx.Commit()
 }
 
+// DeleteWorkMemberships clears manual grouping for the given comics.
+func DeleteWorkMemberships(comicIDs []string) (int64, error) {
+	comicIDs = uniqueWorkIDs(comicIDs)
+	if len(comicIDs) == 0 || !WorkMembershipTableAvailable() {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(comicIDs)), ",")
+	args := make([]interface{}, 0, len(comicIDs))
+	for _, comicID := range comicIDs {
+		args = append(args, comicID)
+	}
+	result, err := tx.Exec(`DELETE FROM "WorkMembership" WHERE "comicId" IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	deleted, _ := result.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 // ManualWorkIDPrefix marks Work IDs that exist only as user-defined groupings.
 const ManualWorkIDPrefix = "work_manual_"
 

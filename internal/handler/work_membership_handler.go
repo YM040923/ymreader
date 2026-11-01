@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/nowen-reader/nowen-reader/internal/service"
 	"github.com/nowen-reader/nowen-reader/internal/store"
 )
 
@@ -70,6 +71,45 @@ func (h *WorkHandler) Merge(c *gin.Context) {
 		}
 	}
 	completeWorkMutation(c, gin.H{"workId": target.ID, "units": len(entries)})
+}
+
+// RestoreAuto clears manual grouping for a Work and lets the catalog rebuild
+// automatic Works from their source directories.
+func (h *WorkHandler) RestoreAuto(c *gin.Context) {
+	workID := strings.TrimSpace(c.Param("id"))
+	if workID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Work ID is required"})
+		return
+	}
+	targets, ok := h.requireManageTargets(c, []string{workID})
+	if !ok {
+		return
+	}
+	work := targets[0].Work
+	comicIDs := append([]string(nil), targets[0].ComicIDs...)
+	// A manual split shares its display root with the merge target. Clear the
+	// whole directory group so one click restores the pre-manual grouping.
+	if work.RootPath != "" {
+		catalog, err := h.loadWorkCatalog(c)
+		if err != nil {
+			writeWorkMutationError(c, err)
+			return
+		}
+		for _, candidate := range catalog.Works {
+			if candidate.LibraryID != work.LibraryID ||
+				!strings.EqualFold(candidate.RootPath, work.RootPath) {
+				continue
+			}
+			comicIDs = append(comicIDs, service.PhysicalComicIDs(candidate)...)
+		}
+	}
+	comicIDs = uniqueStrings(comicIDs)
+	removed, err := store.DeleteWorkMemberships(comicIDs)
+	if err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
+	completeWorkMutation(c, gin.H{"success": true, "removedMemberships": removed, "affectedComics": len(comicIDs)})
 }
 
 // Split moves selected whole units out of a Work into a new manual Work.
@@ -156,6 +196,10 @@ func (h *WorkHandler) Split(c *gin.Context) {
 		CoverComicID:     first.ComicID,
 		CoverAspectRatio: first.CoverAspectRatio,
 	}); err != nil {
+		writeWorkMutationError(c, err)
+		return
+	}
+	if err := store.CopyLogicalWorkMetadata(work.ID, manualID); err != nil {
 		writeWorkMutationError(c, err)
 		return
 	}

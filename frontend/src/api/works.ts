@@ -102,3 +102,7 @@ export async function splitWork(
     { unitIds, title: title?.trim() || undefined },
   );
 }
+
+export async function restoreWorkAutoGrouping(workId: string): Promise<void> {
+  await apiClient.post(`/api/works/${encodeURIComponent(workId)}/restore-auto`);
+}

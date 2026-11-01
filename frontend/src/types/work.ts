@@ -55,6 +55,7 @@ export interface Work {
   isFavorite?: boolean;
   rating?: number | null;
   readingStatus?: string;
+  manualMembership?: boolean;
   continueComicId?: string;
   continuePage?: number;
   continueUnitId?: string;

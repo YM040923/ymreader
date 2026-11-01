@@ -96,6 +96,13 @@ func ApplyManualWorkMemberships(
 		work.Units = units
 		work.ItemCount = len(units)
 		work.PageCount = totalPages
+		work.ManualMembership = false
+		for _, unit := range units {
+			if memberships[unit.ComicID] == workID {
+				work.ManualMembership = true
+				break
+			}
+		}
 
 		sources := make([]store.ComicListItem, 0, len(comicIDs))
 		for comicID := range comicIDs {

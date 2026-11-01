@@ -119,6 +119,13 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 			CompletedItemCount int    `json:"completedItemCount"`
 			ReadingStatus      string `json:"readingStatus"`
 			TotalReadTime      int    `json:"totalReadTime"`
+			Author             string `json:"author"`
+			Description        string `json:"description"`
+			Status             string `json:"status"`
+			ManualMembership   bool   `json:"manualMembership"`
+			Tags               []struct {
+				Name string `json:"name"`
+			} `json:"tags"`
 			Units              []struct {
 				ID        string `json:"id"`
 				ComicID   string `json:"comicId"`
@@ -168,6 +175,9 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 		afterMerge.Works[0].TotalReadTime != 120 || afterMerge.Works[0].ReadingStatus != "reading" {
 		t.Fatalf("merged work lost source user state: %#v", afterMerge.Works[0])
 	}
+	if !afterMerge.Works[0].ManualMembership {
+		t.Fatalf("merged work did not expose manual membership: %#v", afterMerge.Works[0])
+	}
 	unitID := ""
 	allUnitIDs := make([]string, 0, len(afterMerge.Works[0].Units))
 	for _, unit := range afterMerge.Works[0].Units {
@@ -201,6 +211,20 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 	if activity.Code != http.StatusOK {
 		t.Fatalf("merged Work progress status=%d body=%s", activity.Code, activity.Body.String())
 	}
+	metadataUpdate := performAuthedRequest(router, http.MethodPut, "/api/works/"+merged.WorkID+"/metadata", map[string]interface{}{
+		"author":      "Merged Author",
+		"description": "Merged Description",
+		"status":      "ongoing",
+	}, cookie)
+	if metadataUpdate.Code != http.StatusOK {
+		t.Fatalf("merged metadata update status=%d body=%s", metadataUpdate.Code, metadataUpdate.Body.String())
+	}
+	tagUpdate := performAuthedRequest(router, http.MethodPut, "/api/works/"+merged.WorkID+"/tags", map[string]interface{}{
+		"tags": []string{"MergedTag"},
+	}, cookie)
+	if tagUpdate.Code != http.StatusOK {
+		t.Fatalf("merged tag update status=%d body=%s", tagUpdate.Code, tagUpdate.Body.String())
+	}
 
 	split := performAuthedRequest(router, http.MethodPost, "/api/works/"+merged.WorkID+"/split", map[string]interface{}{
 		"unitIds": []string{unitID},
@@ -232,6 +256,21 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 			if !work.IsFavorite || work.CompletedItemCount != 1 || work.TotalReadTime != 120 ||
 				work.ReadingStatus != "finished" {
 				t.Fatalf("split work lost source user state: %#v", work)
+			}
+			if work.Author != "Merged Author" || work.Description != "Merged Description" || work.Status != "ongoing" {
+				t.Fatalf("split work lost source metadata: %#v", work)
+			}
+			if !work.ManualMembership {
+				t.Fatalf("split work did not expose manual membership: %#v", work)
+			}
+			hasMergedTag := false
+			for _, tag := range work.Tags {
+				if tag.Name == "MergedTag" {
+					hasMergedTag = true
+				}
+			}
+			if !hasMergedTag {
+				t.Fatalf("split work lost source tags: %#v", work.Tags)
 			}
 		}
 	}
@@ -286,6 +325,20 @@ func TestWorkMergeAndSplitAPI(t *testing.T) {
 			if work.Title != mergedTitle {
 				t.Fatalf("automatic work title was overwritten: %q, want %q", work.Title, mergedTitle)
 			}
+		}
+	}
+
+	restore := performAuthedRequest(router, http.MethodPost, "/api/works/"+splitResponse.WorkID+"/restore-auto", nil, cookie)
+	if restore.Code != http.StatusOK {
+		t.Fatalf("restore auto status=%d body=%s", restore.Code, restore.Body.String())
+	}
+	afterRestore := loadWorks()
+	if len(afterRestore.Works) != 2 {
+		t.Fatalf("works after restore = %d, want 2: %#v", len(afterRestore.Works), afterRestore.Works)
+	}
+	for _, work := range afterRestore.Works {
+		if work.ID == splitResponse.WorkID {
+			t.Fatalf("manual split work still visible after restore: %#v", work)
 		}
 	}
 }

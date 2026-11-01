@@ -1313,14 +1313,38 @@ func continuousOPDSComicRow(work service.Work, totalPages int) service.OPDSComic
 		PageCount:           totalPages,
 		AddedAt:             work.AddedAt,
 		UpdatedAt:           work.UpdatedAt,
-		Filename:            "continuous.cbz",
 		ComicType:           "comic",
 		CoverHref:           "/api/opds/work-cover/" + url.PathEscape(work.ID),
-		SuppressAcquisition: true,
+		SuppressAcquisition: false,
+		AcquisitionHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous/download",
+		AcquisitionType:     service.OPDSAcquisitionMIME,
+		Filename:            work.Title + ".cbz",
 		StreamHref:          "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous-stream?page={pageNumber}&width={maxWidth}",
 		StreamStartPage:     0,
 		StreamPageCount:     totalPages,
 	}
+}
+
+// ContinuousDownload builds a single CBZ for clients without PSE support.
+func (h *OPDSHandler) ContinuousDownload(c *gin.Context) {
+	work, ok, err := loadOPDSWorkForContinuous(c, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load works"})
+		return
+	}
+	if !ok || len(work.Units) <= 1 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+		return
+	}
+	totalPages := 0
+	for _, unit := range work.Units {
+		totalPages += unit.PageCount
+	}
+	if totalPages <= 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+		return
+	}
+	h.renderVirtualCBZ(c, work.Title+" · 连续阅读", work.Units)
 }
 
 func loadOPDSWorkForContinuous(c *gin.Context, workID string) (*service.Work, bool, error) {

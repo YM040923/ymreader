@@ -452,9 +452,14 @@ func (h *ComicHandler) BatchOperation(c *gin.Context) {
 		var fileTargets []service.ComicFileTarget
 		var fileWarnings []string
 		if body.DeleteFiles {
-			if service.ComicDeleteDirectoryCount(body.ComicIDs) > 1 && !body.ConfirmExpandedDelete {
+			spansDirectories, spanErr := service.ManualWorkDeleteSpansDirectories(body.ComicIDs)
+			if spanErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check delete scope"})
+				return
+			}
+			if spansDirectories && !body.ConfirmExpandedDelete {
 				c.JSON(http.StatusConflict, gin.H{
-					"error": "Selected content spans multiple source directories; confirm expanded file deletion",
+					"error": "Selected manual Work spans multiple source directories; confirm expanded file deletion",
 					"code":  "delete_scope_expanded",
 				})
 				return

@@ -554,6 +554,14 @@ export default function BooksPage() {
     });
     return directories.size;
   }, [selectedWorksForDelete]);
+  const deleteSpansDirectories = useMemo(
+    () => selectedWorksForDelete.some((work) => {
+      const directories = new Set<string>();
+      work.units.forEach((unit) => directories.add(unitDirectory(unit.relativePath)));
+      return directories.size > 1;
+    }),
+    [selectedWorksForDelete],
+  );
 
   // Extract all unique tags — fetch from API once on mount (not on every apiComics change)
   const [allTags, setAllTags] = useState<string[]>([]);
@@ -1660,7 +1668,7 @@ export default function BooksPage() {
           isAdmin={hasManageableLibrary}
           deleteFileCount={deleteFileCount}
           deleteDirectoryCount={deleteDirectoryCount}
-          deleteSpansDirectories={deleteDirectoryCount > 1}
+          deleteSpansDirectories={deleteSpansDirectories}
         />
       )}
 

@@ -108,9 +108,14 @@ func recordOnlyBatchDeleteGuard() gin.HandlerFunc {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
 				return
 			}
-			if service.ComicDeleteDirectoryCount(payload.ComicIDs) > 1 && !payload.ConfirmExpandedDelete {
+			spansDirectories, spanErr := service.ManualWorkDeleteSpansDirectories(payload.ComicIDs)
+			if spanErr != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to check delete scope"})
+				return
+			}
+			if spansDirectories && !payload.ConfirmExpandedDelete {
 				c.AbortWithStatusJSON(http.StatusConflict, gin.H{
-					"error": "Selected content spans multiple source directories; confirm expanded file deletion",
+					"error": "Selected manual Work spans multiple source directories; confirm expanded file deletion",
 					"code":  "delete_scope_expanded",
 				})
 				return

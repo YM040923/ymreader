@@ -332,6 +332,92 @@ func scanLogicalWork(scanner logicalWorkScanner) (*LogicalWork, error) {
 	return &work, nil
 }
 
+// CopyLogicalWorkMetadata copies descriptive metadata and tag/category links
+// from an existing Work to a newly created manual Work.
+func CopyLogicalWorkMetadata(sourceID, targetID string) error {
+	sourceID = strings.TrimSpace(sourceID)
+	targetID = strings.TrimSpace(targetID)
+	if sourceID == "" || targetID == "" || sourceID == targetID {
+		return nil
+	}
+	logicalWorkWriteMu.Lock()
+	defer logicalWorkWriteMu.Unlock()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var author, publisher, description, language, genre, status string
+	var metadataSource string
+	var year sql.NullInt64
+	var metadataLocked int
+	var externalRating, externalRatingMax sql.NullFloat64
+	var externalRatingSource string
+	err = tx.QueryRow(`
+		SELECT "author", "publisher", "year", "description", "language", "genre",
+		       "status", "metadataSource", "metadataLocked", "externalRating",
+		       "externalRatingMax", "externalRatingSource"
+		FROM "LogicalWork" WHERE "id" = ?
+	`, sourceID).Scan(
+		&author, &publisher, &year, &description, &language, &genre,
+		&status, &metadataSource, &metadataLocked, &externalRating,
+		&externalRatingMax, &externalRatingSource,
+	)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	result, err := tx.Exec(`
+		UPDATE "LogicalWork" SET
+			"author" = ?, "publisher" = ?, "year" = ?, "description" = ?,
+			"language" = ?, "genre" = ?, "status" = ?, "metadataSource" = ?,
+			"metadataLocked" = ?, "externalRating" = ?, "externalRatingMax" = ?,
+			"externalRatingSource" = ?, "updatedAt" = CURRENT_TIMESTAMP
+		WHERE "id" = ?
+	`, author, publisher, nullableInt64(year), description, language, genre,
+		status, metadataSource, metadataLocked, nullableFloat64(externalRating),
+		nullableFloat64(externalRatingMax), externalRatingSource, targetID)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO "LogicalWorkTag" ("workId", "tagId")
+		SELECT ?, "tagId" FROM "LogicalWorkTag" WHERE "workId" = ?
+		ON CONFLICT DO NOTHING
+	`, targetID, sourceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO "LogicalWorkCategory" ("workId", "categoryId")
+		SELECT ?, "categoryId" FROM "LogicalWorkCategory" WHERE "workId" = ?
+		ON CONFLICT DO NOTHING
+	`, targetID, sourceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func nullableInt64(value sql.NullInt64) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int64
+}
+
+func nullableFloat64(value sql.NullFloat64) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.Float64
+}
+
 func UpdateLogicalWorkMetadata(id string, update LogicalWorkMetadataUpdate) error {
 	logicalWorkWriteMu.Lock()
 	defer logicalWorkWriteMu.Unlock()

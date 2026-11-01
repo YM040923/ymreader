@@ -133,6 +133,7 @@ class Work {
   final bool isFavorite;
   final int? rating;
   final String readingStatus;
+  final bool manualMembership;
   final String? lastReadAt;
   final String continueComicId;
   final int continuePage;
@@ -172,6 +173,7 @@ class Work {
     this.isFavorite = false,
     this.rating,
     this.readingStatus = '',
+    this.manualMembership = false,
     this.lastReadAt,
     this.continueComicId = '',
     this.continuePage = 0,
@@ -232,6 +234,7 @@ class Work {
       isFavorite: json['isFavorite'] == true,
       rating: json['rating'] == null ? null : _asInt(json['rating']),
       readingStatus: json['readingStatus']?.toString() ?? '',
+      manualMembership: json['manualMembership'] == true,
       lastReadAt: json['lastReadAt']?.toString(),
       continueComicId: json['continueComicId']?.toString() ?? '',
       continuePage: _asInt(json['continuePage']),

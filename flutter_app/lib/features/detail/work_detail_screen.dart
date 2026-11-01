@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/api/library_api.dart';
 import '../../data/api/work_api.dart';
 import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
 import '../../data/providers/work_provider.dart';
 import '../../widgets/authenticated_image.dart';
+import 'work_manage_dialogs.dart';
 
 class WorkDetailScreen extends ConsumerWidget {
   final String workId;
@@ -58,10 +60,71 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
     ref.read(workListProvider.notifier).load();
   }
 
+  Future<void> _mergeWork() async {
+    final targetId = await showDialog<String>(
+      context: context,
+      builder: (_) => MergeWorkDialog(work: work),
+    );
+    if (!mounted || targetId == null || targetId.isEmpty) return;
+    ref.invalidate(workListProvider);
+    context.go('/work/${Uri.encodeComponent(targetId)}');
+  }
+
+  Future<void> _splitWork() async {
+    final newWorkId = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => SplitWorkSheet(work: work),
+    );
+    if (!mounted || newWorkId == null || newWorkId.isEmpty) return;
+    ref.invalidate(workListProvider);
+    context.go('/work/${Uri.encodeComponent(newWorkId)}');
+  }
+
+  Future<void> _restoreAutoGrouping() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('恢复自动分组'),
+        content: const Text(
+          '清除本作品所在目录组的手动合并/拆分关系，按目录重新分组。文件、阅读进度和已保存的元数据不会被删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认恢复'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    try {
+      await ref.read(workApiProvider).restoreWorkAutoGrouping(work.id);
+      ref.invalidate(workListProvider);
+      if (mounted) context.go('/');
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('恢复失败：$error')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final serverUrl = ref.watch(authProvider).serverUrl;
+    final libraries = ref.watch(accessibleLibrariesProvider).valueOrNull ??
+        const <LibrarySummary>[];
+    final canManage = ref.watch(authProvider).user?.isAdmin == true ||
+        libraries.any((library) =>
+            library.id == work.libraryId && library.canManage);
     final target = work.readingTarget;
     return Scaffold(
       body: CustomScrollView(
@@ -70,6 +133,48 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
             pinned: true,
             expandedHeight: 330,
             actions: [
+              if (canManage)
+                PopupMenuButton<String>(
+                  tooltip: '整理作品',
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'merge':
+                        _mergeWork();
+                      case 'split':
+                        _splitWork();
+                      case 'restore':
+                        _restoreAutoGrouping();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'merge',
+                      child: ListTile(
+                        leading: Icon(Icons.merge_type_rounded),
+                        title: Text('合并作品'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    if (work.units.length > 1)
+                      const PopupMenuItem(
+                        value: 'split',
+                        child: ListTile(
+                          leading: Icon(Icons.call_split_rounded),
+                          title: Text('拆分单元'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    if (work.manualMembership)
+                      const PopupMenuItem(
+                        value: 'restore',
+                        child: ListTile(
+                          leading: Icon(Icons.settings_backup_restore_rounded),
+                          title: Text('恢复自动分组'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                  ],
+                ),
               IconButton(
                 tooltip: work.isFavorite ? '取消收藏' : '收藏',
                 onPressed: () async {

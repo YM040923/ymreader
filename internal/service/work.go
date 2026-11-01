@@ -56,6 +56,7 @@ type Work struct {
 	IsFavorite            bool                      `json:"isFavorite"`
 	Rating                *int                      `json:"rating"`
 	ReadingStatus         string                    `json:"readingStatus"`
+	ManualMembership      bool                      `json:"manualMembership,omitempty"`
 	LastReadAt            *string                   `json:"lastReadAt,omitempty"`
 	ContinueComicID       string                    `json:"continueComicId,omitempty"`
 	ContinuePage          int                       `json:"continuePage"`

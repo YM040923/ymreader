@@ -22,9 +22,10 @@ import {
   Heart,
   GitMerge,
   Scissors,
+  Undo2,
   X,
 } from "lucide-react";
-import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, splitWork } from "@/api/works";
+import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, restoreWorkAutoGrouping, splitWork } from "@/api/works";
 import { apiPath } from "@/lib/base-path";
 import {
   buildWorkReaderPath,
@@ -134,6 +135,8 @@ export default function WorkDetailPage() {
   const [selectedUnitIds, setSelectedUnitIds] = useState<Set<string>>(new Set());
   const [splitTitle, setSplitTitle] = useState("");
   const [splitting, setSplitting] = useState(false);
+  const [showRestore, setShowRestore] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [membershipError, setMembershipError] = useState("");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [savingMetadata, setSavingMetadata] = useState(false);
@@ -336,6 +339,52 @@ export default function WorkDetailPage() {
     setMergeTargetId("");
     setMembershipError("");
   };
+
+  const closeRestoreDialog = () => {
+    if (restoring) return;
+    setShowRestore(false);
+    setMembershipError("");
+  };
+
+  const confirmRestore = async () => {
+    if (restoring) return;
+    setRestoring(true);
+    setMembershipError("");
+    try {
+      await restoreWorkAutoGrouping(work.id);
+      setShowRestore(false);
+      router.push("/books");
+      router.refresh();
+    } catch (error) {
+      setMembershipError(error instanceof Error ? error.message : "恢复失败");
+      setRestoring(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showRestore) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !restoring) {
+        setShowRestore(false);
+        setMembershipError("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showRestore, restoring]);
+
+  useEffect(() => {
+    if (!showMerge) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !merging) {
+        setShowMerge(false);
+        setMergeTargetId("");
+        setMembershipError("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showMerge, merging]);
 
   const toggleSplitUnit = (unitId: string) => {
     setSelectedUnitIds((current) => {
@@ -549,6 +598,7 @@ export default function WorkDetailPage() {
                 <button type="button" onClick={async () => { await toggleWorkFavorite(work); await load(); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Heart className={`h-4 w-4 ${work.isFavorite ? "fill-rose-400 text-rose-400" : ""}`} />{work.isFavorite ? "取消收藏" : "收藏"}</button>
                 {canManage && <button type="button" onClick={openMergeDialog} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><GitMerge className="h-4 w-4" />合并作品</button>}
                 {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
+                {canManage && work.manualMembership && <button type="button" onClick={() => { setMembershipError(""); setShowRestore(true); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Undo2 className="h-4 w-4" />恢复自动分组</button>}
                 {canManage && <button type="button" onClick={() => setShowMetadata((value) => !value)} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>}
               </div>
 
@@ -623,15 +673,15 @@ export default function WorkDetailPage() {
       {showMerge && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeMergeDialog} />
-          <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+          <div role="dialog" aria-modal="true" aria-labelledby="merge-dialog-title" className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h2 className="text-base font-semibold text-foreground">合并作品</h2>
+                <h2 id="merge-dialog-title" className="text-base font-semibold text-foreground">合并作品</h2>
                 <p className="mt-0.5 text-xs text-muted">把当前作品并入所选作品，章节与阅读进度随之合并</p>
               </div>
               <button type="button" onClick={closeMergeDialog} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
             </div>
-            <input value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
+            <input autoFocus value={mergeQuery} onChange={(event) => setMergeQuery(event.target.value)} placeholder="搜索目标作品标题" className="mb-3 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-accent" />
             {membershipError && <p className="mb-2 text-xs text-rose-400">{membershipError}</p>}
             <div className="max-h-80 space-y-1 overflow-y-auto">
               {mergeLoading && <p className="py-6 text-center text-sm text-muted">加载中…</p>}
@@ -658,6 +708,25 @@ export default function WorkDetailPage() {
                 <button type="button" disabled={merging} onClick={() => confirmMerge(mergeTarget)} className="h-9 shrink-0 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{merging ? "合并中…" : "确认合并"}</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {showRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in" onClick={closeRestoreDialog} />
+          <div role="dialog" aria-modal="true" aria-labelledby="restore-dialog-title" className="relative w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl animate-modal-in">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 id="restore-dialog-title" className="text-base font-semibold text-foreground">恢复自动分组</h2>
+                <p className="mt-1 text-xs text-muted">清除本作品的手动合并/拆分关系，按原始目录重新分组。文件、阅读进度和已保存的元数据不会被删除。</p>
+              </div>
+              <button type="button" onClick={closeRestoreDialog} className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground" title="关闭"><X className="h-4 w-4" /></button>
+            </div>
+            {membershipError && <p className="mb-3 text-xs text-rose-400">{membershipError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={closeRestoreDialog} disabled={restoring} className="h-9 rounded-lg border border-border px-4 text-sm text-muted disabled:opacity-40">取消</button>
+              <button type="button" onClick={confirmRestore} disabled={restoring} className="h-9 rounded-lg bg-accent px-4 text-sm font-medium text-white disabled:opacity-40">{restoring ? "恢复中…" : "确认恢复"}</button>
+            </div>
           </div>
         </div>
       )}

@@ -375,6 +375,9 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		!strings.Contains(continuousBody, `pse:count="4"`) {
 		t.Fatalf("continuous feed is missing PSE metadata: %s", continuousBody)
 	}
+	if !strings.Contains(continuousBody, `/api/opds/works/`+works[0].ID+`/continuous/download`) {
+		t.Fatalf("continuous feed is missing the whole-Work CBZ acquisition: %s", continuousBody)
+	}
 	if runtime.GOOS != "windows" {
 		stream := performOPDSBasicRequest(
 			router,
@@ -807,6 +810,24 @@ func TestOPDSWorkUnitFeedKeepsFolderUnitsAsPhysicalPageStreams(t *testing.T) {
 	if rangeResponse.Code != http.StatusPartialContent || rangeResponse.Body.Len() != 10 {
 		t.Fatalf("folder virtual range status=%d length=%d", rangeResponse.Code, rangeResponse.Body.Len())
 	}
+	if runtime.GOOS != "windows" {
+		continuousDownload := performOPDSBasicRequest(
+			router,
+			"/api/opds/works/"+works[0].ID+"/continuous/download",
+			user.Username,
+			token,
+		)
+		if continuousDownload.Code != http.StatusOK {
+			t.Fatalf("continuous download returned %d: %s", continuousDownload.Code, continuousDownload.Body.String())
+		}
+		continuousZip, zipErr := zip.NewReader(
+			bytes.NewReader(continuousDownload.Body.Bytes()),
+			int64(continuousDownload.Body.Len()),
+		)
+		if zipErr != nil || len(continuousZip.File) == 0 {
+			t.Fatalf("continuous download is not a valid CBZ: entries=%d err=%v", len(continuousZip.File), zipErr)
+		}
+	}
 }
 
 func TestOPDSContinuousRoutesAreRegistered(t *testing.T) {
@@ -817,6 +838,7 @@ func TestOPDSContinuousRoutesAreRegistered(t *testing.T) {
 	}
 	for _, route := range []string{
 		"GET /api/opds/works/:id/continuous",
+		"GET /api/opds/works/:id/continuous/download",
 		"GET /api/opds/works/:id/continuous-stream",
 	} {
 		if !registered[route] {
