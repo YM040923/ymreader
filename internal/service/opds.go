@@ -91,6 +91,14 @@ type OPDSAcquisitionFeedOptions struct {
 	Comics        []OPDSComic
 	Pagination    OPDSPagination
 	FeedType      string
+	ExtraLinks    []OPDSLink
+}
+
+type OPDSLink struct {
+	Rel   string
+	Href  string
+	Type  string
+	Title string
 }
 
 type OPDSNavigationItem struct {
@@ -542,6 +550,14 @@ func GenerateAcquisitionFeed(opts OPDSAcquisitionFeedOptions) string {
 	if opts.FeedCoverHref != "" {
 		feed.Icon = absoluteOPDSURL(opts.BaseURL, opts.FeedCoverHref)
 		feed.Logo = feed.Icon
+	}
+	for _, extra := range opts.ExtraLinks {
+		feed.Links = append(feed.Links, atomLink{
+			Rel:   extra.Rel,
+			Href:  absoluteOPDSURL(opts.BaseURL, extra.Href),
+			Type:  extra.Type,
+			Title: extra.Title,
+		})
 	}
 	appendOPDSPaginationLinks(&feed, opts.BaseURL, opts.Pagination, feedType)
 

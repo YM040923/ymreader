@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -256,14 +258,15 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		t.Fatalf("multi-physical Work feed Content-Type = %q, want acquisition", contentType)
 	}
 	body := response.Body.String()
-	if strings.Count(body, "<entry>") != 4 {
-		t.Fatalf("multi-physical Work should expose four physical acquisitions: %s", body)
+	if strings.Count(body, "<entry>") != 5 {
+		t.Fatalf("multi-physical Work should expose four physical acquisitions plus one continuous publication: %s", body)
 	}
-	if strings.Contains(body, "/continuous/") || !strings.Contains(body, `rel="http://opds-spec.org/acquisition"`) {
+	if !strings.Contains(body, `rel="http://opds-spec.org/acquisition"`) {
 		t.Fatalf("multi-physical Work did not expose direct acquisitions: %s", body)
 	}
-	if strings.Contains(body, `rel="http://vaemendis.net/opds-pse/stream"`) {
-		t.Fatalf("physical CBZ entries must not advertise a competing PSE stream: %s", body)
+	if strings.Count(body, `rel="http://vaemendis.net/opds-pse/stream"`) != 1 ||
+		!strings.Contains(body, "<title>"+works[0].Title+" · 连续阅读</title>") {
+		t.Fatalf("only the continuous publication may advertise a PSE stream: %s", body)
 	}
 	for _, title := range []string{
 		"<title>第1话</title>",
@@ -293,7 +296,7 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		lastPosition = position
 	}
 	fullIDs := opdsEntryIDs(t, body)
-	if len(fullIDs) != 4 {
+	if len(fullIDs) != 5 {
 		t.Fatalf("physical acquisition IDs are not unique: %#v", fullIDs)
 	}
 	seenIDs := make(map[string]struct{}, len(fullIDs))
@@ -308,9 +311,11 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		t.Fatalf("physical acquisition IDs changed between requests: first=%#v second=%#v", fullIDs, got)
 	}
 
-	firstPage := performOPDSBasicRequest(router, path+"?page=1&pageSize=2", user.Username, token)
-	secondPage := performOPDSBasicRequest(router, path+"?page=2&pageSize=2", user.Username, token)
-	pagedIDs := append(opdsEntryIDs(t, firstPage.Body.String()), opdsEntryIDs(t, secondPage.Body.String())...)
+	var pagedIDs []string
+	for page := 1; page <= 3; page++ {
+		paged := performOPDSBasicRequest(router, path+"?page="+strconv.Itoa(page)+"&pageSize=2", user.Username, token)
+		pagedIDs = append(pagedIDs, opdsEntryIDs(t, paged.Body.String())...)
+	}
 	if !equalStrings(pagedIDs, fullIDs) {
 		t.Fatalf("pagination changed or duplicated physical Units: full=%#v paged=%#v", fullIDs, pagedIDs)
 	}
@@ -350,6 +355,36 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 	_, dispositionParams, err := mime.ParseMediaType(localizedDownload.Header().Get("Content-Disposition"))
 	if err != nil || dispositionParams["filename"] != "第1话.cbz" {
 		t.Fatalf("localized acquisition Content-Disposition = %q params=%#v err=%v", localizedDownload.Header().Get("Content-Disposition"), dispositionParams, err)
+	}
+
+	continuousLink := `rel="alternate" href="http://example.com/api/opds/works/` + works[0].ID + `/continuous"`
+	if !strings.Contains(body, continuousLink) {
+		t.Fatalf("multi-unit Work should advertise a continuous publication: %s", body)
+	}
+	continuous := performOPDSBasicRequest(
+		router,
+		"/api/opds/works/"+works[0].ID+"/continuous",
+		user.Username,
+		token,
+	)
+	if continuous.Code != http.StatusOK {
+		t.Fatalf("continuous feed returned %d: %s", continuous.Code, continuous.Body.String())
+	}
+	continuousBody := continuous.Body.String()
+	if !strings.Contains(continuousBody, `rel="http://vaemendis.net/opds-pse/stream"`) ||
+		!strings.Contains(continuousBody, `pse:count="4"`) {
+		t.Fatalf("continuous feed is missing PSE metadata: %s", continuousBody)
+	}
+	if runtime.GOOS != "windows" {
+		stream := performOPDSBasicRequest(
+			router,
+			"/api/opds/works/"+works[0].ID+"/continuous-stream?page=0&width=0",
+			user.Username,
+			token,
+		)
+		if stream.Code != http.StatusOK || !strings.HasPrefix(stream.Header().Get("Content-Type"), "image/") {
+			t.Fatalf("continuous stream status=%d type=%q", stream.Code, stream.Header().Get("Content-Type"))
+		}
 	}
 }
 
@@ -726,11 +761,12 @@ func TestOPDSWorkUnitFeedKeepsFolderUnitsAsPhysicalPageStreams(t *testing.T) {
 		t.Fatalf("folder Work unit feed returned %d: %s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	if strings.Count(body, "<entry>") != 2 {
-		t.Fatalf("folder Work should expose only its two Unit entries: %s", body)
+	if strings.Count(body, "<entry>") != 3 {
+		t.Fatalf("folder Work should expose two Unit entries plus one continuous publication: %s", body)
 	}
-	if strings.Contains(body, "/continuous/") {
-		t.Fatalf("folder Work exposed removed continuous publication: %s", body)
+	if !strings.Contains(body, "<title>"+works[0].Title+" · 连续阅读</title>") ||
+		!strings.Contains(body, "/api/opds/works/"+works[0].ID+"/continuous-stream") {
+		t.Fatalf("folder Work is missing its continuous publication: %s", body)
 	}
 	for _, comicID := range []string{"opds-folder-ch1", "opds-folder-ch2"} {
 		if !strings.Contains(body, "/api/opds/stream/"+comicID+"?") {
@@ -773,11 +809,18 @@ func TestOPDSWorkUnitFeedKeepsFolderUnitsAsPhysicalPageStreams(t *testing.T) {
 	}
 }
 
-func TestOPDSContinuousRoutesAreRemoved(t *testing.T) {
+func TestOPDSContinuousRoutesAreRegistered(t *testing.T) {
 	router := setupTestRouter(t)
+	registered := map[string]bool{}
 	for _, route := range router.Routes() {
-		if strings.Contains(route.Path, "/continuous/") {
-			t.Fatalf("removed continuous OPDS route remains registered: %s %s", route.Method, route.Path)
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"GET /api/opds/works/:id/continuous",
+		"GET /api/opds/works/:id/continuous-stream",
+	} {
+		if !registered[route] {
+			t.Fatalf("continuous OPDS route is not registered: %s", route)
 		}
 	}
 }

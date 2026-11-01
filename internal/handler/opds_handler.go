@@ -347,7 +347,7 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 		if work.ID != workID {
 			continue
 		}
-		rows := make([]service.OPDSComic, 0, len(work.Units))
+		rows := make([]service.OPDSComic, 0, len(work.Units)+1)
 		unitsByComic := make(map[string][]service.WorkUnit, len(work.Units))
 		for _, unit := range work.Units {
 			unitsByComic[unit.ComicID] = append(unitsByComic[unit.ComicID], unit)
@@ -359,6 +359,17 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 					physicalComicCount++
 				}
 			}
+		}
+		totalPages := 0
+		for _, unit := range work.Units {
+			totalPages += unit.PageCount
+		}
+		// A Work contained in one physical archive is already continuous; its
+		// original acquisition is the only sensible entry.
+		continuousAvailable := len(work.Units) > 1 && totalPages > 0 &&
+			!(len(unitsByComic) == 1 && physicalComicCount == 1)
+		if continuousAvailable {
+			rows = append(rows, continuousOPDSComicRow(work, totalPages))
 		}
 		publishedPhysicalComics := make(map[string]struct{}, len(unitsByComic))
 		for _, unit := range work.Units {
@@ -405,6 +416,15 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 		}
 		baseURL := getBaseURL(c)
 		feedType := service.OPDSAcquisitionMIME
+		var extraLinks []service.OPDSLink
+		if continuousAvailable {
+			extraLinks = []service.OPDSLink{{
+				Rel:   "alternate",
+				Href:  "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous",
+				Type:  service.OPDSAcquisitionMIME,
+				Title: "连续阅读",
+			}}
+		}
 		xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
 			BaseURL:       baseURL,
 			Title:         work.Title,
@@ -413,6 +433,7 @@ func (h *OPDSHandler) renderWorkDetail(c *gin.Context, workID string) bool {
 			Comics:        rows,
 			Pagination:    buildOPDSPagination(c, page, pageSize, total),
 			FeedType:      feedType,
+			ExtraLinks:    extraLinks,
 		})
 		setOPDSPrivateResponseHeaders(c)
 		c.Data(http.StatusOK, feedType, []byte(xml))
@@ -1276,7 +1297,145 @@ func opdsDownloadAliasPath(comicID, filename string) string {
 	return "/api/opds/download/" + url.PathEscape(comicID) + "/" + url.PathEscape(filepath.Base(filename))
 }
 
-// GET /api/opds/stream/:id?page={pageNumber}&width={maxWidth}
+// continuousOPDSComicRow presents every unit of a Work as one PSE-streamed
+// publication. It has no download acquisition on purpose: generating one CBZ
+// for a long Work would materialise every page image on the server.
+func continuousOPDSComicRow(work service.Work, totalPages int) service.OPDSComic {
+	return service.OPDSComic{
+		ID:                  work.ID + "-continuous",
+		EntryID:             "continuous:" + work.ID,
+		Title:               work.Title + " · 连续阅读",
+		Author:              work.Author,
+		Description:         work.Description,
+		Language:            work.Language,
+		Genre:               work.Genre,
+		Publisher:           work.Publisher,
+		PageCount:           totalPages,
+		AddedAt:             work.AddedAt,
+		UpdatedAt:           work.UpdatedAt,
+		Filename:            "continuous.cbz",
+		ComicType:           "comic",
+		CoverHref:           "/api/opds/work-cover/" + url.PathEscape(work.ID),
+		SuppressAcquisition: true,
+		StreamHref:          "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous-stream?page={pageNumber}&width={maxWidth}",
+		StreamStartPage:     0,
+		StreamPageCount:     totalPages,
+	}
+}
+
+// ContinuousFeed returns a single PSE publication spanning every unit of a
+// Work, so manga clients can read all chapters as one stream.
+func (h *OPDSHandler) ContinuousFeed(c *gin.Context) {
+	items, err := loadOPDSWorks(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load works"})
+		return
+	}
+	workID := c.Param("id")
+	for _, item := range items {
+		work := item.Work
+		if work.ID != workID || len(work.Units) <= 1 {
+			continue
+		}
+		totalPages := 0
+		for _, unit := range work.Units {
+			totalPages += unit.PageCount
+		}
+		if totalPages <= 0 {
+			break
+		}
+		baseURL := getBaseURL(c)
+		row := continuousOPDSComicRow(work, totalPages)
+		xml := service.GenerateAcquisitionFeed(service.OPDSAcquisitionFeedOptions{
+			BaseURL:       baseURL,
+			Title:         work.Title + " · 连续阅读",
+			FeedID:        opdsFeedID(baseURL, c),
+			FeedCoverHref: "/api/opds/work-cover/" + url.PathEscape(work.ID),
+			Comics:        []service.OPDSComic{row},
+			Pagination: service.OPDSPagination{
+				SelfHref:     "/api/opds/works/" + url.PathEscape(work.ID) + "/continuous",
+				TotalResults: 1,
+				ItemsPerPage: 1,
+				StartIndex:   0,
+			},
+			FeedType: service.OPDSAcquisitionMIME,
+		})
+		setOPDSPrivateResponseHeaders(c)
+		c.Data(http.StatusOK, service.OPDSAcquisitionMIME, []byte(xml))
+		return
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+}
+
+// ContinuousStream serves absolute page N across the whole Work.
+func (h *OPDSHandler) ContinuousStream(c *gin.Context) {
+	items, err := loadOPDSWorks(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load works"})
+		return
+	}
+	workID := c.Param("id")
+	var work *service.Work
+	for index := range items {
+		if items[index].Work.ID == workID && len(items[index].Work.Units) > 1 {
+			work = &items[index].Work
+			break
+		}
+	}
+	if work == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Continuous publication not found"})
+		return
+	}
+	pageIndex, parseErr := strconv.Atoi(c.Query("page"))
+	if parseErr != nil || pageIndex < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid page"})
+		return
+	}
+	totalPages := 0
+	for _, unit := range work.Units {
+		totalPages += unit.PageCount
+	}
+	if pageIndex >= totalPages {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
+		return
+	}
+	maxWidth := 0
+	if rawWidth := strings.TrimSpace(c.Query("width")); rawWidth != "" {
+		width, widthErr := strconv.Atoi(rawWidth)
+		if widthErr != nil || width < 0 || width > opdsPSEMaxWidth {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width must be between 0 and %d", opdsPSEMaxWidth)})
+			return
+		}
+		maxWidth = width
+	}
+	var unit service.WorkUnit
+	for _, candidate := range work.Units {
+		if pageIndex < candidate.PageCount {
+			unit = candidate
+			break
+		}
+		pageIndex -= candidate.PageCount
+	}
+	result, err := service.GetOPDSPSEPageImage(unit.ComicID, unit.StartPage+pageIndex, maxWidth)
+	if err != nil || result == nil || len(result.Data) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
+		return
+	}
+	sum := sha256.Sum256(result.Data)
+	etag := fmt.Sprintf(`"%x"`, sum[:12])
+	c.Header("Content-Type", "image/jpeg")
+	c.Header("Content-Length", strconv.Itoa(len(result.Data)))
+	c.Header("Cache-Control", "private, max-age=86400, must-revalidate")
+	c.Header("Vary", "Authorization, Cookie")
+	c.Header("ETag", etag)
+	c.Header("X-Content-Type-Options", "nosniff")
+	if c.GetHeader("If-None-Match") == etag {
+		c.Status(http.StatusNotModified)
+		return
+	}
+	c.Data(http.StatusOK, "image/jpeg", result.Data)
+}
+
 func (h *OPDSHandler) StreamPage(c *gin.Context) {
 	comic, ok := getOPDSPublication(c.Param("id"))
 	if !ok || !service.OPDSPSESupported(comic.Filename, comic.ComicType, comic.PageCount) {
