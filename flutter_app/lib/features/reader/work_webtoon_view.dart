@@ -130,9 +130,7 @@ class _PageGeometry {
   })  : ratios = List.unmodifiable(ratios),
         headerExtents = List.unmodifiable(headerExtents) {
     for (var index = 0; index < ratios.length; index++) {
-      starts.add(starts.last +
-          headerExtents[index] +
-          (ratios[index] == null ? viewportExtent : imageExtent(index)));
+      starts.add(starts.last + extentOf(index));
     }
   }
 
@@ -155,6 +153,22 @@ class _PageGeometry {
     return webtoonRowExtent(axis, crossExtent, ratio);
   }
 
+  /// Full row size along the scroll axis.
+  ///
+  /// The list hands this to `itemExtentBuilder`, so it becomes the tight
+  /// constraint the row is laid out inside — which means it has to be the very
+  /// expression [_row] adds its children up to. The previous version derived it
+  /// by subtracting two accumulated page offsets; on a long strip the running
+  /// total is big enough that the rounding in that subtraction leaves the
+  /// children a few ulp wider than their constraint, and past
+  /// `precisionErrorTolerance` Flutter calls that a real overflow and paints
+  /// yellow/black hazard stripes at every page seam.
+  double extentOf(int index) {
+    if (ratios.isEmpty) return viewportExtent;
+    final clamped = index.clamp(0, ratios.length - 1);
+    return headerExtents[clamped] + imageExtent(clamped);
+  }
+
   int pageAt(double offset) {
     var low = 0;
     var high = ratios.length;
@@ -171,11 +185,6 @@ class _PageGeometry {
 
   double startOf(int page) =>
       ratios.isEmpty ? 0 : starts[page.clamp(0, ratios.length - 1)];
-  double extentOf(int page) {
-    if (ratios.isEmpty) return viewportExtent;
-    final index = page.clamp(0, ratios.length - 1);
-    return starts[index + 1] - starts[index];
-  }
 
   bool sameAs(_PageGeometry other) {
     if (axis != other.axis ||
