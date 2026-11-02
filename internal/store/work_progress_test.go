@@ -184,6 +184,59 @@ func TestWorkSourceFingerprintTracksManualMemberships(t *testing.T) {
 	}
 }
 
+func TestComicPathBelongsToWorkMatchesArchiveStemRoots(t *testing.T) {
+	// Works detected from a single archive are rooted at the file name without
+	// its extension, which is what the scanner actually stores in LogicalWork.
+	cases := []struct {
+		comicPath string
+		rootPath  string
+		want      bool
+	}{
+		{"义妹生活.zip", "义妹生活", true},
+		{"大奉打更人.ZIP", "大奉打更人", true},
+		{"我为邪帝/第010话.cbz", "我为邪帝/第010话", true},
+		{"久保同学不放过我/久保同学不放过我 - Vol. 006.cbz", "久保同学不放过我", true},
+		{"恶魔X天使/第001话/", "恶魔X天使", true},
+		{"作品.zip", "作品.zip", true},
+		{"其他.zip", "作品.zip", false},
+		{"其他.zip", "作品", false},
+		{"国漫/义妹生活.zip", "日漫/义妹生活", false},
+		{"义妹生活/readme.txt", "义妹生活", true},
+	}
+	for _, test := range cases {
+		if got := comicPathBelongsToWork(test.comicPath, test.rootPath); got != test.want {
+			t.Errorf("comicPathBelongsToWork(%q, %q) = %v, want %v", test.comicPath, test.rootPath, got, test.want)
+		}
+	}
+}
+
+func TestWorkProgressAcceptsSingleArchiveWorkRoot(t *testing.T) {
+	setupWorkProgressTest(t)
+
+	// Mirror production: the LogicalWork row carries the archive stem while the
+	// Comic row keeps the ".zip" suffix.
+	if _, err := DB().Exec(`
+		INSERT INTO "Comic" ("id","filename","title","pageCount","libraryId","relativePath")
+			VALUES ('archive-comic','义妹生活.zip','义妹生活',539,'progress-library','义妹生活.zip');
+		INSERT INTO "LogicalWork" ("id","libraryId","rootPath","title","sortTitle")
+			VALUES ('work-archive','progress-library','义妹生活','义妹生活','义妹生活');
+	`); err != nil {
+		t.Fatalf("seed archive work: %v", err)
+	}
+
+	progress, applied, err := upsertWorkProgressForTest(t, WorkProgressUpdate{
+		UserID: "progress-user", WorkID: "work-archive", UnitID: "unit-archive-first",
+		ComicID: "archive-comic", RelativePage: 0, UnitStartPage: 1, UnitPageCount: 30,
+		ClientSessionID: "archive-session", Sequence: 1,
+	})
+	if err != nil || !applied {
+		t.Fatalf("single archive cursor = applied:%v err:%v", applied, err)
+	}
+	if progress.AbsolutePage != 1 {
+		t.Fatalf("absolute page = %d, want 1", progress.AbsolutePage)
+	}
+}
+
 func TestWorkProgressRejectsInvalidRelationshipsAndPagesWithoutWriting(t *testing.T) {
 	setupWorkProgressTest(t)
 

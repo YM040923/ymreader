@@ -80,6 +80,42 @@ void main() {
     expect(sent.last.relativePage, 3);
   });
 
+  test('a rejected Work cursor is dropped for the rest of the session',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final sent = <ReadingProgressEvent>[];
+    final tracker = ReadingActivityTracker(
+      comicId: 'comic',
+      serverKey: 'server',
+      userKey: 'user',
+      observeLifecycle: false,
+      sender: (event) async {
+        sent.add(event);
+        // First attempt carries the cursor and gets refused by the server.
+        return event.copyWith(cursorRejected: sent.length == 1);
+      },
+    );
+    tracker.start(0, 100, workId: 'work', unitId: 'unit-20', relativePage: 0);
+    await tracker.flush();
+    expect(sent.first.workId, 'work');
+    expect(sent.first.unitId, 'unit-20');
+
+    tracker.updatePage(
+      133,
+      100,
+      workId: 'work',
+      unitId: 'unit-21',
+      relativePage: 3,
+      flushImmediately: true,
+    );
+    await tracker.flush();
+    expect(sent.last.page, 133);
+    expect(sent.last.workId, isNull);
+    expect(sent.last.unitId, isNull);
+    expect(sent.last.relativePage, isNull);
+    await tracker.finish();
+  });
+
   test('failed send persists the latest cursor', () async {
     SharedPreferences.setMockInitialValues({});
     final outbox = ReadingProgressOutbox();

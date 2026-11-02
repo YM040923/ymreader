@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -228,8 +229,19 @@ func comicPathBelongsToWork(comicPath, rootPath string) bool {
 	if comicPath == "" || rootPath == "" {
 		return false
 	}
-	return strings.EqualFold(comicPath, rootPath) ||
-		strings.HasPrefix(strings.ToLower(comicPath), strings.ToLower(rootPath)+"/")
+	comicLower := strings.ToLower(comicPath)
+	rootLower := strings.ToLower(rootPath)
+	if comicLower == rootLower || strings.HasPrefix(comicLower, rootLower+"/") {
+		return true
+	}
+	// A Work detected from a single archive is named after the file without its
+	// extension (splitWorkRoot), so the Comic path is that Work root plus an
+	// archive suffix. Without this, every one-archive Work — the whole
+	// "作品.zip" layout — could never store a reading cursor.
+	if stem := strings.ToLower(strings.TrimSuffix(comicPath, filepath.Ext(comicPath))); stem != comicLower {
+		return stem == rootLower
+	}
+	return false
 }
 
 func normalizeProgressPath(value string) string {

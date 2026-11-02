@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,7 +78,16 @@ func (h *StatsHandler) RecordActivity(c *gin.Context) {
 		}
 		if unit == nil || unit.ComicID != comicID || body.RelativePage < 0 ||
 			unit.PageCount <= 0 || body.RelativePage >= unit.PageCount {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Work reading cursor"})
+			reason := "relative page is outside the unit"
+			switch {
+			case unit == nil:
+				reason = "unit is not in the current Work catalog"
+			case unit.ComicID != comicID:
+				reason = "unit belongs to another Comic"
+			case unit.PageCount <= 0:
+				reason = "unit has no known page count"
+			}
+			rejectWorkCursor(c, comicID, &body, reason)
 			return
 		}
 		input.WorkID = work.ID
@@ -90,7 +100,7 @@ func (h *StatsHandler) RecordActivity(c *gin.Context) {
 	result, err := store.RecordReadingActivityWithWork(input)
 	if err != nil {
 		if input.WorkID != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Work reading cursor"})
+			rejectWorkCursor(c, comicID, &body, err.Error())
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record reading activity"})
@@ -101,6 +111,18 @@ func (h *StatsHandler) RecordActivity(c *gin.Context) {
 		response["progress"] = result.WorkProgress
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+// rejectWorkCursor answers a rejected Work reading cursor with the concrete
+// reason. Clients fall back to plain Comic progress on 400, and the reason is
+// what makes the two sides diagnosable instead of a bare "Invalid cursor".
+func rejectWorkCursor(c *gin.Context, comicID string, body *readingActivityRequest, reason string) {
+	log.Printf("[reading] work cursor rejected comic=%s work=%s unit=%s relativePage=%d pages=%d/%d: %s",
+		comicID, body.WorkID, body.UnitID, body.RelativePage, body.Page, body.TotalPages, reason)
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  "Invalid Work reading cursor",
+		"reason": reason,
+	})
 }
 
 // GET /api/stats — Get reading statistics

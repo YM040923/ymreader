@@ -59,6 +59,7 @@ class ApiClient {
   late final Dio _dio;
   late final PersistCookieJar _cookieJar;
   String _baseUrl = '';
+
   /// Stable identity for local reading positions across LAN/WAN switches.
   String libraryServerUrl = '';
   OnUnauthorizedCallback? onUnauthorized;
@@ -109,7 +110,8 @@ class ApiClient {
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) {
-    return _dio.get<T>(path, queryParameters: queryParameters, options: options);
+    return _dio.get<T>(path,
+        queryParameters: queryParameters, options: options);
   }
 
   Future<Response<T>> post<T>(
@@ -187,13 +189,16 @@ class _RouteFailoverInterceptor extends Interceptor {
         client.onConnectionFailure != null) {
       try {
         final failed = request.baseUrl.endsWith('/api')
-            ? request.baseUrl.substring(0, request.baseUrl.length - 4) : '';
+            ? request.baseUrl.substring(0, request.baseUrl.length - 4)
+            : '';
         final alternate = await client.onConnectionFailure!(failed);
         if (alternate != null && alternate != failed) {
           final headers = Map<String, dynamic>.from(request.headers)
-            ..remove('Cookie')..remove('cookie');
+            ..remove('Cookie')
+            ..remove('cookie');
           final response = await client.dio.fetch<dynamic>(request.copyWith(
-            baseUrl: '$alternate/api', headers: headers,
+            baseUrl: '$alternate/api',
+            headers: headers,
             extra: {...request.extra, 'routeRetried': true},
           ));
           handler.resolve(response);
@@ -215,7 +220,8 @@ class _LogInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     final cookie = options.headers['cookie'] ?? options.headers['Cookie'] ?? '';
-    print('[API] ${options.method} ${options.uri} [Cookie: ${cookie.toString().isNotEmpty ? cookie.toString().substring(0, cookie.toString().length.clamp(0, 60)) : "(none)"}]');
+    print(
+        '[API] ${options.method} ${options.uri} [Cookie: ${cookie.toString().isNotEmpty ? cookie.toString().substring(0, cookie.toString().length.clamp(0, 60)) : "(none)"}]');
     handler.next(options);
   }
 
@@ -228,7 +234,8 @@ class _LogInterceptor extends Interceptor {
     if (path.contains('/auth/login') || path.contains('/auth/register')) {
       print('[API] Response headers: ${response.headers.map}');
       final bodyStr = response.data?.toString() ?? '';
-      print('[API] Response body: ${bodyStr.substring(0, bodyStr.length.clamp(0, 200))}');
+      print(
+          '[API] Response body: ${bodyStr.substring(0, bodyStr.length.clamp(0, 200))}');
     }
     // 打印 Set-Cookie 头
     final setCookie = response.headers['set-cookie'];
@@ -238,7 +245,8 @@ class _LogInterceptor extends Interceptor {
       }
     } else {
       if (path.contains('/auth/login') || path.contains('/auth/register')) {
-        print('[API] WARNING: No Set-Cookie header in login/register response!');
+        print(
+            '[API] WARNING: No Set-Cookie header in login/register response!');
       }
     }
     handler.next(response);
@@ -246,12 +254,25 @@ class _LogInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    print('[API] ERROR ${err.response?.statusCode} ${err.requestOptions.uri}: ${err.message}');
+    print(
+        '[API] ERROR ${err.response?.statusCode} ${err.requestOptions.uri}: ${err.message}');
     // 打印错误响应的 headers 和 body（调试 401）
     if (err.response?.statusCode == 401) {
       print('[API] 401 Response headers: ${err.response?.headers.map}');
       final bodyStr = err.response?.data?.toString() ?? '';
-      print('[API] 401 Response body: ${bodyStr.substring(0, bodyStr.length.clamp(0, 200))}');
+      print(
+          '[API] 401 Response body: ${bodyStr.substring(0, bodyStr.length.clamp(0, 200))}');
+    }
+    // 400 一般是服务端拒绝了参数，把请求体和错误原因打出来才能一次定位。
+    // 认证类请求的请求体含明文密码，只打路径和响应，不落 logcat。
+    if (err.response?.statusCode == 400) {
+      final path = err.requestOptions.path;
+      final isAuth = path.contains('/auth/');
+      if (!isAuth) {
+        print('[API] 400 request body: ${err.requestOptions.data}');
+      }
+      print(
+          '[API] 400 ${isAuth ? 'auth ' : ''}response body: ${err.response?.data}');
     }
     handler.next(err);
   }
@@ -267,7 +288,8 @@ class _AuthInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    if (err.response?.statusCode == 401 && !_isHandling401 &&
+    if (err.response?.statusCode == 401 &&
+        !_isHandling401 &&
         err.requestOptions.baseUrl == '${_client.baseUrl}/api') {
       _isHandling401 = true;
       // 排除登录/注册/健康检查等不需要认证的接口
@@ -374,7 +396,9 @@ Future<bool> testServerConnection(String url) async {
 /// 获取完整的图片 URL
 String getImageUrl(String serverUrl, String comicId,
     {int? page, bool thumbnail = false}) {
-  final cleanUrl = serverUrl.endsWith('/') ? serverUrl.substring(0, serverUrl.length - 1) : serverUrl;
+  final cleanUrl = serverUrl.endsWith('/')
+      ? serverUrl.substring(0, serverUrl.length - 1)
+      : serverUrl;
   if (thumbnail) {
     return '$cleanUrl/api/comics/$comicId/thumbnail';
   }
@@ -421,7 +445,9 @@ Future<List<ServerRecord>> loadServerHistory() async {
   if (raw == null || raw.isEmpty) return [];
   try {
     final list = jsonDecode(raw) as List;
-    return list.map((e) => ServerRecord.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => ServerRecord.fromJson(e as Map<String, dynamic>))
+        .toList();
   } catch (_) {
     return [];
   }

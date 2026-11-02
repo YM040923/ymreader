@@ -169,13 +169,31 @@ class ComicApi {
       'finalize': finalize,
       'trackProgress': trackProgress,
     };
+    final cursor = <String, dynamic>{};
     if (workId != null && unitId != null && relativePage != null) {
-      data['workId'] = workId;
-      data['unitId'] = unitId;
-      data['relativePage'] = relativePage;
+      cursor['workId'] = workId;
+      cursor['unitId'] = unitId;
+      cursor['relativePage'] = relativePage;
     }
-    final response = await _dio.post('/reading/$comicId/activity', data: data);
-    return Map<String, dynamic>.from(response.data as Map);
+    try {
+      final response = await _dio
+          .post('/reading/$comicId/activity', data: {...data, ...cursor});
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (error) {
+      // 服务端拒绝 Work 游标（合并/拆分后 unitId 变了、目录重新归属等）时，
+      // 降级成普通漫画进度：否则整条心跳被丢掉，连阅读时长都不再记录。
+      if (cursor.isEmpty || error.response?.statusCode != 400) rethrow;
+      final body = error.response?.data;
+      final reason = body is Map ? (body['reason'] ?? body['error']) : body;
+      print('[API] Work reading cursor rejected for $comicId: $reason '
+          '— retrying as Comic-only progress');
+      final response =
+          await _dio.post('/reading/$comicId/activity', data: data);
+      return {
+        ...Map<String, dynamic>.from(response.data as Map),
+        'cursorRejected': true
+      };
+    }
   }
 
   /// 获取站点设置

@@ -17,6 +17,10 @@ class ReadingProgressEvent {
   final bool finalize;
   final bool trackProgress;
 
+  /// True when the server rejected the Work cursor for this event, so the
+  /// tracker stops attaching one for the rest of the session.
+  final bool cursorRejected;
+
   const ReadingProgressEvent({
     required this.serverKey,
     required this.userKey,
@@ -31,6 +35,7 @@ class ReadingProgressEvent {
     this.relativePage,
     this.finalize = false,
     this.trackProgress = true,
+    this.cursorRejected = false,
   });
 
   String get storageKey =>
@@ -47,6 +52,7 @@ class ReadingProgressEvent {
     int? sequence,
     bool? finalize,
     bool? trackProgress,
+    bool? cursorRejected,
   }) =>
       ReadingProgressEvent(
         serverKey: serverKey,
@@ -62,6 +68,7 @@ class ReadingProgressEvent {
         sequence: sequence ?? this.sequence,
         finalize: finalize ?? this.finalize,
         trackProgress: trackProgress ?? this.trackProgress,
+        cursorRejected: cursorRejected ?? this.cursorRejected,
       );
 
   Map<String, dynamic> toJson() => {

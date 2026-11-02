@@ -45,6 +45,7 @@ class ReadingActivityTracker with WidgetsBindingObserver {
   String? _unitId;
   int? _relativePage;
   bool _trackProgress = true;
+  bool _cursorRejected = false;
   bool _started = false;
   bool _finalized = false;
   bool _resumed = true;
@@ -104,13 +105,14 @@ class ReadingActivityTracker with WidgetsBindingObserver {
   }
 
   void _queue({bool finalize = false}) {
+    final dropped = _cursorRejected;
     _pending = ReadingProgressEvent(
       serverKey: serverKey,
       userKey: userKey,
       comicId: comicId,
-      workId: _workId,
-      unitId: _unitId,
-      relativePage: _relativePage,
+      workId: dropped ? null : _workId,
+      unitId: dropped ? null : _unitId,
+      relativePage: dropped ? null : _relativePage,
       page: _page,
       totalPages: _totalPages,
       activeSeconds: _activeSeconds,
@@ -146,8 +148,9 @@ class ReadingActivityTracker with WidgetsBindingObserver {
               (_pending?.storageKey ??
                   '$serverKey\u0000$userKey\u0000${_workId ?? 'comic:$comicId'}'))) {
         try {
-          await _send(event);
+          final confirmed = await _send(event);
           await _outbox.remove(event);
+          if (confirmed.cursorRejected) _cursorRejected = true;
         } catch (_) {
           if (_pending != null) await _outbox.put(_pending!);
           _pending = null;
@@ -161,6 +164,7 @@ class ReadingActivityTracker with WidgetsBindingObserver {
       try {
         final confirmed = await _send(event);
         await _outbox.remove(event);
+        if (confirmed.cursorRejected) _cursorRejected = true;
         if (confirmed.finalize) _finalized = true;
       } catch (_) {
         final latest = _pending ?? event;
@@ -189,13 +193,15 @@ class ReadingActivityTracker with WidgetsBindingObserver {
       relativePage: event.relativePage,
     );
     final progress = data['progress'];
+    final rejected = data['cursorRejected'] == true;
     if (progress is Map) {
       return event.copyWith(
         page: progress['absolutePage'] as int? ?? event.page,
         relativePage: progress['relativePage'] as int? ?? event.relativePage,
+        cursorRejected: rejected,
       );
     }
-    return event;
+    return rejected ? event.copyWith(cursorRejected: true) : event;
   }
 
   Future<void> finish() async {
