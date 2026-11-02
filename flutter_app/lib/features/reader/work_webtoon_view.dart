@@ -1,9 +1,20 @@
-import 'package:flutter/foundation.dart' show precisionErrorTolerance;
+import 'dart:async';
+
+import 'package:flutter/foundation.dart'
+    show precisionErrorTolerance, kDebugMode;
 import 'package:flutter/material.dart';
 
+import '../../data/services/page_metrics_cache.dart';
 import '../../widgets/authenticated_image.dart';
 
-const double webtoonHeaderHeight = 40;
+/// The chapter band that introduces each unit, measured along the scroll axis.
+const double webtoonHeaderExtent = 40;
+
+/// How long one page runs along the scroll axis. A vertical strip pins the
+/// image to the viewport width, a horizontal one to the viewport height, so
+/// the same page reads longer across a wide screen when it runs sideways.
+double webtoonRowExtent(Axis axis, double crossExtent, double ratio) =>
+    axis == Axis.vertical ? crossExtent / ratio : crossExtent * ratio;
 
 /// A page index plus an offset within that page survives changes in image size.
 class WorkWebtoonController extends ScrollController {
@@ -34,13 +45,33 @@ class WorkWebtoonController extends ScrollController {
       _pendingOffset = geometry.startOf(_requestedPage!);
       _requestedPage = null;
     } else if (previous != null && !previous.sameAs(geometry)) {
-      final offset = _offset;
-      final page = previous.pageAt(offset);
-      final fraction =
-          ((offset - previous.startOf(page)) / previous.extentOf(page))
-              .clamp(0.0, 1.0);
-      _pendingOffset =
-          geometry.startOf(page) + fraction * geometry.extentOf(page);
+      if (previous.axis != geometry.axis ||
+          previous.crossExtent != geometry.crossExtent ||
+          previous.viewportExtent != geometry.viewportExtent ||
+          previous.ratios.length != geometry.ratios.length) {
+        // Rotation, an axis flip or a changed page count: keep the page under
+        // the finger.
+        final offset = _offset;
+        final page = previous.pageAt(offset);
+        final fraction =
+            ((offset - previous.startOf(page)) / previous.extentOf(page))
+                .clamp(0.0, 1.0);
+        _pendingOffset =
+            geometry.startOf(page) + fraction * geometry.extentOf(page);
+      } else {
+        // A page above the viewport learned its real height. Move the scroll
+        // offset by exactly that delta so what is on screen stays still —
+        // re-anchoring to a page would visibly jump while dragging.
+        final offset = _offset;
+        final anchor = previous.pageAt(offset);
+        final delta = geometry.startOf(anchor) - previous.startOf(anchor);
+        if (delta.abs() > 0.5) {
+          _pendingOffset = (offset + delta).clamp(0.0, double.infinity);
+          if (kDebugMode) {
+            debugPrint('[webtoon] keep anchor page=$anchor delta=${delta.toStringAsFixed(1)}');
+          }
+        }
+      }
     }
     _geometry = geometry;
   }
@@ -90,30 +121,38 @@ class _WebtoonPosition extends ScrollPositionWithSingleContext {
 }
 
 class _PageGeometry {
-  _PageGeometry(
-    this.width,
-    this.viewportHeight,
-    List<double?> ratios,
-    List<double> headerHeights,
-  )   : ratios = List.unmodifiable(ratios),
-        headerHeights = List.unmodifiable(headerHeights) {
+  _PageGeometry({
+    required this.axis,
+    required this.crossExtent,
+    required this.viewportExtent,
+    required List<double?> ratios,
+    required List<double> headerExtents,
+  })  : ratios = List.unmodifiable(ratios),
+        headerExtents = List.unmodifiable(headerExtents) {
     for (var index = 0; index < ratios.length; index++) {
       starts.add(starts.last +
-          headerHeights[index] +
-          (ratios[index] == null ? viewportHeight : imageExtent(index)));
+          headerExtents[index] +
+          (ratios[index] == null ? viewportExtent : imageExtent(index)));
     }
   }
 
-  final double width;
-  final double viewportHeight;
+  /// Vertical strips scroll top-down and fill the width; horizontal strips
+  /// scroll sideways and fill the height.
+  final Axis axis;
+
+  /// Size perpendicular to scrolling — the side the image is pinned to.
+  final double crossExtent;
+
+  /// Size along scrolling — also the fallback row size for an unknown image.
+  final double viewportExtent;
   final List<double?> ratios;
-  final List<double> headerHeights;
+  final List<double> headerExtents;
   final starts = <double>[0];
 
   double imageExtent(int index) {
     final ratio = ratios[index];
-    if (ratio == null || ratio <= 0) return viewportHeight;
-    return width / ratio;
+    if (ratio == null || ratio <= 0) return viewportExtent;
+    return webtoonRowExtent(axis, crossExtent, ratio);
   }
 
   int pageAt(double offset) {
@@ -133,21 +172,22 @@ class _PageGeometry {
   double startOf(int page) =>
       ratios.isEmpty ? 0 : starts[page.clamp(0, ratios.length - 1)];
   double extentOf(int page) {
-    if (ratios.isEmpty) return viewportHeight;
+    if (ratios.isEmpty) return viewportExtent;
     final index = page.clamp(0, ratios.length - 1);
     return starts[index + 1] - starts[index];
   }
 
   bool sameAs(_PageGeometry other) {
-    if (width != other.width ||
-        viewportHeight != other.viewportHeight ||
+    if (axis != other.axis ||
+        crossExtent != other.crossExtent ||
+        viewportExtent != other.viewportExtent ||
         ratios.length != other.ratios.length ||
-        headerHeights.length != other.headerHeights.length) {
+        headerExtents.length != other.headerExtents.length) {
       return false;
     }
     for (var i = 0; i < ratios.length; i++) {
       if (ratios[i] != other.ratios[i] ||
-          headerHeights[i] != other.headerHeights[i]) {
+          headerExtents[i] != other.headerExtents[i]) {
         return false;
       }
     }
@@ -178,6 +218,8 @@ class WorkWebtoonView extends StatefulWidget {
     required this.initialPage,
     required this.onPageChanged,
     this.fit = BoxFit.fitWidth,
+    this.axis = Axis.vertical,
+    this.reverse = false,
   });
 
   final WorkWebtoonController controller;
@@ -185,6 +227,12 @@ class WorkWebtoonView extends StatefulWidget {
   final int initialPage;
   final ValueChanged<int> onPageChanged;
   final BoxFit fit;
+
+  /// Long strips run vertically; a manga page column runs horizontally.
+  final Axis axis;
+
+  /// Right-to-left reading for horizontal strips.
+  final bool reverse;
 
   @override
   State<WorkWebtoonView> createState() => _WorkWebtoonViewState();
@@ -198,11 +246,39 @@ class _WorkWebtoonViewState extends State<WorkWebtoonView> {
   @override
   void initState() {
     super.initState();
-    _ratios = List.generate(widget.pages.length,
-        (index) => widget.controller._geometry?.ratios.elementAtOrNull(index));
+    _ratios = _seedRatios();
     if (widget.controller._geometry == null) {
       widget.controller._requestedPage = widget.initialPage;
     }
+    unawaited(_warmMetricCache());
+  }
+
+  List<double?> _seedRatios() {
+    final cache = PageMetricsCache.instance;
+    return List.generate(widget.pages.length, (index) {
+      final existing =
+          widget.controller._geometry?.ratios.elementAtOrNull(index);
+      if (existing != null && existing > 0) return existing;
+      final page = widget.pages[index];
+      return cache.ratioFor(page.comicId, page.pageIndex) ??
+          cache.guessFor(page.comicId, page.pageIndex);
+    });
+  }
+
+  Future<void> _warmMetricCache() async {
+    await PageMetricsCache.instance.ensureLoaded();
+    if (!mounted) return;
+    var changed = false;
+    for (var index = 0; index < widget.pages.length; index++) {
+      final page = widget.pages[index];
+      final cached =
+          PageMetricsCache.instance.ratioFor(page.comicId, page.pageIndex);
+      if (cached != null && cached != _ratios[index]) {
+        _ratios[index] = cached;
+        changed = true;
+      }
+    }
+    if (changed) setState(() {});
   }
 
   @override
@@ -213,9 +289,9 @@ class _WorkWebtoonViewState extends State<WorkWebtoonView> {
             widget.pages.isNotEmpty &&
             oldWidget.pages.first.imageUrl != widget.pages.first.imageUrl);
     if (reset) {
-      _ratios = List.filled(widget.pages.length, null);
       widget.controller._geometry = null;
       widget.controller._requestedPage = widget.initialPage;
+      _ratios = _seedRatios();
       _reportedPage = null;
     }
   }
@@ -247,6 +323,13 @@ class _WorkWebtoonViewState extends State<WorkWebtoonView> {
     }
     final ratio = size.width / size.height;
     if (_ratios[index] == ratio) return;
+    final page = widget.pages[index];
+    final wasGuess =
+        PageMetricsCache.instance.ratioFor(page.comicId, page.pageIndex) == null;
+    PageMetricsCache.instance.record(page.comicId, page.pageIndex, ratio);
+    if (kDebugMode && wasGuess) {
+      debugPrint('[webtoon] first measure row=$index page=${page.pageIndex}');
+    }
     setState(() => _ratios[index] = ratio);
   }
 
@@ -255,12 +338,19 @@ class _WorkWebtoonViewState extends State<WorkWebtoonView> {
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
+        final vertical = widget.axis == Axis.vertical;
         final headers = [
           for (final page in widget.pages)
-            page.header == null ? 0.0 : webtoonHeaderHeight,
+            page.header == null ? 0.0 : webtoonHeaderExtent,
         ];
         final geometry = _PageGeometry(
-            constraints.maxWidth, constraints.maxHeight, _ratios, headers);
+          axis: widget.axis,
+          crossExtent: vertical ? constraints.maxWidth : constraints.maxHeight,
+          viewportExtent:
+              vertical ? constraints.maxHeight : constraints.maxWidth,
+          ratios: _ratios,
+          headerExtents: headers,
+        );
         widget.controller._updateGeometry(geometry);
         _schedulePageReport();
         return NotificationListener<ScrollNotification>(
@@ -271,54 +361,92 @@ class _WorkWebtoonViewState extends State<WorkWebtoonView> {
           child: ListView.builder(
             padding: EdgeInsets.zero,
             controller: widget.controller,
+            scrollDirection: widget.axis,
+            reverse: widget.reverse,
             itemCount: widget.pages.length,
             itemExtentBuilder: (index, _) => geometry.extentOf(index),
-            itemBuilder: (context, index) {
-              final page = widget.pages[index];
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (page.header != null)
-                    Container(
-                      width: double.infinity,
-                      height: webtoonHeaderHeight,
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 16),
-                      alignment: Alignment.center,
-                      color: Colors.black,
-                      child: Text(
-                        page.header!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: colors.onSurfaceVariant.withValues(
-                                alpha: 0.85)),
-                      ),
-                    ),
-                  SizedBox(
-                    height: geometry.imageExtent(index),
-                    child: AuthenticatedImage(
-                      key: ValueKey(page.imageUrl),
-                      imageUrl: page.imageUrl,
-                      comicId: page.comicId,
-                      pageIndex: page.pageIndex,
-                      fit: widget.fit,
-                      onImageSize: (size) => _imageSize(index, size),
-                      placeholder: const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2)),
-                      errorWidget: const Center(
-                        child: Icon(Icons.broken_image,
-                            color: Colors.white54, size: 48),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
+            itemBuilder: (context, index) => _row(geometry, index, colors),
           ),
         );
       },
+    );
+  }
+
+  /// One page: the chapter band that introduces it, then the image itself.
+  Widget _row(_PageGeometry geometry, int index, ColorScheme colors) {
+    final page = widget.pages[index];
+    final image = AuthenticatedImage(
+      key: ValueKey(page.imageUrl),
+      imageUrl: page.imageUrl,
+      comicId: page.comicId,
+      pageIndex: page.pageIndex,
+      // 横排是按高等待铺，盒子宽就是按真实宽高比算出来的，contain 已等价铺满。
+      fit: geometry.axis == Axis.vertical ? widget.fit : BoxFit.contain,
+      onImageSize: (size) => _imageSize(index, size),
+      placeholder: Container(
+        color: const Color(0xFF0B0B0F),
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: Colors.white24,
+          ),
+        ),
+      ),
+      errorWidget: const Center(
+        child: Icon(Icons.broken_image, color: Colors.white38, size: 32),
+      ),
+    );
+    if (geometry.axis == Axis.vertical) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (page.header != null) _band(geometry, page.header!, colors),
+          SizedBox(height: geometry.imageExtent(index), child: image),
+        ],
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (page.header != null) _band(geometry, page.header!, colors),
+        SizedBox(
+          width: geometry.imageExtent(index),
+          height: geometry.crossExtent,
+          child: image,
+        ),
+      ],
+    );
+  }
+
+  Widget _band(_PageGeometry geometry, String label, ColorScheme colors) {
+    final text = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+          color: colors.onSurfaceVariant.withValues(alpha: 0.85)),
+    );
+    if (geometry.axis == Axis.vertical) {
+      return Container(
+        width: double.infinity,
+        height: webtoonHeaderExtent,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.center,
+        color: Colors.black,
+        child: text,
+      );
+    }
+    // 横排时话名占一条竖着的窄带，文字转 90° 顺着滚动方向排。
+    return Container(
+      width: webtoonHeaderExtent,
+      height: geometry.crossExtent,
+      alignment: Alignment.center,
+      color: Colors.black,
+      child: RotatedBox(quarterTurns: 1, child: text),
     );
   }
 }

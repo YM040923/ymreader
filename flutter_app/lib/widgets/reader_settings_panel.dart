@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +12,9 @@ enum ReadingDirection { ltr, rtl, ttb }
 /// 适应显示模式
 enum FitMode { contain, width, height }
 
+/// 屏幕方向锁定
+enum OrientationLock { followSystem, portrait, landscape }
+
 T _enumValue<T>(List<T> values, int? index, T fallback) {
   if (index == null || index < 0 || index >= values.length) return fallback;
   return values[index];
@@ -17,7 +22,18 @@ T _enumValue<T>(List<T> values, int? index, T fallback) {
 
 /// 阅读器设置 — 持久化到 SharedPreferences
 class ReaderSettings {
-  static const int settingsVersion = 3;
+  static const int settingsVersion = 5;
+
+  /// 「适应显示」把旧默认的完整容纳改成适应宽度所在的版本。迁移判定必须钉在
+  /// 这个版本上，否则以后每加一条迁移都会把用户后来自选的完整容纳抹掉。
+  static const int _fitModeMigrationVersion = 4;
+
+  /// 「连续阅读」默认改为开启所在的版本：旧默认关，但面板保存时会把当时看到的
+  /// 值全量写盘，所以存档里的 false 多半只是默认值，跨到这个版本时统一翻开一次。
+  static const int _continuousReadingMigrationVersion = 5;
+
+  /// 亮度滑条的下限：再低基本就看不清了
+  static const double minBrightness = 0.25;
 
   final ComicReadingMode mode;
   final ReadingDirection direction;
@@ -32,16 +48,49 @@ class ReaderSettings {
   /// 双页模式贴合（去除中间缝隙），让两页在屏幕中央对齐拼接
   final bool doublePageNoGap;
 
+  /// 阅读亮度，1.0 = 跟随系统（不额外压暗）
+  final double brightness;
+
+  /// 屏幕方向锁定
+  final OrientationLock orientationLock;
+
+  /// 阅读时左右点击区域对调（左翻上页 → 右翻上页）
+  final bool swapTapZones;
+
+  /// 使用音量键翻页
+  final bool volumeKeyPaging;
+
   const ReaderSettings({
     this.mode = ComicReadingMode.single,
     this.direction = ReadingDirection.ltr,
     this.fitMode = FitMode.width,
     this.showPageNumber = true,
     this.autoPageInterval = 0,
-    this.continuousReading = false,
+    // 跨过话边界继续滚是阅读器的默认体验，只有用户明确关掉才退回单话。
+    this.continuousReading = true,
     this.doubleCoverAlone = true,
     this.doublePageNoGap = true,
+    this.brightness = 1.0,
+    this.orientationLock = OrientationLock.followSystem,
+    this.swapTapZones = false,
+    this.volumeKeyPaging = false,
   });
+
+  /// 需要落盘的键，[clearScope] 与读写共用
+  static const List<String> _keys = [
+    'reader_mode',
+    'reader_direction',
+    'reader_fitMode',
+    'reader_showPageNumber',
+    'reader_autoPageInterval',
+    'reader_continuousReading',
+    'reader_doubleCoverAlone',
+    'reader_doublePageNoGap',
+    'reader_brightnessPercent',
+    'reader_orientationLock',
+    'reader_swapTapZones',
+    'reader_volumeKeyPaging',
+  ];
 
   ReaderSettings copyWith({
     ComicReadingMode? mode,
@@ -52,6 +101,10 @@ class ReaderSettings {
     bool? continuousReading,
     bool? doubleCoverAlone,
     bool? doublePageNoGap,
+    double? brightness,
+    OrientationLock? orientationLock,
+    bool? swapTapZones,
+    bool? volumeKeyPaging,
   }) {
     return ReaderSettings(
       mode: mode ?? this.mode,
@@ -62,6 +115,10 @@ class ReaderSettings {
       continuousReading: continuousReading ?? this.continuousReading,
       doubleCoverAlone: doubleCoverAlone ?? this.doubleCoverAlone,
       doublePageNoGap: doublePageNoGap ?? this.doublePageNoGap,
+      brightness: brightness ?? this.brightness,
+      orientationLock: orientationLock ?? this.orientationLock,
+      swapTapZones: swapTapZones ?? this.swapTapZones,
+      volumeKeyPaging: volumeKeyPaging ?? this.volumeKeyPaging,
     );
   }
 
@@ -69,6 +126,9 @@ class ReaderSettings {
   ///
   /// v2 将旧版默认的“完整容纳”迁移为“适应宽度”。旧默认会把长图完整
   /// 压进一屏，导致漫画文字非常小；用户仍可在设置中切回完整显示。
+  ///
+  /// v5 把“连续阅读”的默认值改为开启，并把旧存档里由默认值写下的关闭
+  /// 翻开一次；此后用户自己关掉仍然生效。
   static Future<ReaderSettings> load({
     String? scope,
     String? fallbackScope,
@@ -92,14 +152,29 @@ class ReaderSettings {
     var fitModeIndex = readInt('reader_fitMode');
 
     if (fitModeIndex == null ||
-        (storedVersion < settingsVersion &&
+        (storedVersion < _fitModeMigrationVersion &&
             fitModeIndex == FitMode.contain.index)) {
       fitModeIndex = FitMode.width.index;
       await prefs.setInt('reader_fitMode', fitModeIndex);
     }
+    if (storedVersion < _continuousReadingMigrationVersion) {
+      // 三个作用域一起翻，不然作品级存档里的 false 会永远留着。
+      for (final key in [
+        scoped('reader_continuousReading'),
+        fallbackKey('reader_continuousReading'),
+        'reader_continuousReading',
+      ]) {
+        if (prefs.getBool(key) == false) {
+          await prefs.setBool(key, true);
+        }
+      }
+    }
     if (storedVersion < settingsVersion) {
       await prefs.setInt('reader_settings_version', settingsVersion);
     }
+
+    // 亮度按整数百分比存，避免浮点键位差异
+    final brightnessPercent = readInt('reader_brightnessPercent');
 
     return ReaderSettings(
       mode: _enumValue(
@@ -119,9 +194,20 @@ class ReaderSettings {
       ),
       showPageNumber: readBool('reader_showPageNumber') ?? true,
       autoPageInterval: readInt('reader_autoPageInterval') ?? 0,
-      continuousReading: readBool('reader_continuousReading') ?? false,
+      // 没存过的用户拿到新默认值；存过 false 的仍然按他自己的选择。
+      continuousReading: readBool('reader_continuousReading') ?? true,
       doubleCoverAlone: readBool('reader_doubleCoverAlone') ?? true,
       doublePageNoGap: readBool('reader_doublePageNoGap') ?? true,
+      brightness: brightnessPercent == null
+          ? 1.0
+          : (brightnessPercent.clamp(25, 100) / 100.0),
+      orientationLock: _enumValue(
+        OrientationLock.values,
+        readInt('reader_orientationLock'),
+        OrientationLock.followSystem,
+      ),
+      swapTapZones: readBool('reader_swapTapZones') ?? false,
+      volumeKeyPaging: readBool('reader_volumeKeyPaging') ?? false,
     );
   }
 
@@ -134,25 +220,21 @@ class ReaderSettings {
     await prefs.setInt(scoped('reader_mode'), mode.index);
     await prefs.setInt(scoped('reader_direction'), direction.index);
     await prefs.setInt(scoped('reader_fitMode'), fitMode.index);
-    await prefs.setBool('reader_showPageNumber', showPageNumber);
-    await prefs.setInt('reader_autoPageInterval', autoPageInterval);
+    await prefs.setBool(scoped('reader_showPageNumber'), showPageNumber);
+    await prefs.setInt(scoped('reader_autoPageInterval'), autoPageInterval);
     await prefs.setBool(scoped('reader_continuousReading'), continuousReading);
     await prefs.setBool(scoped('reader_doubleCoverAlone'), doubleCoverAlone);
     await prefs.setBool(scoped('reader_doublePageNoGap'), doublePageNoGap);
+    await prefs.setInt(scoped('reader_brightnessPercent'),
+        (brightness * 100).round().clamp(25, 100));
+    await prefs.setInt(scoped('reader_orientationLock'), orientationLock.index);
+    await prefs.setBool(scoped('reader_swapTapZones'), swapTapZones);
+    await prefs.setBool(scoped('reader_volumeKeyPaging'), volumeKeyPaging);
   }
 
   static Future<void> clearScope(String scope) async {
     final prefs = await SharedPreferences.getInstance();
-    for (final key in [
-      'reader_mode',
-      'reader_direction',
-      'reader_fitMode',
-      'reader_showPageNumber',
-      'reader_autoPageInterval',
-      'reader_continuousReading',
-      'reader_doubleCoverAlone',
-      'reader_doublePageNoGap',
-    ]) {
+    for (final key in _keys) {
       await prefs.remove('${key}_$scope');
     }
   }
@@ -195,84 +277,148 @@ class ReaderSettingsPanel extends StatefulWidget {
 class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
   late ReaderSettings _settings;
 
+  /// 库默认页没有“对全部作品生效”这一层，直接编辑库级设置
+  bool get _isLibraryScope => widget.scope?.startsWith('library:') ?? false;
+  bool get _isGlobalScope => widget.scope == null || widget.scope!.isEmpty;
+
+  /// true = 本次编辑写入全局键，且本书的独立设置已被清除
+  late bool _appliesToAll = _isGlobalScope;
+
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
+    _detectScopeMode();
   }
+
+  /// 本书没有独立键时，说明它正在吃全局设置，开关应显示“全部作品”
+  Future<void> _detectScopeMode() async {
+    final scope = widget.scope;
+    if (_isGlobalScope || _isLibraryScope || scope == null || scope.isEmpty) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final hasOwn = prefs
+        .getKeys()
+        .any((key) => key.endsWith('_$scope') && key.startsWith('reader_'));
+    if (!hasOwn && mounted) setState(() => _appliesToAll = true);
+  }
+
+  String? get _writeScope => _appliesToAll ? null : widget.scope;
 
   void _update(ReaderSettings newSettings) {
     setState(() => _settings = newSettings);
     widget.onChanged(newSettings);
-    newSettings.save(scope: widget.scope); // 自动持久化
+    newSettings.save(scope: _writeScope);
+  }
+
+  Future<void> _setAppliesToAll(bool on) async {
+    if (on) {
+      await _settings.save(); // 先落全局
+      await ReaderSettings.clearScope(widget.scope ?? '');
+      setState(() => _appliesToAll = true);
+    } else {
+      setState(() => _appliesToAll = false);
+      await _settings.save(scope: widget.scope);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    // 横屏时底部弹窗只剩小半屏高，改成居中卡片更好读
+    if (size.width > size.height) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 560,
+              maxHeight: size.height - 32,
+            ),
+            child: _card(context, null),
+          ),
+        ),
+      );
+    }
     return DraggableScrollableSheet(
-      initialChildSize: 0.55,
-      minChildSize: 0.3,
-      maxChildSize: 0.75,
-      builder: (context, scrollController) {
-        return Container(
+      initialChildSize: 0.74,
+      minChildSize: 0.34,
+      maxChildSize: 0.90,
+      builder: (context, scrollController) => _card(context, scrollController),
+    );
+  }
+
+  Widget _card(BuildContext context, ScrollController? scrollController) {
+    final isPaged = _settings.mode != ComicReadingMode.webtoon;
+    final floating = scrollController == null;
+    final radius = floating
+        ? const BorderRadius.all(Radius.circular(22))
+        : const BorderRadius.vertical(top: Radius.circular(22));
+    return ClipRRect(
+      borderRadius: radius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: Container(
           decoration: BoxDecoration(
-            color: Colors.grey[900],
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            color: const Color(0xDD0C0C10),
+            borderRadius: radius,
+            border: floating
+                ? Border.all(color: Colors.white.withValues(alpha: 0.07))
+                : Border(
+                    top:
+                        BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                  ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 拖拽把手
-              Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 8),
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
+              // 拖拽把手（居中卡片不可拖，只留一点呼吸）
+              if (floating)
+                const SizedBox(height: 14)
+              else
+                Padding(
+                  padding: const EdgeInsets.only(top: 10, bottom: 6),
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
               // 标题栏
               Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      '阅读器设置',
+                      '阅读设置',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      '自动保存',
-                      style: TextStyle(
-                        color: Colors.white.withAlpha(77),
-                        fontSize: 11,
-                      ),
-                    ),
+                    const Spacer(),
+                    if (!_isLibraryScope && !_isGlobalScope)
+                      _ScopeChip(appliesToAll: _appliesToAll)
+                    else if (_isGlobalScope)
+                      const _ScopeChip(appliesToAll: true),
                   ],
                 ),
               ),
-              const Divider(color: Colors.white12, height: 16),
               // 可滚动的设置项
               Expanded(
                 child: ListView(
                   controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
                   children: [
-                    // ── 显示设置 ──
-                    _SectionTitle(icon: Icons.monitor, title: '显示'),
-                    const SizedBox(height: 8),
-
-                    // 适应显示
-                    _SettingLabel('适应显示'),
-                    const SizedBox(height: 6),
+                    // ── 画面 ──
+                    const _SectionTitle('画面'),
+                    const _SettingLabel('适应显示'),
                     _ToggleGroup<FitMode>(
                       value: _settings.fitMode,
                       items: const [
@@ -282,11 +428,11 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                       ],
                       onChanged: (v) => _update(_settings.copyWith(fitMode: v)),
                     ),
-                    const SizedBox(height: 16),
-
-                    // 页面渲染
-                    _SettingLabel('页面渲染'),
-                    const SizedBox(height: 6),
+                    if (_settings.mode == ComicReadingMode.webtoon &&
+                        _settings.direction != ReadingDirection.ttb)
+                      const _Hint(
+                          '横向长条按屏幕高度铺满，适应显示只在竖向长条和翻页模式生效'),
+                    const _SettingLabel('页面渲染'),
                     _ToggleGroup<ComicReadingMode>(
                       value: _settings.mode,
                       items: const [
@@ -296,47 +442,32 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                       ],
                       onChanged: (v) => _update(_settings.copyWith(mode: v)),
                     ),
-                    const SizedBox(height: 16),
 
                     // 双页：封面单独显示（错页对齐）
                     if (_settings.mode == ComicReadingMode.doublePage) ...[
                       _SwitchRow(
-                        label: '封面单独显示（双页错页）',
+                        label: '封面单独显示',
+                        hint: '双页错页',
                         value: _settings.doubleCoverAlone,
                         onChanged: (v) =>
                             _update(_settings.copyWith(doubleCoverAlone: v)),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, bottom: 8),
-                        child: Text(
-                          '关闭后从第 1 页开始两两配对，适合欧美漫画；开启后第 1 页单独显示，对齐日漫见开页',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withAlpha(77),
-                          ),
-                        ),
+                      const _Hint(
+                        '关闭后从第 1 页开始两两配对，适合欧美漫画；开启后第 1 页单独显示，对齐日漫见开页',
                       ),
                       _SwitchRow(
-                        label: '双页贴合（去除中间缝）',
+                        label: '双页贴合',
+                        hint: '去除中间缝',
                         value: _settings.doublePageNoGap,
                         onChanged: (v) =>
                             _update(_settings.copyWith(doublePageNoGap: v)),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, bottom: 8),
-                        child: Text(
-                          '开启后两页在屏幕中央贴合拼接，跨页大图观感更佳；关闭则两页各自居中（左右对称留白）',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withAlpha(77),
-                          ),
-                        ),
+                      const _Hint(
+                        '开启后两页在屏幕中央贴合拼接，跨页大图观感更佳；关闭则两页各自居中',
                       ),
                     ],
 
-                    // 阅读方向
-                    _SettingLabel('阅读方向'),
-                    const SizedBox(height: 6),
+                    const _SettingLabel('阅读方向'),
                     _ToggleGroup<ReadingDirection>(
                       value: _settings.direction,
                       items: const [
@@ -353,69 +484,139 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
                         _update(s);
                       },
                     ),
-                    const SizedBox(height: 16),
 
-                    // ── 行为设置 ──
-                    _SectionTitle(icon: Icons.tune, title: '行为'),
-                    const SizedBox(height: 8),
+                    // ── 屏幕 ──
+                    const _SectionTitle('屏幕'),
+                    _SliderRow(
+                      label: '亮度',
+                      icon: _settings.brightness >= 1.0
+                          ? Icons.brightness_high_rounded
+                          : Icons.brightness_6_rounded,
+                      value: _settings.brightness,
+                      min: ReaderSettings.minBrightness,
+                      max: 1.0,
+                      trailing: _settings.brightness >= 1.0
+                          ? const _MiniTag('跟随系统')
+                          : null,
+                      trailingAction: _settings.brightness < 1.0
+                          ? () => _update(_settings.copyWith(brightness: 1.0))
+                          : null,
+                      trailingActionLabel: '还原',
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(brightness: v)),
+                    ),
+                    const _SettingLabel('方向锁定'),
+                    _ToggleGroup<OrientationLock>(
+                      value: _settings.orientationLock,
+                      items: const [
+                        _ToggleItem(OrientationLock.followSystem, '跟随'),
+                        _ToggleItem(OrientationLock.portrait, '竖屏'),
+                        _ToggleItem(OrientationLock.landscape, '横屏'),
+                      ],
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(orientationLock: v)),
+                    ),
 
-                    // 页码指示器
+                    // ── 操作 ──
+                    const _SectionTitle('操作'),
+                    _SwitchRow(
+                      label: '音量键翻页',
+                      value: _settings.volumeKeyPaging && isPaged,
+                      disabled: !isPaged,
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(volumeKeyPaging: v)),
+                    ),
+                    _SwitchRow(
+                      label: '左右点击区对调',
+                      value: _settings.swapTapZones && isPaged,
+                      disabled: !isPaged,
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(swapTapZones: v)),
+                    ),
                     _SwitchRow(
                       label: '页码指示器',
                       value: _settings.showPageNumber,
                       onChanged: (v) =>
                           _update(_settings.copyWith(showPageNumber: v)),
                     ),
-                    const SizedBox(height: 8),
-
                     _SwitchRow(
                       label: '连续阅读',
                       value: _settings.continuousReading,
                       onChanged: (v) =>
                           _update(_settings.copyWith(continuousReading: v)),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '开启后当前话结束会自动接上下一话',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withAlpha(77),
-                      ),
+                    const _Hint('开启后当前话结束会自动接上下一话'),
+
+                    // ── 自动阅读 ──
+                    const _SectionTitle('自动阅读'),
+                    _ToggleGroup<int>(
+                      value: _autoSpeedValue,
+                      items: const [
+                        _ToggleItem(0, '关'),
+                        _ToggleItem(6, '慢'),
+                        _ToggleItem(4, '标准'),
+                        _ToggleItem(2, '快'),
+                      ],
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(autoPageInterval: v)),
                     ),
-                    const SizedBox(height: 24),
+                    const _Hint('翻页模式按间隔跳下一页，长条模式匀速下滚；翻到本话最后一会自动接下一话'),
+
+                    // ── 生效范围 ──
+                    if (!_isLibraryScope) ...[
+                      const SizedBox(height: 22),
+                      _SwitchRow(
+                        label: '对全部作品生效',
+                        value: _appliesToAll,
+                        onChanged: _setAppliesToAll,
+                      ),
+                      _Hint(_appliesToAll
+                          ? '本书已改用全局设置；关掉开关可恢复单独设置本书'
+                          : '打开后这套设置成为所有作品的默认值'),
+                    ],
+                    const SizedBox(height: 26),
                   ],
                 ),
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
+  }
+
+  /// 自动阅读档位：把历史遗留的任意秒数归到最近的一档
+  int get _autoSpeedValue {
+    final v = _settings.autoPageInterval;
+    if (v <= 0) return 0;
+    const steps = [6, 4, 2];
+    var best = steps.first;
+    for (final s in steps) {
+      if ((v - s).abs() < (v - best).abs()) best = s;
+    }
+    return best;
   }
 }
 
 // ── 辅助组件 ──
 
 class _SectionTitle extends StatelessWidget {
-  final IconData icon;
   final String title;
-  const _SectionTitle({required this.icon, required this.title});
+  const _SectionTitle(this.title);
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: Colors.white54),
-        const SizedBox(width: 6),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.white70,
-          ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 10),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+          color: Colors.white.withValues(alpha: 0.38),
         ),
-      ],
+      ),
     );
   }
 }
@@ -426,13 +627,74 @@ class _SettingLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: Colors.white.withValues(alpha: 0.78),
+        ),
+      ),
+    );
+  }
+}
+
+class _Hint extends StatelessWidget {
+  final String text;
+  const _Hint(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.45,
+          color: Colors.white.withValues(alpha: 0.34),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScopeChip extends StatelessWidget {
+  final bool appliesToAll;
+  const _ScopeChip({required this.appliesToAll});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = appliesToAll
+        ? Colors.blue.shade300
+        : Colors.white.withValues(alpha: 0.42);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        appliesToAll ? '全部作品' : '仅本书',
+        style: TextStyle(fontSize: 10, color: color, height: 1.2),
+      ),
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  final String text;
+  const _MiniTag(this.text);
+
+  @override
+  Widget build(BuildContext context) {
     return Text(
       text,
       style: TextStyle(
         fontSize: 11,
-        fontWeight: FontWeight.w600,
-        color: Colors.white.withAlpha(115),
-        letterSpacing: 0.5,
+        color: Colors.white.withValues(alpha: 0.45),
       ),
     );
   }
@@ -457,74 +719,215 @@ class _ToggleGroup<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      children: items.map((item) {
-        final selected = value == item.value;
-        return GestureDetector(
-          onTap: () => onChanged(item.value),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? Colors.blue[600] : Colors.white.withAlpha(20),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: Colors.blue.withAlpha(64),
-                        blurRadius: 6,
-                      )
-                    ]
-                  : null,
-            ),
-            child: Text(
-              item.label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: selected ? Colors.white : Colors.white54,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: items.map((item) {
+          final selected = value == item.value;
+          return GestureDetector(
+            onTap: () => onChanged(item.value),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Colors.blue[600]
+                    : Colors.white.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                  color: selected
+                      ? Colors.blue[600]!
+                      : Colors.white.withValues(alpha: 0.06),
+                ),
+              ),
+              child: Text(
+                item.label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: selected ? Colors.white : Colors.white70,
+                ),
               ),
             ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
+      ),
     );
   }
 }
 
 class _SwitchRow extends StatelessWidget {
   final String label;
+  final String? hint;
   final bool value;
+  final bool disabled;
   final ValueChanged<bool> onChanged;
 
   const _SwitchRow({
     required this.label,
     required this.value,
     required this.onChanged,
+    this.hint,
+    this.disabled = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 13,
-            color: Colors.white70,
-          ),
+    // 参照做法：当前模式下用不上的项不隐藏，置灰并在标签上划一道斜线
+    final on = disabled ? false : value;
+    final labelColor = disabled
+        ? Colors.white.withValues(alpha: 0.26)
+        : Colors.white.withValues(alpha: 0.86);
+    return SizedBox(
+      height: 44,
+      // 参照做法：整行都是点击区，只留开关本身一小块是合理的
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: disabled ? null : () => onChanged(!value),
+        child: Row(
+          children: [
+            SizedBox(
+              height: 18,
+              child: Center(
+                child: disabled
+                    ? _Strikethrough(
+                        text: label,
+                        style: TextStyle(fontSize: 13, color: labelColor),
+                      )
+                    : Text(label,
+                        style: TextStyle(fontSize: 13, color: labelColor)),
+              ),
+            ),
+            if (hint != null && !disabled) ...[
+              const SizedBox(width: 6),
+              Text(
+                hint!,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.32),
+                ),
+              ),
+            ],
+            const Spacer(),
+            SizedBox(
+              height: 26,
+              child: Switch(
+                value: on,
+                onChanged: disabled ? null : onChanged,
+                activeThumbColor: Colors.blue[600],
+                activeTrackColor: Colors.blue[600]?.withValues(alpha: 0.45),
+                inactiveThumbColor: Colors.white.withValues(alpha: 0.45),
+                inactiveTrackColor: Colors.white.withValues(alpha: 0.10),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
         ),
-        SizedBox(
-          height: 24,
-          child: Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: Colors.blue[600],
-            inactiveTrackColor: Colors.white12,
+      ),
+    );
+  }
+}
+
+/// 文字上加一道斜线，表示“这项在当前模式下不可用”
+class _Strikethrough extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const _Strikethrough({required this.text, required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: style.copyWith(decoration: TextDecoration.lineThrough),
+    );
+  }
+}
+
+class _SliderRow extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final double value;
+  final double min;
+  final double max;
+  final Widget? trailing;
+  final VoidCallback? trailingAction;
+  final String? trailingActionLabel;
+  final ValueChanged<double> onChanged;
+
+  const _SliderRow({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+    this.trailing,
+    this.trailingAction,
+    this.trailingActionLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 17, color: Colors.white.withValues(alpha: 0.55)),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 34,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.78),
+              ),
+            ),
           ),
-        ),
-      ],
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2.5,
+                activeTrackColor: Colors.white,
+                inactiveTrackColor: Colors.white24,
+                thumbColor: Colors.white,
+                overlayColor: Colors.white24,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              ),
+              child: Slider(
+                value: value.clamp(min, max),
+                min: min,
+                max: max,
+                onChanged: onChanged,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 62,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: trailingAction != null
+                  ? TextButton(
+                      onPressed: trailingAction,
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        foregroundColor: Colors.blue.shade300,
+                      ),
+                      child: Text(
+                        trailingActionLabel ?? '',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    )
+                  : (trailing ?? const SizedBox.shrink()),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

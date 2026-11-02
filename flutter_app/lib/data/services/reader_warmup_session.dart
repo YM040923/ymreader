@@ -11,7 +11,7 @@ class ReaderWarmupSession with WidgetsBindingObserver {
       : _api = api;
 
   final ComicApi _api;
-  final String comicId;
+  String comicId;
   String? _sessionId;
   Timer? _heartbeat;
   int _page = 0;
@@ -21,13 +21,24 @@ class ReaderWarmupSession with WidgetsBindingObserver {
   bool _disposed = false;
 
   void start(int page, int total) {
-    if (_started || _disposed || total <= 0) return;
-    _started = true;
+    if (_disposed || total <= 0) return;
+    if (!_started) {
+      _started = true;
+      WidgetsBinding.instance.addObserver(this);
+    }
     _page = page;
     _total = total;
-    WidgetsBinding.instance.addObserver(this);
     final state = WidgetsBinding.instance.lifecycleState;
     if (state == null || state == AppLifecycleState.resumed) _resume();
+  }
+
+  /// The reader crossed into another comic: end the old lease so the server
+  /// stops warming pages nobody will look at, then let the next [start] open
+  /// one for the comic actually on screen.
+  void rebind(String nextComicId) {
+    if (_disposed || nextComicId == comicId) return;
+    _pause();
+    comicId = nextComicId;
   }
 
   void _resume() {
