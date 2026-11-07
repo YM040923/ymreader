@@ -1,5 +1,5 @@
 // Comic reading modes (no "text" — novels use a dedicated reader)
-export type ComicReadingMode = "single" | "double" | "webtoon";
+export type ComicReadingMode = "single" | "double" | "webtoon" | "strip";
 
 // Legacy alias — kept for backward compatibility
 export type ReadingMode = ComicReadingMode | "text";
@@ -48,6 +48,8 @@ export interface ReaderOptions {
   imageFilterPreset: string | null;
   // 真实翻页效果
   pageFlipEffect: "none" | "realistic";
+  // 阅读器背景：跟随全站主题，或固定日间/夜间
+  readerBackground: "system" | "day" | "night";
 }
 
 export const defaultReaderOptions: ReaderOptions = {
@@ -71,6 +73,7 @@ export const defaultReaderOptions: ReaderOptions = {
   imageGrayscale: 0,
   imageFilterPreset: null,
   pageFlipEffect: "none",
+  readerBackground: "system",
 };
 
 export interface ReaderSettings {

@@ -398,6 +398,7 @@ const en: Translations = {
   readerOptions: {
     title: "Reader Options",
     autoSaveHint: "Options auto-saved",
+    scopedHint: "These settings apply to this work only",
     groupDisplay: "Display",
     groupAdvanced: "Advanced",
     groupBehavior: "Behavior",
@@ -478,7 +479,7 @@ const en: Translations = {
 
   // Metadata
   metadata: {
-    searchPlaceholder: "Search metadata...",
+    searchPlaceholder: "Search metadata, or paste a Tencent Comic link / ID...",
     search: "Search",
     scanArchive: "Scan archive for ComicInfo.xml",
     scanNovel: "Scan novel metadata (EPUB OPF + online)",
@@ -506,6 +507,8 @@ const en: Translations = {
       mangadex: "MangaDex",
       mangaupdates: "MangaUpdates",
       kitsu: "Kitsu",
+      tencent: "Tencent Comic",
+      bilibili: "Bilibili Manga",
       googlebooks: "Google Books",
       comicinfo: "ComicInfo (Local)",
       epub_opf: "EPUB OPF (Local)",

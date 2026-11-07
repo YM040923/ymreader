@@ -24,9 +24,11 @@ import {
   RotateCcw,
   Scissors,
   Undo2,
+  MoreHorizontal,
+  ListTree,
   X,
 } from "lucide-react";
-import { fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, restoreWorkAutoGrouping, splitWork, undoLastWorkOperation } from "@/api/works";
+import { backfillWorkChapterTitles, fetchAllWorks, fetchWork, fetchWorkComics, mergeWorks, restoreWorkAutoGrouping, splitWork, undoLastWorkOperation } from "@/api/works";
 import { apiPath } from "@/lib/base-path";
 import { useDialogA11y } from "@/lib/dialog-a11y";
 import {
@@ -50,6 +52,7 @@ import {
   uploadWorkCover,
 } from "@/api/workMetadata";
 import { SimilarComics } from "@/components/Recommendations";
+import { useToast } from "@/components/Toast";
 
 function unitProgress(
   unit: WorkUnit,
@@ -128,6 +131,8 @@ export default function WorkDetailPage() {
     return localStorage.getItem("work:unitView") === "list" ? "list" : "grid";
   });
   const [showMerge, setShowMerge] = useState(false);
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const [backfillingTitles, setBackfillingTitles] = useState(false);
   const [mergeCandidates, setMergeCandidates] = useState<Work[]>([]);
   const [mergeQuery, setMergeQuery] = useState("");
   const [mergeTargetId, setMergeTargetId] = useState("");
@@ -149,6 +154,7 @@ export default function WorkDetailPage() {
     language: "", genre: "", status: "", tags: "", categories: "", coverUrl: "",
   });
   const { user } = useAuth();
+  const toast = useToast();
   const canManage = work
     ? canManageWorkLibrary(user, work.libraryId, libraries)
     : user?.role === "admin";
@@ -214,6 +220,26 @@ export default function WorkDetailPage() {
       setLoading(false);
     }
   }, [id]);
+
+  const backfillTitles = useCallback(async () => {
+    if (!work || backfillingTitles) return;
+    setBackfillingTitles(true);
+    try {
+      const result = await backfillWorkChapterTitles(work.id);
+      if (result.matched > 0) {
+        toast.success(`已补全 ${result.matched} 个章节标题`);
+        await load();
+      } else if (result.needed === 0) {
+        toast.info("所有章节都已有标题");
+      } else {
+        toast.warning(result.error || "没有找到可回填的章节标题");
+      }
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : "补全章节标题失败");
+    } finally {
+      setBackfillingTitles(false);
+    }
+  }, [backfillingTitles, load, toast, work]);
 
   useEffect(() => {
     load();
@@ -546,7 +572,6 @@ export default function WorkDetailPage() {
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted">
             <span>{unit.pageCount || 0} 页</span>
-            {unit.internalPath && <span className="truncate">{unit.internalPath}</span>}
             {progress.started && <span>{progress.percentage}%</span>}
           </div>
         </div>
@@ -575,9 +600,9 @@ export default function WorkDetailPage() {
 
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <section className="overflow-hidden rounded-3xl border border-border/50 bg-card/55 shadow-xl shadow-black/5">
-          <div className="grid gap-6 p-5 sm:grid-cols-[180px_1fr] sm:p-7">
+          <div className="grid gap-6 p-5 sm:grid-cols-[220px_1fr] sm:p-7">
             <div
-              className="relative mx-auto w-full max-w-[180px] overflow-hidden rounded-2xl bg-card shadow-lg"
+              className="relative mx-auto w-full max-w-[220px] overflow-hidden rounded-2xl bg-card shadow-lg"
               style={{ aspectRatio: work.coverAspectRatio && work.coverAspectRatio > 0 ? String(work.coverAspectRatio) : "5 / 7" }}
             >
               <img src={workCover(work)} alt={work.title} className="h-full w-full object-contain" />
@@ -604,6 +629,12 @@ export default function WorkDetailPage() {
                 </div>
               )}
 
+              <p className="mt-2 text-sm text-muted">
+                共 {work.itemCount} 话
+                {work.status ? ` · ${work.status}` : ""}
+                {work.updatedAt ? ` · 更新于 ${new Date(work.updatedAt).toLocaleDateString("zh-CN")}` : ""}
+              </p>
+
               <div className="mt-5 grid max-w-2xl grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-xl bg-background/70 p-3"><p className="text-[11px] text-muted">整部进度</p><p className="mt-1 text-lg font-semibold">{completedItemCount}/{work.itemCount}</p></div>
                 <div className="rounded-xl bg-background/70 p-3"><p className="text-[11px] text-muted">完成比例</p><p className="mt-1 text-lg font-semibold">{overallProgress}%</p></div>
@@ -611,14 +642,34 @@ export default function WorkDetailPage() {
                 <div className="rounded-xl bg-background/70 p-3"><p className="text-[11px] text-muted">阅读时长</p><p className="mt-1 text-lg font-semibold">{formatDuration(work.totalReadTime || 0)}</p></div>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div className="mt-5 flex flex-wrap items-center gap-2">
                 {target && <button type="button" onClick={() => router.push(buildWorkReaderPath(work, target.unit, target.page))} className="flex h-10 items-center gap-2 rounded-xl bg-accent px-4 text-sm font-medium text-white shadow-lg shadow-accent/20"><BookOpen className="h-4 w-4" />{target.isContinue ? "继续阅读" : "开始阅读"}</button>}
                 <button type="button" onClick={async () => { await toggleWorkFavorite(work); await load(); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Heart className={`h-4 w-4 ${work.isFavorite ? "fill-rose-400 text-rose-400" : ""}`} />{work.isFavorite ? "取消收藏" : "收藏"}</button>
-                {canManage && <button type="button" onClick={openMergeDialog} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><GitMerge className="h-4 w-4" />合并作品</button>}
-                {canManage && sortedUnits.length > 1 && <button type="button" onClick={() => { setSplitMode((value) => !value); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${splitMode ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
-                {canManage && work.manualMembership && <button type="button" onClick={() => { setMembershipError(""); setShowUndo(true); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><RotateCcw className="h-4 w-4" />撤销上次整理</button>}
-                {canManage && work.manualMembership && <button type="button" onClick={() => { setMembershipError(""); setShowRestore(true); }} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Undo2 className="h-4 w-4" />恢复自动分组</button>}
-                {canManage && <button type="button" onClick={() => setShowMetadata((value) => !value)} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm text-foreground hover:bg-background"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>}
+                {canManage && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setAdminMenuOpen((value) => !value)}
+                      className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm ${adminMenuOpen ? "border-accent bg-accent/10 text-accent" : "border-border text-foreground hover:bg-background"}`}
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                      更多
+                    </button>
+                    {adminMenuOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setAdminMenuOpen(false)} />
+                        <div className="absolute left-0 top-11 z-50 w-56 overflow-hidden rounded-xl border border-border/60 bg-card py-1 shadow-xl shadow-black/25">
+                          <button type="button" onClick={() => { setAdminMenuOpen(false); openMergeDialog(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5"><GitMerge className="h-4 w-4" />合并作品</button>
+                          {sortedUnits.length > 1 && <button type="button" onClick={() => { setAdminMenuOpen(false); setSplitMode((value) => !value); setSelectedUnitIds(new Set()); setSplitTitle(""); setMembershipError(""); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5"><Scissors className="h-4 w-4" />{splitMode ? "退出拆分" : "拆分单元"}</button>}
+                          {work.manualMembership && <button type="button" onClick={() => { setAdminMenuOpen(false); setMembershipError(""); setShowUndo(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5"><RotateCcw className="h-4 w-4" />撤销上次整理</button>}
+                          {work.manualMembership && <button type="button" onClick={() => { setAdminMenuOpen(false); setMembershipError(""); setShowRestore(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5"><Undo2 className="h-4 w-4" />恢复自动分组</button>}
+                          <button type="button" onClick={() => { setAdminMenuOpen(false); setShowMetadata((value) => !value); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5"><Sparkles className="h-4 w-4 text-purple-400" />刮削与元数据</button>
+                          <button type="button" disabled={backfillingTitles} onClick={() => { setAdminMenuOpen(false); void backfillTitles(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-foreground/5 disabled:opacity-50"><ListTree className="h-4 w-4 text-sky-400" />{backfillingTitles ? "补全中…" : "补全章节标题"}</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {(metadata.author || metadata.year || metadata.publisher || metadata.language || metadata.genre || metadata.description || metadata.tags.length > 0 || metadata.categories.length > 0 || work.externalRating != null) && (

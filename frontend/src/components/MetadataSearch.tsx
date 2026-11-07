@@ -32,6 +32,8 @@ const COMIC_SOURCES = [
   { id: "mangadex", name: "MangaDex", icon: "📖" },
   { id: "mangaupdates", name: "MangaUpdates", icon: "📋" },
   { id: "kitsu", name: "Kitsu", icon: "🦊" },
+  { id: "tencent", name: "腾讯动漫", icon: "🐧" },
+  { id: "bilibili", name: "B站漫画", icon: "📺" },
 ] as const;
 
 // 小说数据源
@@ -41,7 +43,14 @@ const NOVEL_SOURCES = [
   { id: "anilist_novel", name: "AniList", icon: "🅰" },
 ] as const;
 
-const DEFAULT_COMIC_SOURCES = COMIC_SOURCES.map((s) => s.id);
+// 腾讯动漫返回中文正式名，排序里容易压过 AniList/Bangumi；批量刮削带覆盖，
+// 默认勾选会把日漫库已有的正确元数据换成中文名，所以按需手动勾选。
+// 腾讯动漫与 B站漫画返回的都是中文正式名，批量刮削又带覆盖，
+// 默认参与会压过 AniList/Bangumi，把日漫库里已经正确的元数据换掉。
+const OPT_IN_COMIC_SOURCES = new Set<string>(["tencent", "bilibili"]);
+const DEFAULT_COMIC_SOURCES = COMIC_SOURCES.map((s) => s.id).filter(
+  (id) => !OPT_IN_COMIC_SOURCES.has(id),
+);
 const DEFAULT_NOVEL_SOURCES = NOVEL_SOURCES.map((s) => s.id);
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -52,6 +61,8 @@ const SOURCE_COLORS: Record<string, string> = {
   mangadex: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
   mangaupdates: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
   kitsu: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  tencent: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  bilibili: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
   googlebooks: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   comicinfo: "bg-gray-500/15 text-gray-600 dark:text-gray-400",
 };

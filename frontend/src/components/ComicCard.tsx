@@ -101,6 +101,10 @@ interface ComicCardProps {
   showProgress?: boolean;
   /** Hide metadata (tags, badges) */
   hideMeta?: boolean;
+  /** 是否显示标签 chips（封面墙可关闭，保证卡片等高） */
+  showTags?: boolean;
+  /** 强制统一 5/7 封面比例，忽略每本作品的封面比例 */
+  uniformAspect?: boolean;
 }
 
 /** 渲染标签chip */
@@ -137,6 +141,8 @@ const ComicCard = memo(function ComicCard({
   animationIndex,
   isRemoving,
   posterAspect,
+  showTags = true,
+  uniformAspect = false,
   compact = false,
   titleMaxLines = 2,
   showRating = false,
@@ -158,8 +164,8 @@ const ComicCard = memo(function ComicCard({
   // Detect landscape cover: aspect ratio > 1.3 means wide cover
   const isLandscape = (comic.coverAspectRatio ?? 0) > 1.3;
   const coverAspectClass = posterAspect ? "" : "aspect-[5/7]";
-  const dynamicAspect = posterAspect || (comic.coverAspectRatio && comic.coverAspectRatio > 0 ? String(comic.coverAspectRatio) : undefined);
-  const coverObjectFit = comic.workId ? "object-contain" : "object-cover"; // Use cover to fill container properly
+  const dynamicAspect = posterAspect || (uniformAspect ? undefined : (comic.coverAspectRatio && comic.coverAspectRatio > 0 ? String(comic.coverAspectRatio) : undefined));
+  const coverObjectFit = "object-cover"; // 封面一律填满，避免两侧留白
 
   const handleClick = (e: React.MouseEvent) => {
     if (batchMode) {
@@ -231,13 +237,13 @@ const ComicCard = memo(function ComicCard({
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-medium text-foreground/90">{comic.title}</h3>
               <div className="mt-1 flex items-center gap-2">
-                {comic.rating && comic.rating > 0 && (
+                {showRating && comic.rating && comic.rating > 0 && (
                   <div className="flex items-center gap-0.5">
                     <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
                     <span className="text-[10px] text-amber-400">{comic.rating}</span>
                   </div>
                 )}
-                {comic.externalRating != null && (
+                {showRating && comic.externalRating != null && (
                   <div
                     className="flex items-center gap-0.5"
                     aria-label={`External rating: ${comic.externalRating}${comic.externalRatingMax ? ` out of ${comic.externalRatingMax}` : ""} from ${comic.externalRatingSource || "unknown"}`}
@@ -288,13 +294,13 @@ const ComicCard = memo(function ComicCard({
                   <p className="mt-0.5 truncate text-[11px] text-muted/60 sm:hidden">{comic.author}</p>
                 )}
                 <div className="mt-1 flex items-center gap-2 overflow-hidden">
-                  {comic.rating && comic.rating > 0 && (
+                  {showRating && comic.rating && comic.rating > 0 && (
                     <div className="flex-shrink-0 flex items-center gap-0.5">
                       <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
                       <span className="text-[10px] text-amber-400">{comic.rating}</span>
                     </div>
                   )}
-                  {comic.externalRating != null && (
+                  {showRating && comic.externalRating != null && (
                     <div
                       className="flex-shrink-0 flex items-center gap-0.5"
                       aria-label={`External rating: ${comic.externalRating}${comic.externalRatingMax ? ` out of ${comic.externalRatingMax}` : ""} from ${comic.externalRatingSource || "unknown"}`}
@@ -303,7 +309,7 @@ const ComicCard = memo(function ComicCard({
                       <span className="text-[10px] text-blue-400 dark:text-blue-300">{comic.externalRating}</span>
                     </div>
                   )}
-                  <div className="flex items-center gap-1 overflow-hidden">
+                  {showTags && <div className="flex items-center gap-1 overflow-hidden">
                     {(comic.tags || []).slice(0, 2).map((tag) => (
                       <span key={tag} className="flex-shrink-0">
                         <TagChip tag={tag} tagObj={tagMap.get(tag)} />
@@ -320,7 +326,7 @@ const ComicCard = memo(function ComicCard({
                         <TagChip tag={(comic.tags || [])[2]} tagObj={tagMap.get((comic.tags || [])[2])} />
                       </span>
                     )}
-                  </div>
+                  </div>}
                 </div>
               </div>
 
@@ -396,19 +402,19 @@ const ComicCard = memo(function ComicCard({
 
             <div className={`relative ${coverAspectClass} w-full overflow-hidden`} style={dynamicAspect ? { aspectRatio: dynamicAspect } : undefined}>
               <NSFWCoverGuard src={comic.coverUrl} alt={comic.title} isNSFW={isNSFW(comic)} blurEnabled={privacyEnabled && blurNSFW} fill unoptimized={isReal} className={coverObjectFit} sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw" />
-              {comic.progress !== undefined && comic.progress > 0 && (
+              {showProgress && comic.progress !== undefined && comic.progress > 0 && (
                 <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
                   <div className="h-full bg-accent transition-all duration-300" style={{ width: `${comic.progress}%` }} />
                 </div>
               )}
             </div>
             <div className="p-3">
-              <h3 className={`mb-2 text-sm font-medium text-foreground/90 ${titleMaxLines === 1 ? "truncate" : `line-clamp-${titleMaxLines}`}`}>{comic.title}</h3>
-<div className="flex flex-wrap items-center gap-1.5">
+              <h3 className={`mb-2 min-h-[2.5rem] text-sm font-medium text-foreground/90 ${titleMaxLines === 1 ? "truncate" : `line-clamp-${titleMaxLines}`}`}>{comic.title}</h3>
+              {showTags && <div className="flex flex-wrap items-center gap-1.5">
                 {(comic.tags || []).slice(0, 3).map((tag) => (
                   <TagChip key={tag} tag={tag} tagObj={tagMap.get(tag)} />
                 ))}
-              </div>
+              </div>}
             </div>
           </div>
         </div>
@@ -456,7 +462,7 @@ const ComicCard = memo(function ComicCard({
                   </div>
                 )}
 
-                {comic.externalRating != null && (
+                {showRating && comic.externalRating != null && (
                   <div
                     className={`absolute ${comic.isFavorite ? "top-10" : "top-2"} right-2 z-10 flex items-center gap-0.5 rounded-md bg-black/60 px-1.5 py-0.5 backdrop-blur-sm`}
                     aria-label={`External rating: ${comic.externalRating}${comic.externalRatingMax ? ` out of ${comic.externalRatingMax}` : ""} from ${comic.externalRatingSource || "unknown"}`}
@@ -468,7 +474,7 @@ const ComicCard = memo(function ComicCard({
                   </div>
                 )}
 
-                {comic.rating && comic.rating > 0 && (
+                {showRating && comic.rating && comic.rating > 0 && (
                   <div className="absolute top-2 left-2 z-10 flex items-center gap-0.5 rounded-md bg-black/60 px-1.5 py-0.5 backdrop-blur-sm">
                     <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
                     <span className="text-[10px] font-medium text-amber-400">{comic.rating}</span>
@@ -482,7 +488,7 @@ const ComicCard = memo(function ComicCard({
                   </div>
                 </div>
 
-                {comic.progress !== undefined && comic.progress > 0 && (
+                {showProgress && comic.progress !== undefined && comic.progress > 0 && (
                   <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
                     <div className="h-full bg-accent transition-all duration-300" style={{ width: `${comic.progress}%` }} />
                   </div>
@@ -495,20 +501,20 @@ const ComicCard = memo(function ComicCard({
               {isReal ? (
                 <Link
                   href={getDetailUrl(comic)}
-                  className="mb-2 block truncate text-sm font-medium text-foreground/90 transition-colors hover:text-accent text-balance"
+                  className="mb-2 block min-h-[2.5rem] truncate text-sm font-medium text-foreground/90 transition-colors hover:text-accent text-balance"
                   onClick={(e) => e.stopPropagation()}
                   title={comic.title}
                 >
                   {comic.title}
                 </Link>
               ) : (
-                <h3 className={`mb-2 text-sm font-medium text-foreground/90 text-balance ${titleMaxLines === 1 ? "truncate" : `line-clamp-${titleMaxLines}`}`}>{comic.title}</h3>
+                <h3 className={`mb-2 min-h-[2.5rem] text-sm font-medium text-foreground/90 text-balance ${titleMaxLines === 1 ? "truncate" : `line-clamp-${titleMaxLines}`}`}>{comic.title}</h3>
               )}
-              <div className="flex flex-wrap items-center gap-1.5">
+              {showTags && <div className="flex flex-wrap items-center gap-1.5">
                 {(comic.tags || []).slice(0, 3).map((tag) => (
                   <TagChip key={tag} tag={tag} tagObj={tagMap.get(tag)} />
                 ))}
-              </div>
+              </div>}
             </div>
           </div>
 

@@ -5,8 +5,10 @@ import {
   BookOpen,
   Columns2,
   GalleryVertical,
+  GalleryHorizontal,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ArrowLeftRight,
   Maximize,
   Minimize,
@@ -136,6 +138,7 @@ export default function ReaderToolbar({
 }: ReaderToolbarProps) {
   const t = useTranslation();
   const [showPageInput, setShowPageInput] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [pageInputValue, setPageInputValue] = useState("");
   // 进度条拖动状态：拖动中只更新预览值，松手后才真正跳转
@@ -189,6 +192,7 @@ export default function ReaderToolbar({
     { value: "single", icon: <BookOpen className="h-4 w-4" />, label: t.readerToolbar.single },
     { value: "double", icon: <Columns2 className="h-4 w-4" />, label: t.readerToolbar.double },
     { value: "webtoon", icon: <GalleryVertical className="h-4 w-4" />, label: t.readerToolbar.webtoon },
+    { value: "strip", icon: <GalleryHorizontal className="h-4 w-4" />, label: "横向" },
   ];
 
   return (
@@ -376,7 +380,7 @@ export default function ReaderToolbar({
             : "translate-y-full opacity-0 pointer-events-none"
         }`}
       >
-        <div className="overflow-hidden rounded-[22px] border border-white/[0.10] bg-[#151922]/95 px-3 sm:px-4 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] shadow-[0_18px_70px_rgba(0,0,0,0.48)] backdrop-blur-2xl">
+        <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0e0e10]/95 px-3 sm:px-4 pb-[calc(env(safe-area-inset-bottom)+0.35rem)]">
           {/* Page Slider */}
           <div className="flex items-center gap-3 sm:gap-4 py-2">
             <button
@@ -420,6 +424,25 @@ export default function ReaderToolbar({
             >
               {displayPage + 1} / {progressPageCount}
             </span>
+
+            {chapterTotal > 1 && (
+              <button
+                onClick={onShowChapters}
+                className="reader-toolbar-button h-9 w-9 sm:h-8 sm:w-8 shrink-0"
+                title="目录"
+              >
+                <List className="h-4 w-4" />
+              </button>
+            )}
+
+            <button
+              onClick={() => setExpanded((value) => !value)}
+              className="reader-toolbar-button h-9 w-9 sm:h-8 sm:w-8 shrink-0"
+              title={expanded ? "收起" : "更多"}
+              aria-expanded={expanded}
+            >
+              <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+            </button>
           </div>
 
           {/* 页码跳转弹窗 */}
@@ -448,7 +471,7 @@ export default function ReaderToolbar({
           )}
 
           {/* Chapter navigation */}
-          {chapterTotal > 1 && (
+          {expanded && chapterTotal > 1 && (
             <div className="grid grid-cols-[1fr_minmax(9rem,1.35fr)_1fr] items-center gap-2 border-t border-white/[0.07] py-1.5">
               <button
                 onClick={onPreviousChapter}
@@ -480,6 +503,7 @@ export default function ReaderToolbar({
           )}
 
           {/* Mode & Settings */}
+          {expanded && (
           <div className="flex items-center justify-between gap-2 border-t border-white/[0.07] py-1.5">
             {/* Reading Mode */}
             <div className="reader-mode-segment">
@@ -535,7 +559,9 @@ export default function ReaderToolbar({
                   const next = direction === "ltr" ? "rtl" : "ltr";
                   onDirectionChange(next);
                 }}
-                title={direction === "rtl" ? t.readerOptions.rtl : t.readerOptions.ltr}
+                title={mode === "strip"
+                  ? (direction === "rtl" ? "横向长条：从右往左" : "横向长条：从左往右")
+                  : (direction === "rtl" ? t.readerOptions.rtl : t.readerOptions.ltr)}
                 className={`reader-mode-segment-item gap-1 sm:gap-1.5 px-2 sm:px-3 ${
                   direction === "rtl"
                     ? "reader-toolbar-button-active !text-amber-400"
@@ -586,6 +612,7 @@ export default function ReaderToolbar({
               </button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </>

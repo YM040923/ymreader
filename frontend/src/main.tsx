@@ -14,6 +14,7 @@ import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/Toast";
+import { ShellChromeProvider } from "@/lib/shell-chrome";
 import DesktopSidebar from "@/components/DesktopSidebar";
 import MobileBottomNav from "@/components/MobileBottomNav";
 import PageProgressBar from "@/components/PageProgressBar";
@@ -95,7 +96,7 @@ function PersistentShellLayout() {
   return (
     <div className="min-h-screen overflow-x-hidden">
       <DesktopSidebar />
-      <div className="min-h-screen lg:ml-[220px] xl:ml-[240px]">
+      <div className="min-h-screen lg:ml-[var(--shell-sidebar-width)] transition-[margin] duration-300 ease-out">
         <AnimatedOutlet />
       </div>
     </div>
@@ -140,15 +141,17 @@ function App() {
           <I18nProvider>
             <AuthProvider>
               <ToastProvider>
-                <AuthGuard>
-                  <SiteTitle />
-                  <LibraryTypeCompatibilityGuard />
-                  <PageProgressBar />
-                  <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div></div>}>
-                    <AppRoutes />
-                  </React.Suspense>
-                  <MobileBottomNav />
-                </AuthGuard>
+                <ShellChromeProvider>
+                  <AuthGuard>
+                    <SiteTitle />
+                    <LibraryTypeCompatibilityGuard />
+                    <PageProgressBar />
+                    <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div></div>}>
+                      <AppRoutes />
+                    </React.Suspense>
+                    <MobileBottomNav />
+                  </AuthGuard>
+                </ShellChromeProvider>
               </ToastProvider>
             </AuthProvider>
           </I18nProvider>

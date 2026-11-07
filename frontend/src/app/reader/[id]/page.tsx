@@ -20,6 +20,7 @@ import { useTheme } from "@/lib/theme-context";
 import SinglePageView from "@/components/reader/SinglePageView";
 import DoublePageView from "@/components/reader/DoublePageView";
 import WebtoonView from "@/components/reader/WebtoonView";
+import HorizontalStripView from "@/components/reader/HorizontalStripView";
 import PdfView from "@/components/reader/PdfView";
 import ReaderOptionsPanel from "@/components/reader/ReaderOptionsPanel";
 import { Heart, Star, Tag, X, Plus, List, Trash2, ExternalLink } from "lucide-react";
@@ -206,7 +207,7 @@ export default function ReaderPage() {
     return () => clearTimeout(timer);
   }, []);
   const [direction, setDirection] = useState<ReadingDirection>("ltr");
-  const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [toolbarVisible, setToolbarVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showInfoPanel, setShowInfoPanel] = useState(false);
   const [showBookmarkPanel, setShowBookmarkPanel] = useState(false);
@@ -247,7 +248,13 @@ export default function ReaderPage() {
   // 从选项同步模式、方向
   useEffect(() => {
     if (!optsLoaded) return;
-    setMode(readerOpts.infiniteScroll || readerOpts.direction === "ttb" ? "webtoon" : readerOpts.mode);
+    setMode(
+      readerOpts.mode === "strip"
+        ? "strip"
+        : readerOpts.infiniteScroll || readerOpts.direction === "ttb"
+          ? "webtoon"
+          : readerOpts.mode,
+    );
     setDirection(readerOpts.direction);
     // 默认显示档案覆盖层
     if (readerOpts.defaultOverlay) {
@@ -255,10 +262,18 @@ export default function ReaderPage() {
     }
   }, [optsLoaded, readerOptionsScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync readerTheme with global theme
+  // Sync readerTheme with the configured reader background
   useEffect(() => {
+    if (readerOpts.readerBackground === "day") {
+      setReaderTheme("day");
+      return;
+    }
+    if (readerOpts.readerBackground === "night") {
+      setReaderTheme("night");
+      return;
+    }
     setReaderTheme(globalTheme === "light" ? "day" : "night");
-  }, [globalTheme]);
+  }, [globalTheme, readerOpts.readerBackground]);
 
   const currentPageRef = useRef<number>(0);
   const appliedWorkNavigationRef = useRef("");
@@ -381,21 +396,21 @@ export default function ReaderPage() {
     } catch {}
   }, []);
 
-  //   // Auto-hide toolbar (immersive mode: hide immediately)
+  // 阅读器工具条常驻（与腾讯一致），只有沉浸模式才收起
   useEffect(() => {
-    if (immersiveMode) {
-      setToolbarVisible(false);
-      return;
-    }
-    if (!toolbarVisible || showOptionsPanel || toolbarInteracting) return;
-    const timer = setTimeout(() => setToolbarVisible(false), 4000);
-    return () => clearTimeout(timer);
-  }, [toolbarVisible, currentPage, showOptionsPanel, toolbarInteracting, immersiveMode]);
+    setToolbarVisible(!immersiveMode);
+  }, [immersiveMode]);
+
+  // 阅读页专属滚动条样式
+  useEffect(() => {
+    document.documentElement.classList.add("reader-page");
+    return () => document.documentElement.classList.remove("reader-page");
+  }, []);
 
   // 系列导航辅助函数
   const continuousReadingEnabled = readerOpts.continuousReading;
   const continuousScrollEnabled =
-    effectiveMode === "webtoon" && continuousReadingEnabled;
+    (effectiveMode === "webtoon" || effectiveMode === "strip") && continuousReadingEnabled;
   const navigationUnitId =
     continuousScrollEnabled && continuousActiveUnitId
       ? continuousActiveUnitId
@@ -534,6 +549,39 @@ export default function ReaderPage() {
     seriesVolumes,
   ]);
 
+  // Paged modes stop at the last page; preload the first spread of the next
+  // chapter so tapping "next chapter" does not wait for a cold HTTP request.
+  const prefetchedNextUnitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!nextVolume || pages.length === 0 || continuousScrollEnabled) return;
+    if (mode === "webtoon") return;
+    if (currentPage < Math.max(0, pages.length - 2)) return;
+    if (prefetchedNextUnitRef.current === nextVolume.comicId) return;
+
+    let cancelled = false;
+    const unit = nextVolume;
+    prefetchedNextUnitRef.current = unit.comicId;
+    fetch(apiPath(`/api/comics/${unit.comicId}/pages`))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        const urls: string[] = (
+          (data as { pages?: { url: string }[] }).pages || []
+        ).map((page) => page.url);
+        for (const url of slicePagesForUnit(urls, unit).slice(0, 2)) {
+          const image = new Image();
+          image.src = url;
+        }
+      })
+      .catch(() => {
+        if (!cancelled) prefetchedNextUnitRef.current = null;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [nextVolume, pages.length, currentPage, mode, continuousScrollEnabled]);
+
   useEffect(() => {
     if (!showChapterDrawer) return;
     requestAnimationFrame(() => {
@@ -590,10 +638,23 @@ export default function ReaderPage() {
   // Keyboard navigation
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Escape must still close an open panel; the early return below is what
+      // used to swallow it and leave the settings sheet stuck open.
+      if (
+        e.key === "Escape" &&
+        (showInfoPanel || showOptionsPanel || showThumbnails || showShortcutsHelp)
+      ) {
+        if (showOptionsPanel) setShowOptionsPanel(false);
+        if (showInfoPanel) setShowInfoPanel(false);
+        if (showThumbnails) setShowThumbnails(false);
+        if (showShortcutsHelp) setShowShortcutsHelp(false);
+        return;
+      }
+
       // Don't handle if panels are open
       if (showInfoPanel || showOptionsPanel || showThumbnails) return;
 
-      if (mode === "webtoon" && !immersiveMode) return;
+      if ((mode === "webtoon" || mode === "strip") && !immersiveMode) return;
 
       const isForward =
         direction === "ltr"
@@ -684,10 +745,10 @@ export default function ReaderPage() {
   }, [handleKeyDown]);
 
 
-  // Mouse wheel page turning — only for non-webtoon modes
+  // Mouse wheel page turning — only for paged modes (webtoon/strip handle their own scrolling)
   const wheelThrottleRef = useRef(false);
   useEffect(() => {
-    if (mode === "webtoon") return;
+    if (mode === "webtoon" || mode === "strip") return;
     const handleWheel = (e: WheelEvent) => {
       if (showInfoPanel || showOptionsPanel || toolbarInteracting) return;
       if (wheelThrottleRef.current) return;
@@ -750,9 +811,17 @@ export default function ReaderPage() {
   useEffect(() => {
     const onFsChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
+      // 全屏切换后部分浏览器不会立刻按新视口重排 100dvh，
+      // 这里强制读一次布局并触发一次重绘，避免上下留出旧高度的空白。
+      void document.documentElement.offsetHeight;
+      window.dispatchEvent(new Event("resize"));
     };
     document.addEventListener("fullscreenchange", onFsChange);
-    return () => document.removeEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+    };
   }, []);
 
   const handleTapCenter = useCallback(() => {
@@ -837,17 +906,21 @@ export default function ReaderPage() {
   const handleOptionsChange = useCallback((partial: Partial<typeof readerOpts>) => {
     const anchor = getCurrentReadingAnchor();
     let nextMode = partial.mode ?? mode;
-    if (partial.direction === "ttb" || partial.infiniteScroll === true) {
+    if (partial.mode === "strip") {
+      nextMode = "strip";
+    } else if (partial.direction === "ttb" || partial.infiniteScroll === true) {
       nextMode = "webtoon";
     } else if (
       partial.infiniteScroll === false
       || (partial.direction !== undefined && mode === "webtoon")
     ) {
-      nextMode = readerOpts.mode === "webtoon" ? "single" : readerOpts.mode;
+      nextMode = readerOpts.mode === "webtoon" || readerOpts.mode === "strip"
+        ? "single"
+        : readerOpts.mode;
     }
     const wasContinuous = continuousScrollEnabled;
     const willContinuous =
-      nextMode === "webtoon"
+      (nextMode === "webtoon" || nextMode === "strip")
       && (partial.continuousReading ?? readerOpts.continuousReading);
 
     updateReaderOpts(partial);
@@ -875,7 +948,9 @@ export default function ReaderPage() {
       infiniteScroll: nextMode === "webtoon",
       direction: nextMode === "webtoon"
         ? "ttb" as ReadingDirection
-        : (readerOpts.direction === "ttb" ? "ltr" : readerOpts.direction),
+        : nextMode === "strip"
+          ? "rtl" as ReadingDirection
+          : (readerOpts.direction === "ttb" ? "ltr" : readerOpts.direction),
     });
   }, [handleOptionsChange, readerOpts.direction]);
 
@@ -973,7 +1048,12 @@ export default function ReaderPage() {
   // Theme toggle
   const handleToggleTheme = useCallback(() => {
     globalToggleTheme();
-  }, [globalToggleTheme]);
+    // 手动在阅读器里切换背景时，把固定的背景偏好改回跟随主题，
+    // 否则设置页里固定的 day/night 会把这次切换覆盖掉。
+    if (readerOpts.readerBackground !== "system") {
+      updateReaderOpts({ readerBackground: "system" });
+    }
+  }, [globalToggleTheme, readerOpts.readerBackground, updateReaderOpts]);
 
   // Favorite toggle
   const handleToggleFavorite = async () => {
@@ -1172,6 +1252,20 @@ export default function ReaderPage() {
           noGap={readerOpts.doublePageNoGap}
           imageFilter={imageFilter}
         />
+      ) : effectiveMode === "strip" ? (
+        <HorizontalStripView
+          pages={readerPages}
+          currentPage={currentPage}
+          onPageChange={handlePageChange}
+          onTapCenter={handleTapCenter}
+          readerTheme={readerTheme}
+          direction={direction === "ltr" ? "ltr" : "rtl"}
+          onBoundaryReached={handleReaderBoundaryReached}
+          nextVolumeTitle={nextVolume?.title}
+          imageFilter={imageFilter}
+          comicId={comicId}
+          preloadCount={readerOpts.preloadCount}
+        />
       ) : (
         <WebtoonView
           pages={readerPages}
@@ -1248,7 +1342,7 @@ export default function ReaderPage() {
               const anchor = getCurrentReadingAnchor();
               const next = !readerOpts.continuousReading;
               updateReaderOpts({ continuousReading: next });
-              if (effectiveMode !== "webtoon") return;
+              if (effectiveMode !== "webtoon" && effectiveMode !== "strip") return;
               if (next) {
                 enterContinuousAtAnchor(anchor);
               } else {
@@ -1262,7 +1356,7 @@ export default function ReaderPage() {
       />
 
       {/* Page number indicator (页码指示器可见性控制) */}
-      {readerOpts.headerVisible && mode !== "webtoon" && !toolbarVisible && !(isSmallScreen && isLandscape) && (
+      {readerOpts.headerVisible && mode !== "webtoon" && mode !== "strip" && !toolbarVisible && !(isSmallScreen && isLandscape) && (
         <div className={`pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 rounded-full px-3.5 py-1.5 backdrop-blur-xl border border-white/[0.06] shadow-lg shadow-black/30 ${
           readerTheme === "day" ? "bg-white/80 shadow-md" : "bg-zinc-900/80"
         }`}>

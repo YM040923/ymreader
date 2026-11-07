@@ -394,6 +394,7 @@ const zhCN = {
   readerOptions: {
     title: "阅读器选项",
     autoSaveHint: "选项自动保存",
+    scopedHint: "这里的设置只影响当前作品，其他作品不受影响",
     groupDisplay: "显示",
     groupAdvanced: "高级",
     groupBehavior: "行为",
@@ -475,7 +476,7 @@ const zhCN = {
 
   // Metadata
   metadata: {
-    searchPlaceholder: "搜索元数据...",
+    searchPlaceholder: "搜索元数据，或粘贴腾讯动漫作品链接 / ID...",
     search: "搜索",
     scanArchive: "从压缩包提取 ComicInfo.xml",
     scanNovel: "刮削小说元数据（EPUB 本地 + 在线搜索）",
@@ -503,6 +504,8 @@ const zhCN = {
       mangadex: "MangaDex (漫画索引)",
       mangaupdates: "MangaUpdates (漫画更新)",
       kitsu: "Kitsu (狐狸)",
+      tencent: "腾讯动漫 (ac.qq.com)",
+      bilibili: "B站漫画 (manga.bilibili.com)",
       googlebooks: "Google Books (谷歌图书)",
       comicinfo: "ComicInfo (本地)",
       epub_opf: "EPUB OPF (本地)",
@@ -1714,6 +1717,7 @@ export interface Translations {
   readerOptions: {
     title: string;
     autoSaveHint: string;
+    scopedHint: string;
     groupDisplay: string;
     groupAdvanced: string;
     groupBehavior: string;
@@ -1816,6 +1820,8 @@ export interface Translations {
       mangadex: string;
       mangaupdates: string;
       kitsu: string;
+      tencent: string;
+      bilibili: string;
       googlebooks: string;
       comicinfo: string;
       epub_opf: string;

@@ -168,11 +168,7 @@ export default function TagFilter({
                   {tag} ×
                 </button>
               ))
-            ) : (
-              <span className="text-xs text-muted">
-                {allTags.length} {t.tagFilter.label}
-              </span>
-            )}
+            ) : null}
           </div>
         ) : showAll ? (
           /* Expanded: wrap mode with max height */

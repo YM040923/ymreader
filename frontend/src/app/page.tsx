@@ -75,7 +75,7 @@ export default function Home() {
           scanning={scanningLibrary}
         />
 
-        <div className="flex min-h-[calc(100vh-4rem)]">
+        <div className="flex min-h-[calc(100vh_-_var(--shell-topbar-height))]">
           {/* ═══ 主内容区 ═══ */}
           <main className="flex-1 min-w-0">
 
@@ -83,7 +83,7 @@ export default function Home() {
             <section className="px-5 sm:px-8 lg:px-10 pt-6 sm:pt-8 pb-2">
               <div className="flex items-end justify-between mb-4">
                 <div>
-                  <h2 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-foreground tracking-tight leading-tight">
+                  <h2 className="text-2xl sm:text-[28px] font-bold text-foreground tracking-tight leading-tight">
                     {t.dashboard.continueReading}
                   </h2>
                   <p className="text-sm text-muted mt-1.5">
@@ -138,7 +138,7 @@ export default function Home() {
                             blurEnabled={privacyEnabled && blurNSFW}
                             fill
                             unoptimized
-                            className="object-contain transition-transform duration-500 group-hover:scale-110"
+                            className="object-cover transition-transform duration-500 group-hover:scale-110"
                             sizes="(max-width: 640px) 33vw, 16vw"
                           />
                           {progress > 0 && (

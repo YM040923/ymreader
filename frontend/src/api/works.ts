@@ -110,3 +110,21 @@ export async function restoreWorkAutoGrouping(workId: string): Promise<void> {
 export async function undoLastWorkOperation(workId: string): Promise<void> {
   await apiClient.post(`/api/works/${encodeURIComponent(workId)}/undo-last`);
 }
+
+export interface ChapterTitleBackfillResult {
+  workId: string;
+  workTitle: string;
+  sourceId?: string;
+  sourceTitle?: string;
+  needed: number;
+  matched: number;
+  samples?: { unitLabel: string; title: string }[];
+  error?: string;
+}
+
+/** 按作品名匹配腾讯动漫，回填只有「第12话」没有标题的章节。 */
+export async function backfillWorkChapterTitles(workId: string): Promise<ChapterTitleBackfillResult> {
+  return apiClient.post<ChapterTitleBackfillResult>(
+    `/api/works/${encodeURIComponent(workId)}/backfill-chapter-titles`,
+  );
+}

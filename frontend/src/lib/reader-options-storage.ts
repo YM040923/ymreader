@@ -11,6 +11,11 @@ export const WORK_SCOPED_READER_OPTION_KEYS = [
   "continuousReading",
   "fitMode",
   "containerWidth",
+  // 图片滤镜是按作品调的：同一套亮度/对比度换个作品往往就不合适
+  "imageBrightness",
+  "imageContrast",
+  "imageGrayscale",
+  "imageFilterPreset",
 ] as const satisfies readonly (keyof ReaderOptions)[];
 
 const scopedKeySet = new Set<keyof ReaderOptions>(

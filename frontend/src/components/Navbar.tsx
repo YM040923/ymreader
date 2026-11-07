@@ -17,6 +17,7 @@ import {
   LogOut,
   Globe,
   Clock,
+  PanelTopClose,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,6 +27,7 @@ import { useAuth } from "@/lib/auth-context";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useScraperStore } from "@/hooks/useScraperStore";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
+import { useShellChrome } from "@/lib/shell-chrome";
 import { apiPath } from "@/lib/base-path";
 
 interface NavbarProps {
@@ -58,10 +60,15 @@ export default function Navbar({
   const scraperT = (t as any).scraper || {};
   const { batchRunning } = useScraperStore();
   const { siteName, siteIcon, scraperEnabled } = useSiteSettings();
+  const { topbarHidden, toggleTopbar, showTopbar } = useShellChrome();
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-surface/80 backdrop-blur-2xl backdrop-saturate-200 lg:left-[220px] xl:left-[240px]">
-      <div className="mx-auto flex h-14 sm:h-16 max-w-[1760px] items-center justify-between px-6 sm:px-8 lg:px-12">
+    <>
+      <nav
+        className="shell-topbar fixed top-0 left-0 right-0 z-50 h-14 border-b border-border/50 bg-surface/80 backdrop-blur-2xl backdrop-saturate-200 transition-[left,height,border-color] duration-300 ease-out sm:h-16 lg:left-[var(--shell-sidebar-width)] lg:h-[var(--shell-topbar-height)]"
+        aria-hidden={topbarHidden}
+      >
+        <div className="shell-topbar-inner mx-auto flex h-full max-w-[1760px] items-center justify-between px-6 sm:px-8 lg:px-12 transition-opacity duration-200">
         {/* Logo — 点击返回仪表盘 */}
         <Link
           href="/"
@@ -140,6 +147,17 @@ export default function Navbar({
           </button>
           )}
 
+          {/* 收起顶栏 */}
+          <button
+            type="button"
+            onClick={toggleTopbar}
+            title="收起顶栏"
+            aria-label="收起顶栏"
+            className="hidden lg:flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl text-muted transition-colors hover:bg-card-hover hover:text-foreground"
+          >
+            <PanelTopClose className="h-4 w-4" />
+          </button>
+
           {/* More Menu */}
           <MoreMenu
             isAdmin={isAdmin}
@@ -158,7 +176,17 @@ export default function Navbar({
           />
         </div>
       </div>
-    </nav>
+      </nav>
+
+      {/* 收起后右上角的唤醒热区：指针扫到就展开 */}
+      {topbarHidden && (
+        <div
+          className="shell-topbar-reveal hidden lg:block"
+          onMouseEnter={showTopbar}
+          aria-hidden
+        />
+      )}
+    </>
   );
 }
 

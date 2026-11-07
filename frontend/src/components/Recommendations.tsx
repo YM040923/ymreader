@@ -226,7 +226,7 @@ export function RecommendationStrip({ contentType }: { contentType?: string }) {
                       alt={item.title}
                       fill
                       unoptimized
-                      className="object-contain"
+                      className="object-cover"
                       sizes="130px"
                     />
                     {/* Reason badge */}
@@ -360,7 +360,7 @@ export function SimilarComics({ comicId }: { comicId: string }) {
                 alt={comic.title}
                 fill
                 unoptimized
-                className="object-contain"
+                className="object-cover"
                 sizes="120px"
               />
             </div>

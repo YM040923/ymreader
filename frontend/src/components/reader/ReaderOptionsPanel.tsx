@@ -1,13 +1,8 @@
 "use client";
 
 import { useTranslation } from "@/lib/i18n";
-import { X, ChevronDown, Monitor, Wrench, Cog, SlidersHorizontal } from "lucide-react";
-import type {
-  ReaderOptions,
-  FitMode,
-  ComicReadingMode,
-  ReadingDirection,
-} from "@/types/reader";
+import { X, ChevronDown, Monitor, Cog, SlidersHorizontal } from "lucide-react";
+import type { ReaderOptions, FitMode } from "@/types/reader";
 import { useState, useEffect, useRef } from "react";
 
 interface ReaderOptionsPanelProps {
@@ -287,7 +282,7 @@ export default function ReaderOptionsPanel({
       {/* 背景遮罩 */}
       <div
         className={`fixed inset-0 z-[60] transition-opacity duration-300 ${
-          isOpen && !isClosing ? "bg-black/50 backdrop-blur-sm" : "bg-black/0 backdrop-blur-0"
+          isOpen && !isClosing ? "bg-black/55" : "bg-black/0"
         }`}
         onClick={handleClose}
       />
@@ -311,7 +306,7 @@ export default function ReaderOptionsPanel({
           maxHeight: "calc(75vh - env(safe-area-inset-bottom, 0px))",
         }}
       >
-        <div className="rounded-t-2xl bg-zinc-900/95 backdrop-blur-xl border-t border-white/[0.08] shadow-2xl shadow-black/60 flex flex-col" style={{ maxHeight: "calc(75vh - env(safe-area-inset-bottom, 0px))" }}>
+        <div className="rounded-t-2xl bg-[#17171a] border-t border-white/[0.08] flex flex-col" style={{ maxHeight: "calc(75vh - env(safe-area-inset-bottom, 0px))" }}>
           {/* 拖拽把手 + 标题栏 */}
           <div
             data-drag-handle
@@ -324,7 +319,7 @@ export default function ReaderOptionsPanel({
               <div>
                 <h2 className="text-base font-bold text-white">{ro.title}</h2>
                 <p className="text-[11px] text-white/30 mt-0.5">
-                  {ro.autoSaveHint}
+                  {ro.scopedHint}
                 </p>
               </div>
               <button
@@ -363,31 +358,6 @@ export default function ReaderOptionsPanel({
                 />
               </div>
 
-              {/* 页面渲染 */}
-              <div>
-                <Label>{ro.pageRendering}</Label>
-                <ToggleGroup
-                  value={options.mode}
-                  items={[
-                    { value: "single", label: ro.singlePage },
-                    { value: "double", label: ro.doublePage },
-                  ]}
-                  onChange={(v) =>
-                    onChange({ mode: v as ComicReadingMode })
-                  }
-                />
-              </div>
-
-              {/* 双页：封面单独显示（错页对齐） */}
-              {options.mode === "double" && (
-                <Toggle
-                  checked={options.doubleCoverAlone}
-                  onToggle={(v) => onChange({ doubleCoverAlone: v })}
-                  label={ro.doubleCoverAlone}
-                  desc={ro.doubleCoverAloneDesc}
-                />
-              )}
-
               {/* 双页：贴合（去除中间缝） */}
               {options.mode === "double" && (
                 <Toggle
@@ -397,26 +367,6 @@ export default function ReaderOptionsPanel({
                   desc={ro.doublePageNoGapDesc}
                 />
               )}
-
-              {/* 阅读方向 */}
-              <div>
-                <Label>{ro.readingDirection}</Label>
-                <ToggleGroup
-                  value={options.infiniteScroll ? "ttb" : options.direction}
-                  items={[
-                    { value: "ltr", label: ro.ltr },
-                    { value: "rtl", label: ro.rtl },
-                    { value: "ttb", label: ro.ttb },
-                  ]}
-                  onChange={(v) => {
-                    if (v === "ttb") {
-                      onChange({ direction: "ttb" as ReadingDirection, infiniteScroll: true });
-                    } else {
-                      onChange({ direction: v as ReadingDirection, infiniteScroll: false });
-                    }
-                  }}
-                />
-              </div>
 
               {/* 页码指示器 */}
               <Toggle
@@ -550,44 +500,6 @@ export default function ReaderOptionsPanel({
               </div>
             </Group>
 
-            {/* ── 🔧 行为设置 ── */}
-            <Group
-              id="behavior"
-              icon={<Wrench className="h-4 w-4" />}
-              title={ro.groupBehavior}
-            >
-              {/* 进度跟踪 */}
-              <Toggle
-                checked={options.progressTracking}
-                onToggle={(v) => onChange({ progressTracking: v })}
-                label={ro.progressTracking}
-                desc={ro.progressTrackingDesc}
-              />
-
-              {/* 默认显示档案覆盖层 */}
-              <Toggle
-                checked={options.defaultOverlay}
-                onToggle={(v) => onChange({ defaultOverlay: v })}
-                label={ro.defaultOverlay}
-                desc={ro.defaultOverlayDesc}
-              />
-
-              {/* 页面翻译 */}
-              <Toggle
-                checked={options.showTranslate}
-                onToggle={(v) => onChange({ showTranslate: v })}
-                label={ro.showTranslate}
-                desc={ro.showTranslateDesc}
-              />
-
-              {/* AI 助手 */}
-              <Toggle
-                checked={options.showAIChat}
-                onToggle={(v) => onChange({ showAIChat: v })}
-                label={ro.showAIChat}
-                desc={ro.showAIChatDesc}
-              />
-            </Group>
           </div>
         </div>
       </div>

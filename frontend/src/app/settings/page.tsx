@@ -492,19 +492,18 @@ function ReaderPreferencesPanel() {
   const [resetConfirm, setResetConfirm] = useState(false);
 
   // Derive UI state from real ReaderOptions
-  const directionUI = options.direction === "rtl" ? "rtl" : options.infiniteScroll ? "vertical" : "ltr";
-  const zoomUI = options.fitMode === "width" ? "fit-width" : options.fitMode === "height" ? "fit-height" : "original";
+  const directionUI = options.direction === "rtl" ? "rtl" : "ltr";
+  const zoomUI = options.fitMode === "width" ? "fit-width" : options.fitMode === "height" ? "fit-height" : "fit-container";
 
   const handleDirectionChange = (val: string) => {
-    if (val === "ltr") updateOptions({ direction: "ltr", infiniteScroll: false, mode: "single" });
-    else if (val === "rtl") updateOptions({ direction: "rtl", infiniteScroll: false, mode: "single" });
-    else if (val === "vertical") updateOptions({ direction: "ttb", infiniteScroll: true, mode: "webtoon" });
+    // 方向只表达翻页方向；竖排滚动属于阅读模式，在"默认阅读模式"里选
+    updateOptions({ direction: val === "rtl" ? "rtl" : "ltr" });
   };
 
   const handleZoomChange = (val: string) => {
     if (val === "fit-width") updateOptions({ fitMode: "width" });
     else if (val === "fit-height") updateOptions({ fitMode: "height" });
-    else if (val === "original") updateOptions({ fitMode: "container", containerWidth: "100%" });
+    else if (val === "fit-container") updateOptions({ fitMode: "container", containerWidth: "" });
   };
 
   const handleResetDefaults = () => {
@@ -557,7 +556,41 @@ function ReaderPreferencesPanel() {
             >
               <option value="ltr">从左到右</option>
               <option value="rtl">从右到左</option>
-              <option value="vertical">垂直滚动</option>
+            </select>
+          </div>
+
+          {/* Reading mode */}
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div>
+              <div className="text-sm font-medium text-foreground">默认阅读模式</div>
+              <div className="text-xs text-muted">打开阅读器时使用的排布方式，也可在阅读器底栏随时切换。</div>
+            </div>
+            <select
+              value={options.mode}
+              onChange={(e) => updateOptions({ mode: e.target.value as typeof options.mode })}
+              className="h-9 w-full rounded-lg border border-border/50 bg-card/60 px-3 text-sm outline-none focus:border-accent/40 sm:w-56"
+            >
+              <option value="single">单页</option>
+              <option value="double">双页</option>
+              <option value="webtoon">长条（竖向）</option>
+              <option value="strip">长条（横向）</option>
+            </select>
+          </div>
+
+          {/* Reader background */}
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div>
+              <div className="text-sm font-medium text-foreground">阅读背景</div>
+              <div className="text-xs text-muted">固定日间或夜间背景，也可以在阅读器里随全站主题切换。</div>
+            </div>
+            <select
+              value={options.readerBackground}
+              onChange={(e) => updateOptions({ readerBackground: e.target.value as "system" | "day" | "night" })}
+              className="h-9 w-full rounded-lg border border-border/50 bg-card/60 px-3 text-sm outline-none focus:border-accent/40 sm:w-56"
+            >
+              <option value="system">跟随全站主题</option>
+              <option value="day">固定日间</option>
+              <option value="night">固定夜间</option>
             </select>
           </div>
 
@@ -572,9 +605,9 @@ function ReaderPreferencesPanel() {
               onChange={(e) => handleZoomChange(e.target.value)}
               className="h-9 w-full rounded-lg border border-border/50 bg-card/60 px-3 text-sm outline-none focus:border-accent/40 sm:w-56"
             >
+              <option value="fit-container">适应容器</option>
               <option value="fit-width">适应宽度</option>
               <option value="fit-height">适应高度</option>
-              <option value="original">原始大小</option>
             </select>
           </div>
 
@@ -594,20 +627,12 @@ function ReaderPreferencesPanel() {
             </select>
           </div>
 
-          {/* Background — disabled, coming soon */}
-          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 opacity-50">
-            <div>
-              <div className="text-sm font-medium text-foreground">阅读背景 <span className="ml-1 text-[10px] text-muted">即将支持</span></div>
-              <div className="text-xs text-muted">为长时间阅读选择更舒适的背景主题。</div>
-            </div>
-            <select disabled className="h-9 w-full rounded-lg border border-border/50 bg-card/60 px-3 text-sm outline-none sm:w-56">
-              <option>跟随主题</option>
-            </select>
-          </div>
-
           {/* Toggle: progress tracking */}
           {[
             { label: "自动保存阅读进度", desc: "跟踪并自动记录最后阅读位置，下次打开继续阅读。", checked: options.progressTracking, onChange: (v: boolean) => updateOptions({ progressTracking: v }) },
+            { label: "打开时显示档案", desc: "进入阅读器先显示作品档案覆盖层。", checked: options.defaultOverlay, onChange: (v: boolean) => updateOptions({ defaultOverlay: v }) },
+            { label: "页面翻译按钮", desc: "在阅读器里显示 AI 实时翻译入口。", checked: options.showTranslate, onChange: (v: boolean) => updateOptions({ showTranslate: v }) },
+            { label: "AI 助手按钮", desc: "在阅读器里显示 AI 问答入口。", checked: options.showAIChat, onChange: (v: boolean) => updateOptions({ showAIChat: v }) },
           ].map((item) => (
             <div key={item.label} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div>

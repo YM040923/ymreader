@@ -8,6 +8,7 @@ import ComicCard from "@/components/ComicCard";
 import DirectoryCard from "@/components/DirectoryCard";
 import TagFilter from "@/components/TagFilter";
 import StatsBar from "@/components/StatsBar";
+import ToolbarSelect from "@/components/ToolbarSelect";
 import CategoryFilter from "@/components/CategoryFilter";
 import BatchToolbar from "@/components/BatchToolbar";
 import {
@@ -16,7 +17,7 @@ import {
 } from "@/hooks/useComics";
 import { Comic } from "@/types/comic";
 import { useTranslation, useLocale } from "@/lib/i18n";
-import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2, Folder, ChevronRight } from "lucide-react";
+import { CheckSquare, CheckCheck, LayoutGrid, List, Copy, Upload, Image, BookOpen, Brain, Loader2, Eye, EyeOff, Settings2, Folder, ChevronRight, ArrowUp, ArrowDown, Tag } from "lucide-react";
 import DuplicateDetector from "@/components/DuplicateDetector";
 import UploadDialog from "@/components/UploadDialog";
 import { LibraryTabsBar } from "@/components/home/LibraryTabsBar";
@@ -236,6 +237,7 @@ export default function BooksPage() {
 
   // Batch selection
   const [batchMode, setBatchMode] = useState(false);
+  const [showTagFilter, setShowTagFilter] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Duplicate detection
@@ -960,7 +962,7 @@ export default function BooksPage() {
   }, [dragId, dragOverId, sortedComics, refetch, workById]);
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: "var(--theme-background)" }}>
+    <div className="min-h-screen overflow-x-clip" style={{ background: "var(--theme-background)" }}>
 
       <Navbar
         searchQuery={searchQuery}
@@ -974,8 +976,8 @@ export default function BooksPage() {
       />
 
       {/* Main Content */}
-      <div className={`mx-auto w-full max-w-[1760px] px-6 sm:px-8 lg:px-10 2xl:px-14 pt-14 sm:pt-16 xl:grid xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_380px] xl:gap-6 ${batchMode ? "pb-32" : "pb-20 sm:pb-12"}`}>
-      <main className="min-w-0 space-y-4 pt-6 sm:pt-8">
+      <div className={`mx-auto w-full max-w-[2200px] px-6 sm:px-8 lg:px-10 2xl:px-14 pt-[var(--shell-topbar-height)] transition-[padding] duration-300 ease-out ${batchMode ? "pb-32" : "pb-20 sm:pb-12"}`}>
+      <main className="min-w-0 space-y-4 pt-3 sm:pt-4">
         {/* Data Source Indicator — 空库提示 */}
         {!loading && !browseDirectories && displayComics.length === 0 && apiTotal === 0 && !debouncedSearch && selectedTags.length === 0 && !favoritesOnly && !selectedCategory && selectedLibraryIds.length === 0 && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
@@ -1017,7 +1019,7 @@ export default function BooksPage() {
               ))}
             </div>
             {/* 骨架：漫画网格 */}
-            <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-9">
               {Array.from({ length: 12 }).map((_, i) => (
                 <div key={i} className="overflow-hidden rounded-xl bg-card">
                   <div className="skeleton-shimmer aspect-[5/7] w-full" />
@@ -1079,37 +1081,34 @@ export default function BooksPage() {
             </div>
 
             {/* Library Control Console */}
-            <section className="rounded-xl dashboard-glass px-3 py-2.5 sm:px-4 sm:py-3 space-y-2">
-            {/* Stats + Sort Controls */}
-            <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center justify-between gap-2 sm:gap-3">
-              {!browseDirectories && (
-                <StatsBar
-                  totalComics={apiTotal}
-                  filteredCount={apiTotal}
-                />
-              )}
+            <section className="rounded-xl dashboard-glass px-3 py-2 sm:px-4 sm:py-2.5 space-y-1.5">
+            {/* Stats + actions | filters + sort */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              {/* Left — library stats and actions */}
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
+                {!browseDirectories && (
+                  <StatsBar
+                    totalComics={apiTotal}
+                    filteredCount={apiTotal}
+                  />
+                )}
 
-              {/* Sort & Filter Controls — horizontally scrollable on mobile */}
-              <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
-                <div className="flex items-center gap-1.5 sm:gap-2 min-w-max">
-                {/* Detect Duplicates */}
                 <button
                   onClick={() => setShowDuplicates(true)}
-                  className="motion-button flex h-8 items-center gap-1.5 rounded-lg border border-border/40 bg-card px-2.5 sm:px-3 text-xs font-medium text-muted transition-all hover:text-foreground"
+                  className="flex h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
                   title={t.duplicates.detect}
                 >
                   <Copy className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">{t.duplicates.detect}</span>
                 </button>
 
-                {/* Batch Mode Toggle — 仅管理员可见 */}
                 {hasManageableLibrary && (
                 <button
                   onClick={() => {
                     if (batchMode) exitBatchMode();
                     else setBatchMode(true);
                   }}
-                  className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 text-xs font-medium transition-all ${
+                  className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-all ${
                     batchMode
                       ? "motion-button bg-accent text-white shadow-sm shadow-accent/25"
                       : "bg-card text-muted hover:text-foreground"
@@ -1121,11 +1120,10 @@ export default function BooksPage() {
                 </button>
                 )}
 
-                {/* Select All (only in batch mode) */}
                 {batchMode && (
                   <button
                     onClick={handleSelectAll}
-                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 text-xs font-medium transition-all ${
+                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-all ${
                       selectedIds.size === sortedComics.length && sortedComics.length > 0
                         ? "bg-accent/20 text-accent"
                         : "bg-card text-muted hover:text-foreground"
@@ -1137,12 +1135,9 @@ export default function BooksPage() {
                   </button>
                 )}
 
-                <div className="h-5 w-px bg-border/40" />
-
-                {/* Favorites toggle */}
                 <button
                   onClick={() => setFavoritesOnly(!favoritesOnly)}
-                  className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 text-xs font-medium transition-all ${
+                  className={`flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-all ${
                     favoritesOnly
                       ? "bg-rose-500/20 text-rose-400"
                       : "bg-card text-muted hover:text-foreground"
@@ -1151,85 +1146,101 @@ export default function BooksPage() {
                   <span>{favoritesOnly ? "♥" : "♡"}</span>
                   <span className="hidden sm:inline">{t.home.favorites}</span>
                 </button>
+              </div>
 
-                {/* Reading Status filter */}
-                <select
-                  value={readingStatusFilter}
-                  onChange={(e) => setReadingStatusFilter(e.target.value)}
-                  className="h-8 rounded-lg bg-card px-2 text-xs text-foreground outline-none"
-                >
-                  <option value="">{t.home.allStatuses}</option>
-                  <option value="want">{t.home.statusWant}</option>
-                  <option value="reading">{t.home.statusReading}</option>
-                  <option value="finished">{t.home.statusFinished}</option>
-                </select>
+              {/* Right — status / sort / directory */}
+              <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-max">
+                  <button
+                    type="button"
+                    onClick={() => setShowTagFilter((value) => !value)}
+                    className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all ${
+                      showTagFilter
+                        ? "bg-accent/15 text-accent"
+                        : "bg-card text-muted hover:text-foreground"
+                    }`}
+                  >
+                    <Tag className="h-3.5 w-3.5" />
+                    标签
+                    <span className="opacity-60">{allTags.length}</span>
+                  </button>
 
-                {/* Uncategorized filter */}
-                <button
-                  onClick={() => { setUncategorized(!uncategorized); if (!uncategorized) setSelectedCategory(null); }}
-                  className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all ${
-                    uncategorized
-                      ? "bg-orange-500/20 text-orange-400"
-                      : "bg-card text-muted hover:text-foreground"
-                  }`}
-                >
-                  未分类
-                </button>
+                  <ToolbarSelect
+                    value={readingStatusFilter}
+                    onChange={setReadingStatusFilter}
+                    ariaLabel={t.home.allStatuses}
+                    options={[
+                      { value: "", label: t.home.allStatuses },
+                      { value: "want", label: t.home.statusWant },
+                      { value: "reading", label: t.home.statusReading },
+                      { value: "finished", label: t.home.statusFinished },
+                    ]}
+                  />
 
-                {/* Untagged filter */}
-                <button
-                  onClick={() => { setUntagged(!untagged); if (!untagged) setSelectedTags([]); }}
-                  className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all ${
-                    untagged
-                      ? "bg-orange-500/20 text-orange-400"
-                      : "bg-card text-muted hover:text-foreground"
-                  }`}
-                >
-                  无标签
-                </button>
+                  <button
+                    onClick={() => { setUncategorized(!uncategorized); if (!uncategorized) setSelectedCategory(null); }}
+                    className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all ${
+                      uncategorized
+                        ? "bg-orange-500/20 text-orange-400"
+                        : "bg-card text-muted hover:text-foreground"
+                    }`}
+                  >
+                    未分类
+                  </button>
 
-                {/* Sort selector */}
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="h-8 rounded-lg bg-card px-2 text-xs text-foreground outline-none"
-                >
-                  <option value="title">{t.home.sortByTitle}</option>
-                  <option value="addedAt">{t.home.sortByAdded}</option>
-                  <option value="lastReadAt">{t.home.sortByLastRead}</option>
-                  <option value="rating">{t.home.sortByRating}</option>
-                  <option value="custom">{t.home.sortByCustom}</option>
-                </select>
+                  <button
+                    onClick={() => { setUntagged(!untagged); if (!untagged) setSelectedTags([]); }}
+                    className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all ${
+                      untagged
+                        ? "bg-orange-500/20 text-orange-400"
+                        : "bg-card text-muted hover:text-foreground"
+                    }`}
+                  >
+                    无标签
+                  </button>
 
-                <button
-                  onClick={() =>
-                    setSortOrder((o) => (o === "asc" ? "desc" : "asc"))
-                  }
-                  className="motion-button flex h-8 w-8 items-center justify-center rounded-lg border border-border/40 bg-card text-muted transition-colors hover:text-foreground"
-                  title={sortOrder === "asc" ? t.home.ascending : t.home.descending}
-                >
-                  {sortOrder === "asc" ? "↑" : "↓"}
-                </button>
+                  <ToolbarSelect
+                    value={sortBy}
+                    onChange={setSortBy}
+                    ariaLabel={t.home.sortByTitle}
+                    options={[
+                      { value: "title", label: t.home.sortByTitle },
+                      { value: "addedAt", label: t.home.sortByAdded },
+                      { value: "lastReadAt", label: t.home.sortByLastRead },
+                      { value: "rating", label: t.home.sortByRating },
+                      { value: "custom", label: t.home.sortByCustom },
+                    ]}
+                  />
 
-                <button
-                  onClick={() => {
-                    const next = !browseDirectories;
-                    setBrowseDirectories(next);
-                    localStorage.setItem("books:browseDirectories", String(next));
-                    navigateDirectory("");
-                    safeSetCurrentPage(1);
-                  }}
-                  disabled={!canBrowseDirectories}
-                  title={canBrowseDirectories ? "按目录浏览当前书库" : "目录浏览需要先选择一个书库"}
-                  className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
-                    browseDirectories
-                      ? "bg-accent/15 text-accent"
-                      : "bg-card text-muted hover:text-foreground"
-                  }`}
-                >
-                  <Folder className="h-3.5 w-3.5" />
-                  目录
-                </button>
+                  <button
+                    onClick={() =>
+                      setSortOrder((o) => (o === "asc" ? "desc" : "asc"))
+                    }
+                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-card text-muted transition-colors hover:text-foreground"
+                    title={sortOrder === "asc" ? t.home.ascending : t.home.descending}
+                  >
+                    {sortOrder === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const next = !browseDirectories;
+                      setBrowseDirectories(next);
+                      localStorage.setItem("books:browseDirectories", String(next));
+                      navigateDirectory("");
+                      safeSetCurrentPage(1);
+                    }}
+                    disabled={!canBrowseDirectories}
+                    title={canBrowseDirectories ? "按目录浏览当前书库" : "目录浏览需要先选择一个书库"}
+                    className={`flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+                      browseDirectories
+                        ? "bg-accent/15 text-accent"
+                        : "bg-card text-muted hover:text-foreground"
+                    }`}
+                  >
+                    <Folder className="h-3.5 w-3.5" />
+                    目录
+                  </button>
                 </div>
               </div>
             </div>
@@ -1246,6 +1257,7 @@ export default function BooksPage() {
             )}
 
             {/* Tag Filter */}
+            {showTagFilter && (
             <div className="mt-1.5">
               <TagFilter
                 allTags={allTags}
@@ -1259,6 +1271,7 @@ export default function BooksPage() {
                 }}
               />
             </div>
+            )}
 
               {/* Clear filters — visible when any filter is active */}
               {(favoritesOnly || readingStatusFilter || uncategorized || untagged || selectedCategory || selectedTags.length > 0 || selectedLibraryIds.length > 0) && (
@@ -1382,7 +1395,7 @@ export default function BooksPage() {
               <div
                 className={
                   viewMode === "grid"
-                    ? "grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8"
+                    ? "grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-9"
                     : "grid grid-cols-1 gap-2 sm:gap-3"
                 }
               >
@@ -1413,7 +1426,8 @@ export default function BooksPage() {
                       isDragOver={dragOverId === comic.id}
                       isDragging={dragId === comic.id}
                       tagData={comic.tagData}
-                      posterAspect={comic.coverAspectRatio && comic.coverAspectRatio > 0 ? String(comic.coverAspectRatio) : undefined}
+                      showTags={viewMode !== "grid"}
+                      uniformAspect
                       animationIndex={index < 20 ? index : undefined}
                       isRemoving={removingIds.has(comic.id)}
                       onContextMenu={(e, c) => {

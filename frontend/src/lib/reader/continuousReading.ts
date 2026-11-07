@@ -1,6 +1,6 @@
 import type { WorkUnit } from "@/types/work";
 
-export type ContinuousReaderMode = "single" | "double" | "webtoon";
+export type ContinuousReaderMode = "single" | "double" | "webtoon" | "strip";
 
 export interface ContinuousPage {
   url: string;
@@ -121,6 +121,7 @@ export function shouldAutoAdvanceChapter(
     mode === "single"
     || mode === "double"
     || mode === "webtoon"
+    || mode === "strip"
   );
 }
 

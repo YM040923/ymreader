@@ -301,7 +301,7 @@ export function ContinueReading({ contentType, showTitle = true }: { contentType
                             blurEnabled={privacyEnabled && blurNSFW}
                             fill
                             unoptimized
-                            className="object-contain"
+                            className="object-cover"
                             sizes={`${w}px`}
                           />
                         </div>
@@ -343,7 +343,7 @@ export function ContinueReading({ contentType, showTitle = true }: { contentType
                           blurEnabled={privacyEnabled && blurNSFW}
                           fill
                           unoptimized
-                          className="object-contain transition-transform duration-500 group-hover:scale-105"
+                          className="object-cover transition-transform duration-500 group-hover:scale-105"
                           sizes="230px"
                         />
 
@@ -417,7 +417,7 @@ export function ContinueReading({ contentType, showTitle = true }: { contentType
                             blurEnabled={privacyEnabled && blurNSFW}
                             fill
                             unoptimized
-                            className="object-contain"
+                            className="object-cover"
                             sizes={`${w}px`}
                           />
                         </div>
@@ -470,7 +470,7 @@ export function ContinueReading({ contentType, showTitle = true }: { contentType
                           blurEnabled={privacyEnabled && blurNSFW}
                           fill
                           unoptimized
-                          className="object-contain transition-transform duration-200 group-hover:scale-105"
+                          className="object-cover transition-transform duration-200 group-hover:scale-105"
                           sizes="140px"
                         />
                         <div className="absolute top-2 right-2">
