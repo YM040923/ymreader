@@ -17,6 +17,7 @@ ThemeData buildZhejiaoTheme({
   ColorScheme? scheme,
   String? fontFamily,
   Locale? locale,
+  bool applyLadder = true,
 }) {
   final base = scheme ??
       ColorScheme.fromSeed(
@@ -24,7 +25,7 @@ ThemeData buildZhejiaoTheme({
         brightness: brightness,
         dynamicSchemeVariant: _schemeVariant,
       );
-  final colors = applyZSurfaceLadder(base);
+  final colors = applyLadder ? applyZSurfaceLadder(base) : base;
   final text = buildZTextTheme(
     color: colors.onSurface,
     fontFamily: fontFamily,
@@ -215,6 +216,91 @@ class ZGlassColors extends ThemeExtension<ZGlassColors> {
     );
   }
 }
+
+/// Fushi 参考截图（docs/design/2026-10-ui-motion-redesign）里实际使用的
+/// 蓝青色主题。M0 照这套颜色复刻，后续再接入 seed/系统取色。
+const referenceLightScheme = ColorScheme(
+  brightness: Brightness.light,
+  primary: Color(0xFF0F6681),
+  onPrimary: Color(0xFFFFFFFF),
+  primaryContainer: Color(0xFFCFE6F2),
+  onPrimaryContainer: Color(0xFF003544),
+  secondary: Color(0xFF4E6A78),
+  onSecondary: Color(0xFFFFFFFF),
+  secondaryContainer: Color(0xFFBBE9FF),
+  onSecondaryContainer: Color(0xFF003544),
+  tertiary: Color(0xFF4E6A78),
+  onTertiary: Color(0xFFFFFFFF),
+  error: Color(0xFFBA1A1A),
+  onError: Color(0xFFFFFFFF),
+  surface: Color(0xFFF1F5F9),
+  onSurface: Color(0xFF161D1F),
+  onSurfaceVariant: Color(0xFF5A6A72),
+  outline: Color(0xFF8A9AA3),
+  outlineVariant: Color(0xFFC7D3DA),
+  shadow: Color(0xFF000000),
+  scrim: Color(0xFF000000),
+  inverseSurface: Color(0xFF2B3134),
+  onInverseSurface: Color(0xFFECF1F4),
+  inversePrimary: Color(0xFF8AD0EE),
+  surfaceTint: Color(0x00000000),
+  surfaceContainerLowest: Color(0xFFFEFDFF),
+  surfaceContainerLow: Color(0xFFF7FAFC),
+  surfaceContainer: Color(0xFFF1F5F9),
+  surfaceContainerHigh: Color(0xFFE0E4E8),
+  surfaceContainerHighest: Color(0xFFD5DDE3),
+  surfaceDim: Color(0xFFD5DDE3),
+  surfaceBright: Color(0xFFFEFDFF),
+);
+
+const referenceDarkScheme = ColorScheme(
+  brightness: Brightness.dark,
+  primary: Color(0xFF8AD0EE),
+  onPrimary: Color(0xFF003544),
+  primaryContainer: Color(0xFF004D63),
+  onPrimaryContainer: Color(0xFFBFE9FF),
+  secondary: Color(0xFFB4CBD6),
+  onSecondary: Color(0xFF1F333C),
+  secondaryContainer: Color(0xFF004D63),
+  onSecondaryContainer: Color(0xFFBFE9FF),
+  tertiary: Color(0xFFB4CBD6),
+  onTertiary: Color(0xFF1F333C),
+  error: Color(0xFFFFB4AB),
+  onError: Color(0xFF690005),
+  surface: Color(0xFF161B1E),
+  onSurface: Color(0xFFDEE3E6),
+  onSurfaceVariant: Color(0xFFA9B4B9),
+  outline: Color(0xFF74848C),
+  outlineVariant: Color(0xFF3F4A50),
+  shadow: Color(0xFF000000),
+  scrim: Color(0xFF000000),
+  inverseSurface: Color(0xFFDEE3E6),
+  onInverseSurface: Color(0xFF2B3134),
+  inversePrimary: Color(0xFF0F6681),
+  surfaceTint: Color(0x00000000),
+  surfaceContainerLowest: Color(0xFF0D1214),
+  surfaceContainerLow: Color(0xFF1A2023),
+  surfaceContainer: Color(0xFF22282B),
+  surfaceContainerHigh: Color(0xFF2A3033),
+  surfaceContainerHighest: Color(0xFF353B3E),
+  surfaceDim: Color(0xFF0D1214),
+  surfaceBright: Color(0xFF353B3E),
+);
+
+/// 复刻参考截图用的入口。
+ThemeData buildReferenceTheme({
+  required Brightness brightness,
+  String? fontFamily,
+}) =>
+    buildZhejiaoTheme(
+      brightness: brightness,
+      scheme: brightness == Brightness.light
+          ? referenceLightScheme
+          : referenceDarkScheme,
+      fontFamily: fontFamily,
+      locale: const Locale('zh', 'CN'),
+      applyLadder: false,
+    );
 
 extension ZThemeX on BuildContext {
   ZGlassColors get zGlass =>

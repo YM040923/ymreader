@@ -35,10 +35,9 @@ void main() {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       locale: const Locale('zh', 'CN'),
-      theme: buildZhejiaoTheme(
+      theme: buildReferenceTheme(
         brightness: brightness,
         fontFamily: 'Noto Sans SC',
-        locale: const Locale('zh', 'CN'),
       ),
       home: PreviewPage(onToggleTheme: () {}),
     );

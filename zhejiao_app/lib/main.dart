@@ -43,15 +43,13 @@ class _ZhejiaoPreviewAppState extends State<ZhejiaoPreviewApp> {
       debugShowCheckedModeBanner: false,
       locale: const Locale('zh', 'CN'),
       themeMode: _mode,
-      theme: buildZhejiaoTheme(
+      theme: buildReferenceTheme(
         brightness: Brightness.light,
         fontFamily: widget.fontFamily,
-        locale: const Locale('zh', 'CN'),
       ),
-      darkTheme: buildZhejiaoTheme(
+      darkTheme: buildReferenceTheme(
         brightness: Brightness.dark,
         fontFamily: widget.fontFamily,
-        locale: const Locale('zh', 'CN'),
       ),
       home: PreviewPage(onToggleTheme: _toggle),
     );
