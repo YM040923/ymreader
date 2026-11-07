@@ -32,7 +32,7 @@ func TestBuildWorksFromComicListGroupsFolderChaptersAndUsesFirstUnitCover(t *tes
 	if work.Title != "恶魔X天使 不能友好相处" {
 		t.Fatalf("title=%q", work.Title)
 	}
-	if got := unitLabels(work.Units); !reflect.DeepEqual(got, []string{"第001话", "第002话", "第010话"}) {
+	if got := unitLabels(work.Units); !reflect.DeepEqual(got, []string{"第1话", "第2话", "第10话"}) {
 		t.Fatalf("labels=%#v", got)
 	}
 	if work.CoverComicID != "c1" || work.CoverURL != "/api/comics/c1/thumbnail" {
@@ -51,7 +51,7 @@ func TestBuildWorksFromComicListGroupsMixedFolderAndArchiveUnits(t *testing.T) {
 	if len(works) != 1 {
 		t.Fatalf("len(works)=%d, want 1: %#v", len(works), works)
 	}
-	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"第001话", "第002话", "第010话"}) {
+	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"第1话", "第2话", "第10话"}) {
 		t.Fatalf("labels=%#v", got)
 	}
 }
@@ -82,8 +82,8 @@ func TestBuildWorksFromComicListGroupsDecimalAndSuffixlessChineseChapterArchives
 		t.Fatalf("work=%#v", works[0])
 	}
 	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{
-		"第118.1话_你对秦枫是怎么想的？",
-		"第119_新的开始",
+		"第118.1话 你对秦枫是怎么想的？",
+		"第119话 新的开始",
 	}) {
 		t.Fatalf("labels=%#v", got)
 	}
@@ -99,7 +99,7 @@ func TestBuildWorksFromComicListGroupsRootLevelNamedArchives(t *testing.T) {
 	if len(works) != 1 || works[0].Title != "作品" {
 		t.Fatalf("works=%#v", works)
 	}
-	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"Vol.01", "Vol.02", "Vol.10"}) {
+	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"第1卷", "第2卷", "第10卷"}) {
 		t.Fatalf("labels=%#v", got)
 	}
 }
@@ -113,7 +113,7 @@ func TestBuildWorksFromComicListCollapsesSectionDirectories(t *testing.T) {
 	if len(works) != 1 || works[0].RootPath != "作品" {
 		t.Fatalf("works=%#v", works)
 	}
-	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"第一季 / 第001话", "第二季 / 第002话"}) {
+	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{"第一季 / 第1话", "第二季 / 第2话"}) {
 		t.Fatalf("labels=%#v", got)
 	}
 }
@@ -131,10 +131,10 @@ func TestBuildWorksFromComicListCollapsesArbitraryArchivesInsideExtrasDirectory(
 		t.Fatalf("nested Extras archives escaped their parent work: %#v", works)
 	}
 	if got := unitLabels(works[0].Units); !reflect.DeepEqual(got, []string{
-		"Ch.0020",
+		"第20话",
+		"第1卷",
 		"Extras / Archive.601",
 		"Extras / Archive.602",
-		"Vol.001",
 	}) {
 		t.Fatalf("labels=%#v", got)
 	}

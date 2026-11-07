@@ -196,17 +196,42 @@ func BuildWorksFromComicList(items []store.ComicListItem, opts WorkBuildOptions)
 
 func finalizeWork(acc *workAccumulator) {
 	work := acc.work
-	sort.SliceStable(work.Units, func(i, j int) bool {
-		if work.Units[i].DisplayLabel != work.Units[j].DisplayLabel {
-			return naturalLess(work.Units[i].DisplayLabel, work.Units[j].DisplayLabel)
+	// 番外/特别篇统一排到正篇之后；组内仍按原始标签自然排序。
+	ranks := make([]int, len(work.Units))
+	order := make([]int, len(work.Units))
+	for i := range work.Units {
+		ranks[i] = unitSortRank(stripUnitWorkPrefix(work.Units[i].DisplayLabel, work.Title))
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		left, right := order[a], order[b]
+		if ranks[left] != ranks[right] {
+			return ranks[left] < ranks[right]
 		}
-		if work.Units[i].StartPage != work.Units[j].StartPage {
-			return work.Units[i].StartPage < work.Units[j].StartPage
+		leftUnit, rightUnit := work.Units[left], work.Units[right]
+		if leftUnit.DisplayLabel != rightUnit.DisplayLabel {
+			return naturalLess(leftUnit.DisplayLabel, rightUnit.DisplayLabel)
 		}
-		return work.Units[i].ID < work.Units[j].ID
+		if leftUnit.StartPage != rightUnit.StartPage {
+			return leftUnit.StartPage < rightUnit.StartPage
+		}
+		return leftUnit.ID < rightUnit.ID
 	})
+	sortedUnits := make([]WorkUnit, len(work.Units))
+	for i, index := range order {
+		sortedUnits[i] = work.Units[index]
+	}
+	work.Units = sortedUnits
 	for i := range work.Units {
 		work.Units[i].SortIndex = i
+		// 展示名统一成腾讯动漫/哔哩哔哩漫画的写法；排序仍用上面的原始标签，
+		// Unit ID 也早已按原始标签生成，改名不会影响阅读进度。
+		if formatted := formatUnitLabel(work.Units[i].DisplayLabel, work.Title); formatted != "" {
+			work.Units[i].DisplayLabel = formatted
+		}
+		if formatted := formatUnitLabel(work.Units[i].Title, work.Title); formatted != "" {
+			work.Units[i].Title = formatted
+		}
 	}
 	work.ItemCount = len(work.Units)
 

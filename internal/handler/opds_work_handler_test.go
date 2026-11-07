@@ -270,9 +270,9 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 	}
 	for _, title := range []string{
 		"<title>第1话</title>",
-		"<title>Volume 01</title>",
-		"<title>Volume 2</title>",
-		"<title>Volume 10</title>",
+		"<title>第1卷</title>",
+		"<title>第2卷</title>",
+		"<title>第10卷</title>",
 	} {
 		if !strings.Contains(body, title) {
 			t.Fatalf("multi-physical acquisition display title must hide its file extension; missing %s: %s", title, body)
@@ -280,9 +280,9 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 	}
 	expectedUnits := []string{
 		"/api/opds/download/opds-physical-ch1/%E7%AC%AC1%E8%AF%9D.cbz",
-		"/api/opds/download/opds-physical-v1/Volume%2001.pdf",
-		"/api/opds/download/opds-physical-v2/Volume%202.zip",
-		"/api/opds/download/opds-physical-v10/Volume%2010.cbz",
+		"/api/opds/download/opds-physical-v1/%E7%AC%AC1%E5%8D%B7.pdf",
+		"/api/opds/download/opds-physical-v2/%E7%AC%AC2%E5%8D%B7.zip",
+		"/api/opds/download/opds-physical-v10/%E7%AC%AC10%E5%8D%B7.cbz",
 	}
 	lastPosition := -1
 	for _, link := range expectedUnits {
@@ -327,14 +327,14 @@ func TestOPDSMultiPhysicalWorkPublishesAllFilesInNaturalOrderWithStablePaginatio
 		token,
 	)
 	if unitDetail.Code != http.StatusOK ||
-		!strings.Contains(unitDetail.Body.String(), `/api/opds/download/opds-physical-v2/Volume%202.zip`) {
+		!strings.Contains(unitDetail.Body.String(), `/api/opds/download/opds-physical-v2/%E7%AC%AC2%E5%8D%B7.zip`) {
 		t.Fatalf("physical Unit detail did not expose the real acquisition: %d %s", unitDetail.Code, unitDetail.Body.String())
 	}
 
 	rangeResponse := performOPDSRequest(
 		router,
 		http.MethodGet,
-		"/api/opds/download/opds-physical-v2/Volume%202.zip",
+		"/api/opds/download/opds-physical-v2/%E7%AC%AC2%E5%8D%B7.zip",
 		user.Username,
 		token,
 		map[string]string{"Range": "bytes=0-9"},

@@ -57,4 +57,5 @@ func SetupRoutes(r *gin.Engine) {
 	registerMetadataRoutes(api)
 	registerLibraryRoutes(api)
 	registerUserGroupRoutes(api)
+	registerKomgaRoutes(api)
 }

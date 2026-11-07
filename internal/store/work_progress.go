@@ -574,3 +574,18 @@ func anyStrings(values []string) []any {
 	return args
 }
 
+// ClearUserWorkProgress removes the "continue reading" cursor of one Work for
+// one user. Used when a client explicitly resets read progress.
+func ClearUserWorkProgress(userID, workID string) error {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(workID) == "" {
+		return nil
+	}
+	if !workTableExists("UserWorkProgress") {
+		return nil
+	}
+	_, err := db.Exec(`
+		DELETE FROM "UserWorkProgress" WHERE "userId" = ? AND "workId" = ?
+	`, userID, workID)
+	return err
+}
+

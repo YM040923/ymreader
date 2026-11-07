@@ -75,6 +75,10 @@ func doSearch(query string, sources []string, lang string) []ComicMetadata {
 				ch <- result{SearchMangaUpdates(query, lang)}
 			case "kitsu":
 				ch <- result{SearchKitsu(query, lang)}
+			case "tencent":
+				ch <- result{SearchTencentComic(query, lang)}
+			case "bilibili":
+				ch <- result{SearchBilibiliComic(query, lang)}
 			case "googlebooks":
 				ch <- result{SearchGoogleBooks(query, lang)}
 			default:

@@ -271,6 +271,11 @@ func (h *WorkHandler) loadWorkCatalog(c *gin.Context) (*workCatalog, error) {
 		if overlayErr := service.ApplyPersistedLogicalWorks(works); overlayErr != nil {
 			return nil, overlayErr
 		}
+		unitTitles, titleErr := store.GetAllWorkUnitTitles()
+		if titleErr != nil {
+			return nil, titleErr
+		}
+		service.ApplyChapterTitleOverrides(works, unitTitles)
 		progressByWork, progressErr := store.GetUserWorkProgresses(userID, workIDs)
 		if progressErr != nil {
 			return nil, progressErr

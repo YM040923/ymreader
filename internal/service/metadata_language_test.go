@@ -19,6 +19,30 @@ func TestPickLangValuePrefersSimplifiedAndTraditionalChineseAliases(t *testing.T
 	}
 }
 
+func TestPickLangValuePrefersSimplifiedOverGenericZh(t *testing.T) {
+	values := map[string]string{
+		"zh":      "繁體中文",
+		"zh-hans": "简体中文",
+	}
+	if got := pickLangValue(values, "zh-CN"); got != "简体中文" {
+		t.Fatalf("pickLangValue(zh-CN) = %q, want explicit Simplified variant", got)
+	}
+	if got := pickLangValue(map[string]string{
+		"zh":      "简体中文",
+		"zh-hant": "繁體中文",
+	}, "zh-TW"); got != "繁體中文" {
+		t.Fatalf("pickLangValue(zh-TW) = %q, want explicit Traditional variant", got)
+	}
+}
+
+func TestPickMangaDexPrefersSimplifiedAltOverTraditionalPrimary(t *testing.T) {
+	primary := map[string]string{"zh": "久保同學不放過我"}
+	alternatives := []map[string]string{{"zh-hans": "久保同学不放过我"}}
+	if got := pickMangaDexLocalizedValue(primary, alternatives, "zh-CN"); got != "久保同学不放过我" {
+		t.Fatalf("localized title = %q, want Simplified alt title", got)
+	}
+}
+
 func TestPickMangaDexLocalizedValueUsesChineseAltTitle(t *testing.T) {
 	primary := map[string]string{"en": "Spare Me, Great Lord!"}
 	alternatives := []map[string]string{

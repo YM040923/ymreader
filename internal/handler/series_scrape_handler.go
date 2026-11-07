@@ -274,11 +274,15 @@ func filterSeriesMetadataSources(sources []string, contentType string) []string 
 		return nil
 	}
 	allowed := map[string]bool{
-		"anilist":       contentType == "comic",
-		"bangumi":       contentType == "comic",
-		"mangadex":      contentType == "comic",
-		"mangaupdates":  contentType == "comic",
-		"kitsu":         contentType == "comic",
+		"anilist":      contentType == "comic",
+		"bangumi":      contentType == "comic",
+		"mangadex":     contentType == "comic",
+		"mangaupdates": contentType == "comic",
+		"kitsu":        contentType == "comic",
+		// 腾讯动漫：中文正版源，只对漫画有意义。
+		// 不进默认源列表，避免批量刮削时用中文名覆盖日漫已有元数据。
+		"tencent":       contentType == "comic",
+		"bilibili":      contentType == "comic",
 		"googlebooks":   contentType == "novel",
 		"bangumi_novel": contentType == "novel",
 		"anilist_novel": contentType == "novel",

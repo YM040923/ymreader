@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -554,8 +555,32 @@ func supportsOpenAIJSONMode(provider string) bool {
 // Anthropic Provider (含多模态)
 // ============================================================
 
+// anthropicMessagesURL normalizes the configured base URL so a preset
+// ("https://api.anthropic.com"), a versioned base (".../v1") and a full
+// endpoint (".../v1/messages") all resolve to the same messages endpoint.
+func anthropicMessagesURL(apiURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(apiURL), "/")
+	base = strings.TrimSuffix(base, "/v1/messages")
+	base = strings.TrimRight(strings.TrimSuffix(base, "/v1"), "/")
+	if base == "" {
+		base = "https://api.anthropic.com"
+	}
+	return base + "/v1/messages"
+}
+
+func geminiModelURL(apiURL, model, method string) string {
+	base := strings.TrimRight(strings.TrimSpace(apiURL), "/")
+	if idx := strings.Index(base, "/models/"); idx > 0 {
+		base = base[:idx]
+	}
+	if base == "" {
+		base = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	return fmt.Sprintf("%s/models/%s:%s", base, model, method)
+}
+
 func callAnthropic(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, images []ImageContent) (string, tokenUsage, error) {
-	reqURL := apiURL + "/v1/messages"
+	reqURL := anthropicMessagesURL(apiURL)
 
 	// 构建 content
 	var content []interface{}
@@ -649,7 +674,8 @@ func callGemini(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens
 	if model == "" {
 		model = "gemini-2.0-flash"
 	}
-	reqURL := fmt.Sprintf("%s/models/%s:generateContent?key=%s", apiURL, model, cfg.CloudAPIKey)
+	reqURL := geminiModelURL(apiURL, model, "generateContent") +
+		"?key=" + url.QueryEscape(cfg.CloudAPIKey)
 
 	// 构建 parts
 	parts := []interface{}{

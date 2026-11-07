@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -302,7 +303,7 @@ func streamOpenAIResponses(cfg AIConfig, endpoint ResolvedAIEndpoint, systemProm
 
 // streamAnthropic Anthropic 的 SSE 流式调用
 func streamAnthropic(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxTokens int, temperature float64, callback StreamCallback) error {
-	reqURL := apiURL + "/v1/messages"
+	reqURL := anthropicMessagesURL(apiURL)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"model":       cfg.CloudModel,
@@ -376,7 +377,8 @@ func streamGemini(cfg AIConfig, apiURL, systemPrompt, userPrompt string, maxToke
 	if model == "" {
 		model = "gemini-2.0-flash"
 	}
-	reqURL := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", apiURL, model, cfg.CloudAPIKey)
+	reqURL := geminiModelURL(apiURL, model, "streamGenerateContent") +
+		"?alt=sse&key=" + url.QueryEscape(cfg.CloudAPIKey)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"contents": []map[string]interface{}{

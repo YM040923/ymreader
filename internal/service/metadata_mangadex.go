@@ -135,8 +135,25 @@ func SearchMangaDex(query, lang string) []ComicMetadata {
 
 func pickMangaDexLocalizedValue(primary map[string]string, alternatives []map[string]string, lang string) string {
 	if strings.HasPrefix(strings.ToLower(lang), "zh") {
-		for _, values := range append([]map[string]string{primary}, alternatives...) {
-			if value := pickChineseLangValue(values, lang); value != "" {
+		all := append([]map[string]string{primary}, alternatives...)
+		// First pass: an explicit script variant anywhere in the result set.
+		// MangaDex often puts a Traditional zh title in the primary map and the
+		// Simplified alt title in alternatives; scanning each map in isolation
+		// would otherwise return the Traditional title first.
+		exactKeys := []string{"zh-hans", "zh-cn", "zh-sg"}
+		if isTraditionalChineseLang(lang) {
+			exactKeys = []string{"zh-hant", "zh-tw", "zh-hk"}
+		}
+		for _, values := range all {
+			for _, key := range exactKeys {
+				if value := strings.TrimSpace(values[key]); value != "" {
+					return value
+				}
+			}
+		}
+		// Second pass: generic zh after every explicit variant has been checked.
+		for _, values := range all {
+			if value := strings.TrimSpace(values["zh"]); value != "" {
 				return value
 			}
 		}
@@ -146,20 +163,6 @@ func pickMangaDexLocalizedValue(primary map[string]string, alternatives []map[st
 	}
 	for _, values := range alternatives {
 		if value := pickLangValue(values, lang); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func pickChineseLangValue(values map[string]string, lang string) string {
-	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(lang), "_", "-"))
-	keys := []string{"zh", "zh-hans", "zh-cn", "zh-sg", "zh-hant", "zh-tw", "zh-hk"}
-	if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-hant" {
-		keys = []string{"zh-hant", "zh-tw", "zh-hk", "zh", "zh-hans", "zh-cn", "zh-sg"}
-	}
-	for _, key := range keys {
-		if value := strings.TrimSpace(values[key]); value != "" {
 			return value
 		}
 	}

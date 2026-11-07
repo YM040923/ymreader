@@ -107,11 +107,19 @@ func stripHTML(s string) string {
 	return strings.TrimSpace(s)
 }
 
+func isTraditionalChineseLang(lang string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(lang), "_", "-"))
+	return normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-hant"
+}
+
 func pickLangValue(m map[string]string, lang string) string {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(lang), "_", "-"))
 	if strings.HasPrefix(normalized, "zh") {
-		keys := []string{"zh", "zh-hans", "zh-cn", "zh-sg", "zh-hant", "zh-tw", "zh-hk"}
-		if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-hant" {
+		// A generic "zh" entry is often Traditional Chinese. Prefer an explicit
+		// Simplified variant when one exists, otherwise a zh-TW request would
+		// silently fall back to Simplified (and vice versa).
+		keys := []string{"zh-hans", "zh-cn", "zh-sg", "zh", "zh-hant", "zh-tw", "zh-hk"}
+		if isTraditionalChineseLang(normalized) {
 			keys = []string{"zh-hant", "zh-tw", "zh-hk", "zh", "zh-hans", "zh-cn", "zh-sg"}
 		}
 		for _, key := range keys {
