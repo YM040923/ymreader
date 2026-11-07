@@ -28,7 +28,13 @@ const _comicSources = [
   _SourceDef('mangadex', 'MangaDex', '📖', Color(0xFFF97316)),
   _SourceDef('mangaupdates', 'MangaUpdates', '📋', Color(0xFF8B5CF6)),
   _SourceDef('kitsu', 'Kitsu', '🦊', Color(0xFFF59E0B)),
+  _SourceDef('tencent', '腾讯动漫', '🐧', Color(0xFF23A9E2)),
+  _SourceDef('bilibili', 'B站漫画', '📺', Color(0xFFFB7299)),
 ];
+
+/// 默认不勾选的源：腾讯动漫返回中文正式名，排序里容易压过 AniList/Bangumi，
+/// 而批量刮削带覆盖，默认勾选会把日漫库已有元数据换成中文名。
+const _optInComicSources = <String>{'tencent', 'bilibili'};
 
 const _novelSources = [
   _SourceDef('googlebooks', 'Google Books', '📚', Color(0xFF10B981)),
@@ -113,6 +119,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
         final isNovel = comic.isNovel;
         _enabledSources = (isNovel ? _novelSources : _comicSources)
             .map((s) => s.id)
+            .where((id) => isNovel || !_optInComicSources.contains(id))
             .toList();
         // 填充编辑表单
         _authorCtrl.text = comic.author ?? '';
@@ -147,8 +154,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
     });
     try {
       final api = ref.read(metadataApiProvider);
-      final isNovel =
-          _comic != null && _comic!.isNovel;
+      final isNovel = _comic != null && _comic!.isNovel;
       final results = await api.searchMetadata(
         query: _searchCtrl.text.trim(),
         sources: _enabledSources,
@@ -261,6 +267,10 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
         return 'MangaUpdates';
       case 'kitsu':
         return 'Kitsu';
+      case 'tencent':
+        return '腾讯动漫';
+      case 'bilibili':
+        return 'B站漫画';
       case 'googlebooks':
         return 'Google Books';
       default:
@@ -278,10 +288,14 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
       final api = ref.read(metadataApiProvider);
       await api.updateMetadata(
         comicId: widget.comicId,
-        author: _authorCtrl.text.trim().isEmpty ? null : _authorCtrl.text.trim(),
-        publisher: _publisherCtrl.text.trim().isEmpty ? null : _publisherCtrl.text.trim(),
+        author:
+            _authorCtrl.text.trim().isEmpty ? null : _authorCtrl.text.trim(),
+        publisher: _publisherCtrl.text.trim().isEmpty
+            ? null
+            : _publisherCtrl.text.trim(),
         year: int.tryParse(_yearCtrl.text.trim()),
-        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+        description:
+            _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
         language: _langCtrl.text.trim().isEmpty ? null : _langCtrl.text.trim(),
         genre: _genreCtrl.text.trim().isEmpty ? null : _genreCtrl.text.trim(),
       );
@@ -477,10 +491,11 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
             const SizedBox(width: 8),
             // 搜索按钮
             FilledButton.icon(
-              onPressed:
-                  (_searching || _searchCtrl.text.trim().isEmpty || _enabledSources.isEmpty)
-                      ? null
-                      : _doSearch,
+              onPressed: (_searching ||
+                      _searchCtrl.text.trim().isEmpty ||
+                      _enabledSources.isEmpty)
+                  ? null
+                  : _doSearch,
               icon: _searching
                   ? const SizedBox(
                       width: 18,
@@ -531,8 +546,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
                 final enabled = _enabledSources.contains(src.id);
                 return FilterChip(
                   avatar: Text(src.icon, style: const TextStyle(fontSize: 14)),
-                  label: Text(src.name,
-                      style: const TextStyle(fontSize: 12)),
+                  label: Text(src.name, style: const TextStyle(fontSize: 12)),
                   selected: enabled,
                   onSelected: (_) {
                     setState(() {
@@ -580,10 +594,9 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
 
         // 已应用提示（扫描成功）
         if (_appliedIndex == -1) ...[
-          _buildSuccessBanner(
-              _comic != null && _comic!.isNovel
-                  ? '小说元数据应用成功'
-                  : '已从 ComicInfo.xml 应用元数据'),
+          _buildSuccessBanner(_comic != null && _comic!.isNovel
+              ? '小说元数据应用成功'
+              : '已从 ComicInfo.xml 应用元数据'),
           const SizedBox(height: 8),
         ],
 
@@ -724,7 +737,8 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
 
             // 应用按钮
             FilledButton.tonal(
-              onPressed: (_applyingIndex != null) ? null : () => _applyResult(index),
+              onPressed:
+                  (_applyingIndex != null) ? null : () => _applyResult(index),
               style: FilledButton.styleFrom(
                 minimumSize: const Size(0, 36),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -800,10 +814,12 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
               const SizedBox(height: 10),
               if (isNovel) ...[
                 _buildStepItem(cs, '1', '尝试从 EPUB OPF 提取本地元数据'),
-                _buildStepItem(cs, '2', '在线搜索兜底（Google Books / AniList / Bangumi）'),
+                _buildStepItem(
+                    cs, '2', '在线搜索兜底（Google Books / AniList / Bangumi）'),
               ] else ...[
                 _buildStepItem(cs, '1', '尝试从 ComicInfo.xml 提取本地元数据'),
-                _buildStepItem(cs, '2', '在线搜索兜底（AniList / Bangumi / MangaDex 等）'),
+                _buildStepItem(
+                    cs, '2', '在线搜索兜底（AniList / Bangumi / MangaDex 等）'),
               ],
               _buildStepItem(cs, '3', '自动应用最佳匹配结果'),
             ],
@@ -834,8 +850,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
         const SizedBox(height: 16),
 
         // 扫描结果
-        if (_scanResult != null)
-          _buildSuccessBanner(_scanResult!),
+        if (_scanResult != null) _buildSuccessBanner(_scanResult!),
 
         if (_scanError != null)
           Container(
@@ -846,8 +861,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
             ),
             child: Row(
               children: [
-                Icon(Icons.warning_amber_rounded,
-                    size: 20, color: cs.error),
+                Icon(Icons.warning_amber_rounded, size: 20, color: cs.error),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -920,7 +934,10 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            ...fields.where((f) => f.value.value != null && f.value.value!.isNotEmpty).map((f) {
+            ...fields
+                .where(
+                    (f) => f.value.value != null && f.value.value!.isNotEmpty)
+                .map((f) {
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
@@ -954,7 +971,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
               ),
             ],
             if (fields.every(
-                (f) => f.value.value == null || f.value.value!.isEmpty) &&
+                    (f) => f.value.value == null || f.value.value!.isEmpty) &&
                 (comic.description == null || comic.description!.isEmpty))
               Center(
                 child: Padding(
@@ -1011,22 +1028,23 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen>
         const SizedBox(height: 12),
         _buildTextField('类型（逗号分隔）', _genreCtrl, Icons.category),
         const SizedBox(height: 12),
-        _buildTextField('简介', _descCtrl, Icons.description,
-            maxLines: 5),
+        _buildTextField('简介', _descCtrl, Icons.description, maxLines: 5),
         const SizedBox(height: 20),
 
         // 保存按钮
-        FilledButton.icon(
-          onPressed: _saving ? null : _saveMetadata,
-          icon: _saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
-                )
-              : const Icon(Icons.save),
-          label: Text(_saving ? '保存中...' : '保存元数据'),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _saving ? null : _saveMetadata,
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save),
+            label: Text(_saving ? '保存中...' : '保存元数据'),
+          ),
         ),
       ],
     );
@@ -1112,9 +1130,7 @@ class _BatchMetadataDialogState extends ConsumerState<BatchMetadataDialog> {
       _failed = 0;
     });
 
-    _subscription = api
-        .batchScrape(mode: _mode, lang: 'zh')
-        .listen(
+    _subscription = api.batchScrape(mode: _mode, lang: 'zh').listen(
       (event) {
         setState(() {
           switch (event.type) {
@@ -1194,8 +1210,7 @@ class _BatchMetadataDialogState extends ConsumerState<BatchMetadataDialog> {
                   ),
                 ],
                 selected: {_mode},
-                onSelectionChanged: (v) =>
-                    setState(() => _mode = v.first),
+                onSelectionChanged: (v) => setState(() => _mode = v.first),
               ),
               const SizedBox(height: 12),
               Text(
@@ -1205,7 +1220,6 @@ class _BatchMetadataDialogState extends ConsumerState<BatchMetadataDialog> {
                 style: TextStyle(fontSize: 12, color: cs.outline),
               ),
             ],
-
             if (_running || _done) ...[
               // 进度条
               if (_total > 0) ...[

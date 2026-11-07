@@ -1,7 +1,7 @@
 name: nowen_reader
 description: NowenReader Flutter 客户端 — 漫画/小说阅读器
 publish_to: 'none'
-version: 1.2.4+45
+version: 1.5.13+10013
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -25,6 +25,9 @@ dependencies:
   # 本地存储
   shared_preferences: ^2.2.3
   # UI 工具
+  cupertino_icons: ^1.0.8
+  # 液态玻璃底栏（iOS 26 风格，着色器实现）
+  liquid_glass_widgets: ^1.16.1
   flutter_staggered_grid_view: ^0.7.0
   shimmer: ^3.0.0
   photo_view: ^0.15.0
@@ -54,3 +57,11 @@ flutter:
 
   assets:
     - assets/images/
+
+  fonts:
+    - family: Phosphor
+      fonts:
+        - asset: assets/fonts/Phosphor.ttf
+    - family: PhosphorFill
+      fonts:
+        - asset: assets/fonts/Phosphor-Fill.ttf

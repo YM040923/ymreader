@@ -14,7 +14,9 @@ import '../metadata/metadata_screen.dart';
 import '../../widgets/animations.dart';
 import '../../data/providers/server_route_provider.dart';
 import '../../data/providers/server_branding_provider.dart';
+import '../../widgets/responsive.dart';
 import '../../widgets/server_logo.dart';
+import '../shell/app_shell.dart';
 
 final _packageInfo = PackageInfo.fromPlatform();
 
@@ -32,9 +34,8 @@ class SettingsScreen extends ConsumerWidget {
     final routes = ref.watch(serverRouteProvider);
     final branding = ref.watch(currentServerBrandingProvider);
     final latency = routes.latencies[routes.activeUrl];
-    final routeLabel = routes.activeUrl == routes.config.backupUrl
-        ? '备用线路'
-        : '主线路';
+    final routeLabel =
+        routes.activeUrl == routes.config.backupUrl ? '备用线路' : '主线路';
     final latencyLabel = routes.measuring
         ? '测速中…'
         : latency != null
@@ -46,10 +47,22 @@ class SettingsScreen extends ConsumerWidget {
         ? '地址、线路与服务器列表'
         : '$routeLabel · $latencyLabel';
 
+    // 宽屏上整页收成一条居中的列表列，手机上仍是原来的 16。
+    final pagePadding = centeredColumnPadding(
+      MediaQuery.sizeOf(context).width,
+      contentWidth: kListColumnWidth,
+    );
+
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.settings)),
+      // titleSpacing 与整页内边距同源，宽屏上标题不会孤零零留在屏幕边缘。
+      appBar: AppBar(title: Text(l10n.settings), titleSpacing: pagePadding),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.fromLTRB(
+          pagePadding,
+          0,
+          pagePadding,
+          shellBarClearance(context),
+        ),
         children: [
           const SizedBox(height: 8),
 
@@ -58,24 +71,10 @@ class SettingsScreen extends ConsumerWidget {
             SlideAndFade(
               delay: const Duration(milliseconds: 100),
               child: Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      cs.primary,
-                      cs.primary.withOpacity(0.75),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: cs.primary.withOpacity(0.2),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Row(
                   children: [
@@ -84,8 +83,8 @@ class SettingsScreen extends ConsumerWidget {
                       width: 52,
                       height: 52,
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(16),
+                        color: cs.primary,
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Center(
                         child: Text(
@@ -109,8 +108,8 @@ class SettingsScreen extends ConsumerWidget {
                             user.nickname.isNotEmpty
                                 ? user.nickname
                                 : user.username,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: cs.onSurface,
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                             ),
@@ -119,8 +118,8 @@ class SettingsScreen extends ConsumerWidget {
                           Text(
                             '@${user.username} · ${user.isAdmin ? l10n.admin : l10n.user}',
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.75),
-                              fontSize: 13,
+                              color: cs.onSurfaceVariant,
+                              fontSize: 12,
                             ),
                           ),
                         ],
@@ -182,11 +181,18 @@ class SettingsScreen extends ConsumerWidget {
             child: _SettingsGroup(
               children: [
                 _SettingsTile(
-                  icon: Icons.favorite_rounded,
-                  iconColor: const Color(0xFFFF6B6B),
-                  title: l10n.favorites,
-                  subtitle: '查看和管理收藏的书籍',
-                  onTap: () => context.push('/favorites'),
+                  icon: Icons.collections_bookmark_outlined,
+                  iconColor: cs.primary,
+                  title: '我的书架',
+                  subtitle: '收藏、历史与离线缓存',
+                  onTap: () => context.push('/records'),
+                ),
+                _SettingsTile(
+                  icon: Icons.insights_outlined,
+                  iconColor: cs.primary,
+                  title: '阅读统计',
+                  subtitle: '阅读时长与阅读完成度',
+                  onTap: () => context.push('/stats'),
                 ),
                 _SettingsTile(
                   icon: Icons.chrome_reader_mode_rounded,
@@ -218,7 +224,7 @@ class SettingsScreen extends ConsumerWidget {
                 _ScanLibraryTile(ref: ref),
                 _SettingsTile(
                   icon: Icons.auto_fix_high_rounded,
-                  iconColor: Colors.purple,
+                  iconColor: const Color(0xFFC2882F),
                   title: l10n.batchScrapeMetadata,
                   subtitle: l10n.batchScrapeDesc,
                   onTap: () {
@@ -237,7 +243,7 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 _SettingsTile(
                   icon: Icons.auto_awesome_rounded,
-                  iconColor: Colors.deepPurple,
+                  iconColor: const Color(0xFFC2882F),
                   title: '扫描规则',
                   subtitle: 'Work 级 AI 识别 + 目录整理',
                   onTap: () => context.push('/scan-rules'),
@@ -251,7 +257,7 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 _SettingsTile(
                   icon: Icons.settings_applications_rounded,
-                  iconColor: Colors.indigo,
+                  iconColor: const Color(0xFF2E7D6E),
                   title: '站点设置',
                   subtitle: '电子书类型识别策略等',
                   onTap: () => context.push('/site-settings'),
@@ -282,7 +288,7 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.auto_stories_rounded,
                 iconColor: cs.primary,
-                title: 'NowenReader',
+                title: '折角',
                 subtitle: '漫画/小说阅读器',
                 showArrow: false,
               ),
@@ -348,11 +354,9 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         title,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
-          color:
-              Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
-          letterSpacing: 0.3,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );
@@ -372,19 +376,7 @@ class _SettingsGroup extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          for (int i = 0; i < children.length; i++) ...[
-            children[i],
-            if (i < children.length - 1)
-              Divider(
-                height: 0.5,
-                indent: 56,
-                color: Theme.of(context).dividerTheme.color?.withOpacity(0.3),
-              ),
-          ],
-        ],
-      ),
+      child: Column(children: children),
     );
   }
 }
@@ -414,25 +406,33 @@ class _SettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Per-row hues stay as a hint of category, but at a much lower chroma so
+    // the list reads as one family instead of a row of coloured stickers.
+    final hue = HSLColor.fromColor(iconColor);
+    final tint = hue
+        .withSaturation(hue.saturation.clamp(0.0, 0.38))
+        .withLightness(hue.lightness.clamp(0.32, 0.58))
+        .toColor();
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
           child: Row(
             children: [
               // 图标
-              leading ?? Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(icon, size: 18, color: iconColor),
-              ),
+              leading ??
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: tint.withValues(alpha: 0.09),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, size: 17, color: tint),
+                  ),
               const SizedBox(width: 14),
               // 文字
               Expanded(
@@ -444,7 +444,7 @@ class _SettingsTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: FontWeight.w500,
                         color: titleColor ?? cs.onSurface,
                       ),
@@ -454,8 +454,8 @@ class _SettingsTile extends StatelessWidget {
                       Text(
                         subtitle!,
                         style: TextStyle(
-                          fontSize: 12,
-                          color: cs.onSurfaceVariant.withOpacity(0.6),
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -468,8 +468,8 @@ class _SettingsTile extends StatelessWidget {
               if (showArrow && onTap != null)
                 Icon(
                   Icons.chevron_right_rounded,
-                  size: 20,
-                  color: cs.onSurfaceVariant.withOpacity(0.3),
+                  size: 18,
+                  color: cs.onSurfaceVariant,
                 ),
             ],
           ),
@@ -807,7 +807,7 @@ class _LanguageTile extends ConsumerWidget {
     final current = ref.watch(appLanguageProvider);
     return _SettingsTile(
       icon: Icons.translate_rounded,
-      iconColor: Colors.indigo,
+      iconColor: const Color(0xFF2E7D6E),
       title: l10n.language,
       subtitle: label(current, l10n),
       onTap: () async {

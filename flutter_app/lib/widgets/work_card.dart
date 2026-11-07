@@ -11,6 +11,7 @@ class WorkCard extends StatelessWidget {
   final String serverUrl;
   final bool isGrid;
   final VoidCallback? onFavorite;
+  final bool showMeta;
 
   const WorkCard({
     super.key,
@@ -18,6 +19,7 @@ class WorkCard extends StatelessWidget {
     required this.serverUrl,
     this.isGrid = true,
     this.onFavorite,
+    this.showMeta = false,
   });
 
   @override
@@ -38,7 +40,7 @@ class WorkCard extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(8),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -50,7 +52,7 @@ class WorkCard extends StatelessWidget {
                       bottom: 0,
                       child: LinearProgressIndicator(
                         value: work.progress / 100,
-                        minHeight: 3,
+                        minHeight: 2,
                         backgroundColor: Colors.black26,
                         color: colors.primary,
                       ),
@@ -59,14 +61,22 @@ class WorkCard extends StatelessWidget {
                     Positioned(
                       top: 6,
                       right: 6,
-                      child: IconButton.filledTonal(
-                        visualDensity: VisualDensity.compact,
-                        iconSize: 17,
-                        onPressed: onFavorite,
-                        icon: Icon(
-                          work.isFavorite
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
+                      child: GestureDetector(
+                        onTap: onFavorite,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.38),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Icon(
+                            work.isFavorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            size: 16,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
@@ -79,15 +89,33 @@ class WorkCard extends StatelessWidget {
             work.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              fontSize: 15,
+              height: 1.2,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            '${work.itemCount}话/卷 · ${work.pageCount}页',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 10, color: colors.onSurfaceVariant),
-          ),
+          if (showMeta) ...[
+            const SizedBox(height: 3),
+            Text(
+              work.itemCount > 0 && work.completedItemCount >= work.itemCount
+                  ? '已读至最新话'
+                  : work.completedItemCount > 0
+                      ? '已读 ${work.completedItemCount}/${work.itemCount}话'
+                      : work.progress > 0
+                          ? '已读 ${work.progress}%'
+                          : '${work.itemCount}话',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: work.hasReadingProgress
+                    ? colors.primary
+                    : colors.onSurfaceVariant,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -99,14 +127,14 @@ class WorkCard extends StatelessWidget {
       onTap: () => context.push(work.detailRoute()),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       leading: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(width: 52, height: 72, child: _cover(colors)),
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(width: 40, height: 53, child: _cover(colors)),
       ),
       title: Text(
         work.title,
-        maxLines: 2,
+        maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w600),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       ),
       subtitle: Text(
         [
@@ -114,11 +142,13 @@ class WorkCard extends StatelessWidget {
           '${work.itemCount}话/卷',
           '${work.pageCount}页',
         ].join(' · '),
-        maxLines: 2,
+        maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
       ),
       trailing: onFavorite == null
-          ? const Icon(Icons.chevron_right_rounded)
+          ? Icon(Icons.chevron_right_rounded,
+              size: 18, color: colors.onSurfaceVariant)
           : IconButton(
               onPressed: onFavorite,
               icon: Icon(

@@ -9,6 +9,7 @@ import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
 import '../../data/providers/work_provider.dart';
 import '../../widgets/authenticated_image.dart';
+import '../../widgets/responsive.dart';
 import 'work_manage_dialogs.dart';
 
 class WorkDetailScreen extends ConsumerWidget {
@@ -74,7 +75,7 @@ class _WorkDetailBody extends ConsumerStatefulWidget {
 }
 
 class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
-  _DirectoryViewMode _directoryMode = _DirectoryViewMode.covers;
+  _DirectoryViewMode _directoryMode = _DirectoryViewMode.list;
 
   Work get work => widget.work;
 
@@ -199,19 +200,21 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontal = pagePadding(width);
     final serverUrl = ref.watch(authProvider).serverUrl;
     final libraries = ref.watch(accessibleLibrariesProvider).valueOrNull ??
         const <LibrarySummary>[];
     final canManage = ref.watch(authProvider).user?.isAdmin == true ||
-        libraries.any((library) =>
-            library.id == work.libraryId && library.canManage);
+        libraries.any(
+            (library) => library.id == work.libraryId && library.canManage);
     final target = work.readingTarget;
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
             pinned: true,
-            expandedHeight: 330,
+            title: const Text('作品详情'),
             actions: [
               if (canManage)
                 PopupMenuButton<String>(
@@ -281,136 +284,161 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                 ),
               ),
             ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  AuthenticatedImage(
-                    imageUrl: work.resolvedCoverUrl(serverUrl),
-                    fit: BoxFit.cover,
-                    placeholder:
-                        ColoredBox(color: colors.surfaceContainerHighest),
-                    errorWidget:
-                        ColoredBox(color: colors.surfaceContainerHighest),
-                  ),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black87,
-                        ],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 20,
-                    right: 20,
-                    bottom: 24,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          work.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 25,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        if (work.author.isNotEmpty) ...[
-                          const SizedBox(height: 5),
-                          Text(
-                            work.author,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: SizedBox(
+                          width: 112,
+                          height: 149,
+                          child: AuthenticatedImage(
+                            imageUrl: work.resolvedCoverUrl(serverUrl),
+                            fit: BoxFit.cover,
+                            placeholder: ColoredBox(
+                              color: colors.surfaceContainerHighest,
+                            ),
+                            errorWidget: ColoredBox(
+                              color: colors.surfaceContainerHighest,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: SizedBox(
+                          height: 149,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                work.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.25,
+                                ),
+                              ),
+                              if (work.author.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  work.author,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 4),
+                              Text(
+                                '${work.itemCount}话 · ${work.pageCount}页',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colors.tertiary,
+                                ),
+                              ),
+                              if (target != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  '上次读到 ${target.unit.displayLabel} · 第${target.relativePage + 1}页',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(1),
+                                  child: LinearProgressIndicator(
+                                    value: work.progress / 100,
+                                    minHeight: 2,
+                                    color: colors.primary,
+                                    backgroundColor: colors.outlineVariant,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
                   SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
+                    width: width >= 860 ? 320 : double.infinity,
+                    child: FilledButton(
                       onPressed: target == null
                           ? null
                           : () => _openReader(work.readerRoute()),
-                      icon: Icon(
-                        work.hasReadingProgress
-                            ? Icons.play_arrow_rounded
-                            : Icons.auto_stories_rounded,
+                      child: Text(
+                        target == null
+                            ? '开始阅读'
+                            : '继续阅读 · ${target.unit.displayLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      label: Text(work.hasReadingProgress && target != null
-                          ? '继续阅读 · ${target.unit.displayLabel} · 第${target.relativePage + 1}页'
-                          : '立即阅读'),
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      Chip(label: Text('${work.itemCount}话/卷')),
-                      Chip(label: Text('${work.pageCount}页')),
-                      for (final category in work.categories)
-                        Chip(label: Text(category.name)),
-                    ],
-                  ),
                   if (work.description.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      work.description,
-                      style: TextStyle(
-                        height: 1.55,
-                        color: colors.onSurfaceVariant,
+                    const SizedBox(height: 20),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 760),
+                      child: Text(
+                        work.description,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.55,
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
                   Row(
                     children: [
-                      Expanded(
-                        child: Text(
-                          '目录',
-                          style:
-                              Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                      const Text(
+                        '目录',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${work.units.length} 话',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.tertiary,
                         ),
                       ),
-                      SegmentedButton<_DirectoryViewMode>(
-                        segments: const [
-                          ButtonSegment(
-                            value: _DirectoryViewMode.covers,
-                            icon: Icon(Icons.grid_view_rounded),
-                            tooltip: '封面目录',
-                          ),
-                          ButtonSegment(
-                            value: _DirectoryViewMode.list,
-                            icon: Icon(Icons.view_list_rounded),
-                            tooltip: '文字目录',
-                          ),
-                        ],
-                        selected: {_directoryMode},
-                        showSelectedIcon: false,
-                        onSelectionChanged: (value) =>
-                            setState(() => _directoryMode = value.first),
+                      const Spacer(),
+                      _DirectoryTab(
+                        label: '封面',
+                        selected: _directoryMode == _DirectoryViewMode.covers,
+                        onTap: () => setState(
+                            () => _directoryMode = _DirectoryViewMode.covers),
+                      ),
+                      const SizedBox(width: 16),
+                      _DirectoryTab(
+                        label: '列表',
+                        selected: _directoryMode == _DirectoryViewMode.list,
+                        onTap: () => setState(
+                            () => _directoryMode = _DirectoryViewMode.list),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
                 ],
               ),
             ),
@@ -423,57 +451,93 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
               ),
             )
           else if (_directoryMode == _DirectoryViewMode.list)
-            SliverList.separated(
-              itemCount: work.units.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(height: 1, indent: 18, endIndent: 18),
-              itemBuilder: (_, index) {
-                final unit = work.units[index];
-                final isCurrent = unit.id == work.continueUnitId;
-                return ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 3),
-                  leading: CircleAvatar(
-                    child: Text('${index + 1}'),
-                  ),
-                  title: Text(
-                    unit.displayLabel.isEmpty ? unit.title : unit.displayLabel,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text('${unit.pageCount}页'),
-                  trailing: isCurrent
-                      ? Icon(Icons.bookmark_rounded, color: colors.primary)
-                      : const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _openReader(
-                    work.readerRoute(
-                      target: WorkReadingTarget(
-                        unit: unit,
-                        absolutePage: unit.startPage,
-                        isContinue: false,
+            SliverPadding(
+              padding: EdgeInsets.symmetric(horizontal: horizontal),
+              sliver: SliverList.builder(
+                itemCount: work.units.length,
+                itemBuilder: (_, index) {
+                  final unit = work.units[index];
+                  final isCurrent = unit.id == work.continueUnitId;
+                  final label = unit.displayLabel.isEmpty
+                      ? unit.title
+                      : unit.displayLabel;
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _openReader(
+                      work.readerRoute(
+                        target: WorkReadingTarget(
+                          unit: unit,
+                          absolutePage: unit.startPage,
+                          isContinue: false,
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                    child: SizedBox(
+                      height: 56,
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            child: isCurrent
+                                ? Center(
+                                    child: Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: colors.primary,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          Expanded(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: isCurrent
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '${unit.pageCount} 页',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colors.tertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
             ),
           if (work.units.isNotEmpty &&
               _directoryMode == _DirectoryViewMode.covers)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 16),
+              padding: EdgeInsets.fromLTRB(horizontal, 4, horizontal, 16),
               sliver: SliverGrid.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  childAspectRatio: 0.62,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 14,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: width >= 860
+                      ? coverColumns(width)
+                      : coverColumns(width).clamp(3, 5),
+                  childAspectRatio: 0.60,
+                  crossAxisSpacing: width >= 860 ? 16 : 8,
+                  mainAxisSpacing: width >= 860 ? 24 : 16,
                 ),
                 itemCount: work.units.length,
                 itemBuilder: (_, index) {
                   final unit = work.units[index];
                   final isCurrent = unit.id == work.continueUnitId;
                   return InkWell(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(4),
                     onTap: () => _openReader(
                       work.readerRoute(
                         target: WorkReadingTarget(
@@ -491,7 +555,7 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                             fit: StackFit.expand,
                             children: [
                               ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(4),
                                 child: AuthenticatedImage(
                                   imageUrl: unit.resolvedCoverUrl(serverUrl),
                                   comicId: unit.comicId,
@@ -510,19 +574,17 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                               ),
                               if (isCurrent)
                                 Positioned(
-                                  top: 6,
-                                  right: 6,
-                                  child: DecoratedBox(
+                                  top: 8,
+                                  right: 8,
+                                  child: Container(
+                                    width: 10,
+                                    height: 10,
                                     decoration: BoxDecoration(
                                       color: colors.primary,
                                       shape: BoxShape.circle,
-                                    ),
-                                    child: const Padding(
-                                      padding: EdgeInsets.all(5),
-                                      child: Icon(
-                                        Icons.bookmark_rounded,
-                                        size: 15,
-                                        color: Colors.white,
+                                      border: Border.all(
+                                        color: colors.surface,
+                                        width: 2,
                                       ),
                                     ),
                                   ),
@@ -543,9 +605,9 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                           ),
                         ),
                         Text(
-                          '${unit.pageCount}页',
+                          '${unit.pageCount} 页',
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 11,
                             color: colors.onSurfaceVariant,
                           ),
                         ),
@@ -557,6 +619,35 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
             ),
           const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
+      ),
+    );
+  }
+}
+
+class _DirectoryTab extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _DirectoryTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          color: selected ? colors.onSurface : colors.tertiary,
+        ),
       ),
     );
   }

@@ -28,11 +28,11 @@ class ComicListTile extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Material(
         color: Theme.of(context).cardTheme.color ?? cs.surface,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Row(
@@ -40,17 +40,10 @@ class ComicListTile extends StatelessWidget {
                 // 封面缩略图
                 Container(
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(4),
                     child: SizedBox(
                       width: 58,
                       height: 82,
@@ -63,12 +56,14 @@ class ComicListTile extends StatelessWidget {
                             placeholder: Container(
                               color: cs.surfaceContainerHighest,
                               child: Icon(Icons.image_outlined,
-                                  size: 22, color: cs.onSurfaceVariant.withOpacity(0.3)),
+                                  size: 22,
+                                  color: cs.onSurfaceVariant.withOpacity(0.3)),
                             ),
                             errorWidget: Container(
                               color: cs.surfaceContainerHighest,
                               child: Icon(Icons.broken_image_outlined,
-                                  size: 22, color: cs.onSurfaceVariant.withOpacity(0.3)),
+                                  size: 22,
+                                  color: cs.onSurfaceVariant.withOpacity(0.3)),
                             ),
                           ),
                           // 阅读进度条

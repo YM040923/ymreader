@@ -7,13 +7,13 @@ import '../features/auth/login_screen.dart';
 import '../features/cache/cache_screen.dart';
 import '../features/detail/comic_detail_screen.dart';
 import '../features/detail/work_detail_screen.dart';
-import '../features/favorites/favorites_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/metadata/metadata_screen.dart';
 import '../features/reader/novel_reader_screen.dart';
 import '../features/reader/offline_novel_reader_screen.dart';
 import '../features/reader/pdf_reader_screen.dart';
 import '../features/reader/reader_dispatch_screen.dart';
+import '../features/records/records_screen.dart';
 import '../features/scan_rules/scan_rules_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/server/server_config_screen.dart';
@@ -139,14 +139,15 @@ final routerProvider = Provider<GoRouter>((ref) {
             pageBuilder: (_, __) => const NoTransitionPage(child: HomeScreen()),
           ),
           GoRoute(
-            path: '/search',
-            pageBuilder: (_, __) =>
-                const NoTransitionPage(child: SearchScreen()),
+            path: '/discover',
+            pageBuilder: (_, __) => const NoTransitionPage(
+              child: SearchScreen(discover: true),
+            ),
           ),
           GoRoute(
-            path: '/stats',
+            path: '/records',
             pageBuilder: (_, __) =>
-                const NoTransitionPage(child: StatsScreen()),
+                const NoTransitionPage(child: RecordsScreen()),
           ),
           GoRoute(
             path: '/settings',
@@ -154,6 +155,18 @@ final routerProvider = Provider<GoRouter>((ref) {
                 const NoTransitionPage(child: SettingsScreen()),
           ),
         ],
+      ),
+      GoRoute(
+        path: '/search',
+        builder: (_, __) => const SearchScreen(),
+      ),
+      GoRoute(
+        path: '/stats',
+        builder: (_, __) => const StatsScreen(),
+      ),
+      GoRoute(
+        path: '/favorites',
+        redirect: (_, __) => '/records',
       ),
       GoRoute(
         path: '/comic/:id',
@@ -173,10 +186,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/tag-manager',
         builder: (_, __) => const TagManagerScreen(),
-      ),
-      GoRoute(
-        path: '/favorites',
-        builder: (_, __) => const FavoritesScreen(),
       ),
       GoRoute(
         path: '/upload',

@@ -81,85 +81,65 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
     final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       body: _bgAnimation == null
-        ? const SizedBox.shrink()
-        : AnimatedBuilder(
-        animation: _bgAnimation!,
-        builder: (context, child) {
-          final animValue = _bgAnimation?.value ?? 0.0;
-          return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: isDark
-                    ? [
-                        Color.lerp(const Color(0xFF0F0F0F), cs.primary.withOpacity(0.15), animValue)!,
-                        const Color(0xFF0F0F0F),
-                      ]
-                    : [
-                        Color.lerp(const Color(0xFFFAFAF9), cs.primary.withOpacity(0.06), animValue)!,
-                        const Color(0xFFFAFAF9),
+          ? const SizedBox.shrink()
+          : AnimatedBuilder(
+              animation: _bgAnimation!,
+              builder: (context, child) => ColoredBox(
+                color: cs.surface,
+                child: child,
+              ),
+              child: SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 48),
+
+                        // ═══════════════════════════════════
+                        // ─── Logo + 标题 ───
+                        // ═══════════════════════════════════
+                        _buildLogoSection(cs, authState),
+                        const SizedBox(height: 44),
+
+                        // ═══════════════════════════════════
+                        // ─── 表单卡片 ───
+                        // ═══════════════════════════════════
+                        _buildFormCard(cs, authState),
+
+                        // ─── 错误提示 ───
+                        if (authState.error != null) ...[
+                          const SizedBox(height: 12),
+                          _buildErrorBanner(cs, authState.error!),
+                        ],
+
+                        const SizedBox(height: 24),
+
+                        // ═══════════════════════════════════
+                        // ─── 提交按钮 ───
+                        // ═══════════════════════════════════
+                        _buildSubmitButton(cs, authState),
+                        const SizedBox(height: 20),
+
+                        // ─── 切换登录/注册 ───
+                        if (!authState.needsSetup) _buildToggleLink(cs),
+
+                        const SizedBox(height: 12),
+
+                        // ─── 切换服务器 ───
+                        _buildServerLink(cs),
+
+                        const SizedBox(height: 48),
                       ],
-                stops: const [0.0, 0.45],
+                    ),
+                  ),
+                ),
               ),
             ),
-            child: child,
-          );
-        },
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 48),
-
-                  // ═══════════════════════════════════
-                  // ─── Logo + 标题 ───
-                  // ═══════════════════════════════════
-                  _buildLogoSection(cs, authState),
-                  const SizedBox(height: 44),
-
-                  // ═══════════════════════════════════
-                  // ─── 表单卡片 ───
-                  // ═══════════════════════════════════
-                  _buildFormCard(cs, isDark, authState),
-
-                  // ─── 错误提示 ───
-                  if (authState.error != null) ...[
-                    const SizedBox(height: 12),
-                    _buildErrorBanner(cs, authState.error!),
-                  ],
-
-                  const SizedBox(height: 24),
-
-                  // ═══════════════════════════════════
-                  // ─── 提交按钮 ───
-                  // ═══════════════════════════════════
-                  _buildSubmitButton(cs, authState),
-                  const SizedBox(height: 20),
-
-                  // ─── 切换登录/注册 ───
-                  if (!authState.needsSetup)
-                    _buildToggleLink(cs),
-
-                  const SizedBox(height: 12),
-
-                  // ─── 切换服务器 ───
-                  _buildServerLink(cs),
-
-                  const SizedBox(height: 48),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -170,71 +150,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       duration: const Duration(milliseconds: 600),
       child: Column(
         children: [
-          BreathingPulse(
-            minScale: 0.96,
-            maxScale: 1.04,
-            duration: const Duration(milliseconds: 2800),
-            child: Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    cs.primary,
-                    cs.primary.withOpacity(0.65),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: cs.primary.withOpacity(0.2),
-                    blurRadius: 28,
-                    offset: const Offset(0, 10),
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: ServerLogo(branding: branding, size: 80),
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: cs.primary,
+              borderRadius: BorderRadius.circular(16),
             ),
+            child: ServerLogo(branding: branding, size: 72),
           ),
-          const SizedBox(height: 28),
-
+          const SizedBox(height: 24),
           Text(
             branding.name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 12),
-
+          const SizedBox(height: 10),
           Text(
-            authState.needsSetup
-                ? '创建管理员'
-                : (_isRegister ? '创建账户' : '欢迎回来'),
+            authState.needsSetup ? '创建管理员' : (_isRegister ? '创建账户' : '欢迎回来'),
             style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.8,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 8),
-
+          const SizedBox(height: 6),
           Text(
             authState.needsSetup
                 ? '首次使用，请创建管理员账户'
                 : (_isRegister ? '注册一个新账户开始阅读' : '登录以继续你的阅读之旅'),
             style: TextStyle(
-              fontSize: 14,
-              color: cs.onSurfaceVariant.withOpacity(0.55),
-              letterSpacing: 0.2,
+              fontSize: 12,
+              color: cs.onSurfaceVariant,
             ),
           ),
         ],
@@ -243,27 +196,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   }
 
   // ─── 表单卡片 ───
-  Widget _buildFormCard(ColorScheme cs, bool isDark, AuthState authState) {
+  Widget _buildFormCard(ColorScheme cs, AuthState authState) {
     return SlideAndFade(
       delay: const Duration(milliseconds: 150),
       duration: const Duration(milliseconds: 500),
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isDark
-                ? Colors.white.withOpacity(0.06)
-                : Colors.black.withOpacity(0.04),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
-              blurRadius: 20,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
           children: [
@@ -305,7 +246,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               obscureText: _obscurePassword,
               onSubmitted: (_) => _submit(),
               suffixIcon: GestureDetector(
-                onTap: () => setState(() => _obscurePassword = !_obscurePassword),
+                onTap: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
                 child: Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: Icon(
@@ -346,7 +288,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 color: cs.error.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
+              child:
+                  Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -372,25 +315,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           width: double.infinity,
-          height: 54,
+          height: 48,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: authState.isLoading
-                  ? [cs.primary.withOpacity(0.5), cs.primary.withOpacity(0.35)]
-                  : [cs.primary, cs.primary.withOpacity(0.8)],
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: authState.isLoading
-                ? []
-                : [
-                    BoxShadow(
-                      color: cs.primary.withOpacity(0.25),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
+            color: authState.isLoading
+                ? cs.onSurface.withValues(alpha: 0.62)
+                : cs.onSurface,
+            borderRadius: BorderRadius.circular(8),
           ),
           child: Center(
             child: authState.isLoading
@@ -401,16 +331,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.white.withOpacity(0.9),
+                          strokeWidth: 2,
+                          color: cs.surface,
                         ),
                       ),
                       const SizedBox(width: 12),
                       Text(
                         '请稍候…',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: 16,
+                          color: cs.surface,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -420,18 +350,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        _isRegister ? Icons.person_add_rounded : Icons.login_rounded,
-                        color: Colors.white,
-                        size: 20,
+                        _isRegister
+                            ? Icons.person_add_rounded
+                            : Icons.login_rounded,
+                        color: cs.surface,
+                        size: 18,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Text(
                         _isRegister ? '注册' : '登录',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
+                        style: TextStyle(
+                          color: cs.surface,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
                         ),
                       ),
                     ],
@@ -540,57 +471,43 @@ class _LoginTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          padding: const EdgeInsets.only(left: 2, bottom: 6),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: cs.onSurfaceVariant.withOpacity(0.5),
-              letterSpacing: 0.3,
+              color: cs.onSurfaceVariant,
             ),
           ),
         ),
-        Container(
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.white.withOpacity(0.05)
-                : Colors.black.withOpacity(0.03),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: TextField(
-            controller: controller,
-            obscureText: obscureText,
-            textInputAction: textInputAction,
-            onSubmitted: onSubmitted,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              color: cs.onSurface,
+        TextField(
+          controller: controller,
+          obscureText: obscureText,
+          textInputAction: textInputAction,
+          onSubmitted: onSubmitted,
+          style: TextStyle(fontSize: 14, color: cs.onSurface),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: cs.surface,
+            hintText: hint,
+            hintStyle: TextStyle(fontSize: 14, color: cs.tertiary),
+            prefixIcon: Icon(icon, size: 18, color: cs.onSurfaceVariant),
+            suffixIcon: suffixIcon,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: cs.outline),
             ),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(
-                color: cs.onSurfaceVariant.withOpacity(0.25),
-                fontWeight: FontWeight.w400,
-              ),
-              prefixIcon: Icon(
-                icon,
-                size: 20,
-                color: cs.onSurfaceVariant.withOpacity(0.35),
-              ),
-              suffixIcon: suffixIcon,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 14),
-              isDense: true,
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: cs.onSurface, width: 1),
             ),
           ),
         ),

@@ -60,7 +60,11 @@ class AppLocalizations {
   // 导航
   // ============================================================
   String get navHome => translate('nav_home');
+  String get navDiscover => translate('nav_discover');
+  String get navRecords => translate('nav_records');
   String get navSearch => translate('nav_search');
+  String get navFavorites => translate('nav_favorites');
+  String get navMine => translate('nav_mine');
   String get navStats => translate('nav_stats');
   String get navSettings => translate('nav_settings');
 
@@ -177,7 +181,7 @@ class _AppLocalizationsDelegate
 // ============================================================
 const Map<String, String> _zhStrings = {
   // 通用
-  'app_title': 'NowenReader',
+  'app_title': '折角',
   'cancel': '取消',
   'confirm': '确定',
   'save': '保存',
@@ -196,7 +200,11 @@ const Map<String, String> _zhStrings = {
 
   // 导航
   'nav_home': '首页',
+  'nav_discover': '发现',
+  'nav_records': '书架',
   'nav_search': '搜索',
+  'nav_favorites': '收藏',
+  'nav_mine': '我的',
   'nav_stats': '统计',
   'nav_settings': '设置',
 
@@ -283,7 +291,7 @@ const Map<String, String> _zhStrings = {
 // ============================================================
 const Map<String, String> _enStrings = {
   // Common
-  'app_title': 'NowenReader',
+  'app_title': '折角',
   'cancel': 'Cancel',
   'confirm': 'OK',
   'save': 'Save',
@@ -302,6 +310,10 @@ const Map<String, String> _enStrings = {
 
   // Navigation
   'nav_home': 'Home',
+  'nav_discover': 'Discover',
+  'nav_records': 'Shelf',
+  'nav_favorites': 'Saved',
+  'nav_mine': 'Mine',
   'nav_search': 'Search',
   'nav_stats': 'Stats',
   'nav_settings': 'Settings',
@@ -356,7 +368,8 @@ const Map<String, String> _enStrings = {
   'tag_name': 'Tag Name',
   'enter_new_name': 'Enter new name',
   'merge_tags': 'Merge Tags',
-  'merge_tags_desc': 'Select the target tag to keep (others will be merged into it):',
+  'merge_tags_desc':
+      'Select the target tag to keep (others will be merged into it):',
   'create_category': 'New Category',
   'category_name': 'Category Name',
   'edit_category': 'Edit Category',

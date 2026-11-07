@@ -230,13 +230,7 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
       left: 0,
       right: 0,
       child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
+        decoration: const BoxDecoration(color: Color(0xE60E0E10)),
         child: SafeArea(
           bottom: false,
           child: Row(
@@ -271,13 +265,7 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
       left: 0,
       right: 0,
       child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
+        decoration: const BoxDecoration(color: Color(0xF20E0E10)),
         child: SafeArea(
           top: false,
           child: Padding(

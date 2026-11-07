@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../widgets/phosphor_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/api/work_api.dart';
@@ -9,8 +11,11 @@ import '../../data/providers/server_branding_provider.dart';
 import '../../data/providers/work_provider.dart';
 import '../../widgets/continue_reading.dart';
 import '../../widgets/directory_card.dart';
-import '../../widgets/server_logo.dart';
+import '../../widgets/featured_carousel.dart';
+import '../../widgets/responsive.dart';
+import '../../widgets/zhejiao_mark.dart';
 import '../../widgets/work_card.dart';
+import '../shell/app_shell.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -28,6 +33,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<LibraryDirectoryBreadcrumb> _breadcrumbs = const [];
   bool _loadingDirectories = false;
   bool _restoredDirectoryMode = false;
+  int _featuredRefresh = 0;
 
   Future<void> _loadDirectories(String libraryId) async {
     setState(() => _loadingDirectories = true);
@@ -78,10 +84,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     await _saveDirectoryMode(true);
     await notifier.load(
       query: ref.read(workListProvider).query.copyWith(
-            libraryIds: [libraryId],
-            filterByDirectory: true,
-            clearDirectory: true,
-          ),
+        libraryIds: [libraryId],
+        filterByDirectory: true,
+        clearDirectory: true,
+      ),
     );
     await _loadDirectories(libraryId);
   }
@@ -106,7 +112,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     await _loadDirectories(libraryId);
   }
 
-  Future<void> _selectLibrary(String? libraryId) async {    final notifier = ref.read(workListProvider.notifier);
+  Future<void> _selectLibrary(String? libraryId) async {
+    final notifier = ref.read(workListProvider.notifier);
     final query = ref.read(workListProvider).query;
     if (!_directoryMode) {
       await notifier.load(
@@ -213,14 +220,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final libraries = ref.watch(accessibleLibrariesProvider);
     final viewMode = ref.watch(viewModeProvider);
     final serverUrl = ref.watch(authProvider).serverUrl;
-    final branding = ref.watch(currentServerBrandingProvider);
     final cs = Theme.of(context).colorScheme;
     final libraryList = libraries.valueOrNull;
-    final activeLibraryName =
-        libraryList != null && libraryList.length == 1 ? libraryList.first.name : '书库';
-    final String? activeLibraryId = libraryList != null && libraryList.length == 1
-        ? libraryList.first.id
-        : (state.query.libraryIds.length == 1 ? state.query.libraryIds.first : null);
+    final String? activeLibraryId =
+        libraryList != null && libraryList.length == 1
+            ? libraryList.first.id
+            : (state.query.libraryIds.length == 1
+                ? state.query.libraryIds.first
+                : null);
     if (!_restoredDirectoryMode && libraryList != null) {
       _restoredDirectoryMode = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -233,17 +240,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       });
     }
     final width = MediaQuery.sizeOf(context).width;
-    final columns = width >= 900
-        ? 7
-        : width >= 650
-            ? 5
-            : width >= 420
-                ? 4
-                : 3;
+    final columns = coverColumns(width);
+    final horizontal = pagePadding(width);
+    final gridHorizontal = pagePadding(width, phone: 12);
 
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: () async {
+          setState(() => _featuredRefresh++);
           final brandingRefresh =
               ref.read(serverBrandingProvider.notifier).refresh(force: true);
           ref.invalidate(accessibleLibrariesProvider);
@@ -260,31 +264,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               floating: true,
               snap: true,
               toolbarHeight:
-                  56 + (MediaQuery.textScalerOf(context).scale(16) - 16) * 2,
-              title: Row(
+                  52 + (MediaQuery.textScalerOf(context).scale(17) - 17) * 2,
+              titleSpacing: horizontal,
+              title: const Row(
                 children: [
-                  ServerLogo(branding: branding, size: 30),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(branding.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 16)),
-                        Text(activeLibraryName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 11, color: cs.onSurfaceVariant)),
-                      ],
-                    ),
+                  ZhejiaoMark(size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    '首页',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
               actions: [
+                IconButton(
+                  tooltip: '搜索',
+                  onPressed: () => context.push('/search'),
+                  icon: const Icon(PhosphorIconsRegular.magnifyingGlass,
+                      size: 21),
+                ),
                 IconButton(
                   tooltip: _directoryMode ? '退出目录浏览' : '按目录浏览',
                   onPressed: activeLibraryId == null
@@ -292,29 +290,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       : () => _toggleDirectoryMode(activeLibraryId),
                   icon: Icon(
                     _directoryMode
-                        ? Icons.folder_open_rounded
-                        : Icons.folder_outlined,
+                        ? PhosphorIconsFill.folderSimple
+                        : PhosphorIconsRegular.folderSimple,
+                    size: 22,
                     color: _directoryMode ? cs.primary : null,
                   ),
                 ),
-                IconButton(
-                  tooltip: viewMode == ViewMode.grid ? '列表视图' : '封面墙',
-                  onPressed: () {
-                    ref.read(viewModeProvider.notifier).state =
-                        viewMode == ViewMode.grid
-                            ? ViewMode.list
-                            : ViewMode.grid;
-                  },
-                  icon: Icon(
-                    viewMode == ViewMode.grid
-                        ? Icons.view_agenda_outlined
-                        : Icons.grid_view_rounded,
-                  ),
-                ),
                 PopupMenuButton<String>(
-                  tooltip: '排序',
-                  icon: const Icon(Icons.swap_vert_rounded),
+                  tooltip: '视图与排序',
+                  icon: const Icon(PhosphorIconsRegular.dotsThree, size: 22),
                   onSelected: (value) {
+                    if (value == 'view') {
+                      ref.read(viewModeProvider.notifier).state =
+                          viewMode == ViewMode.grid
+                              ? ViewMode.list
+                              : ViewMode.grid;
+                      return;
+                    }
                     final order = value == 'title' ? 'asc' : 'desc';
                     ref.read(workListProvider.notifier).load(
                           query: state.query.copyWith(
@@ -323,36 +315,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ),
                         );
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'title', child: Text('标题')),
-                    PopupMenuItem(value: 'addedAt', child: Text('最近添加')),
-                    PopupMenuItem(value: 'lastReadAt', child: Text('最近阅读')),
-                    PopupMenuItem(value: 'rating', child: Text('评分')),
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'view',
+                      child: Text(
+                        viewMode == ViewMode.grid ? '列表视图' : '封面墙',
+                      ),
+                    ),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(value: 'title', child: Text('按标题')),
+                    const PopupMenuItem(value: 'addedAt', child: Text('最近添加')),
+                    const PopupMenuItem(
+                        value: 'lastReadAt', child: Text('最近阅读')),
+                    const PopupMenuItem(value: 'rating', child: Text('评分')),
                   ],
                 ),
+                SizedBox(width: (horizontal - 8).clamp(0.0, double.infinity)),
               ],
+            ),
+            SliverToBoxAdapter(
+              child: FeaturedCarousel(refreshTick: _featuredRefresh),
             ),
             const SliverToBoxAdapter(child: ContinueReading()),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 52,
+                height: 44,
                 child: libraries.when(
                   loading: () => const SizedBox.shrink(),
                   error: (_, __) => const SizedBox.shrink(),
                   data: (items) => ListView(
                     scrollDirection: Axis.horizontal,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    padding: EdgeInsets.symmetric(horizontal: horizontal),
                     children: [
-                      _LibraryChip(
+                      _LibraryTab(
                         label: '全部',
                         selected: state.query.libraryIds.isEmpty,
                         onTap: () => _selectLibrary(null),
                       ),
                       for (final library in items)
-                        _LibraryChip(
+                        _LibraryTab(
                           label: library.name,
-                          count: library.workCount,
                           selected: state.query.libraryIds.length == 1 &&
                               state.query.libraryIds.first == library.id,
                           onTap: () => _selectLibrary(library.id),
@@ -393,13 +395,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               )
             else if (viewMode == ViewMode.grid)
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(12, 6, 12, 20),
+                padding: EdgeInsets.fromLTRB(
+                  gridHorizontal,
+                  4,
+                  gridHorizontal,
+                  20,
+                ),
                 sliver: SliverGrid.builder(
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
-                    childAspectRatio: 0.59,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 14,
+                    childAspectRatio: 0.66,
+                    crossAxisSpacing: width >= 860 ? 16 : 8,
+                    mainAxisSpacing: width >= 860 ? 24 : 16,
                   ),
                   itemCount: _directories.length + state.works.length,
                   itemBuilder: (_, index) {
@@ -448,6 +455,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: Center(child: CircularProgressIndicator()),
                 ),
               ),
+            SliverToBoxAdapter(
+              child: SizedBox(height: shellBarClearance(context)),
+            ),
           ],
         ),
       ),
@@ -455,28 +465,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
-class _LibraryChip extends StatelessWidget {
+class _LibraryTab extends StatelessWidget {
   final String label;
-  final int? count;
   final bool selected;
   final VoidCallback onTap;
 
-  const _LibraryChip({
+  const _LibraryTab({
     required this.label,
-    this.count,
     required this.selected,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: ChoiceChip(
-        selected: selected,
-        onSelected: (_) => onTap(),
-        label: Text(count == null ? label : '$label  $count'),
-        showCheckmark: false,
+      padding: const EdgeInsets.only(right: 26),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: selected ? 17 : 14,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? colors.primary : colors.onSurfaceVariant,
+            ),
+          ),
+        ),
       ),
     );
   }

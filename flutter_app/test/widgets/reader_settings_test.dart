@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nowen_reader/widgets/app_switch.dart';
 import 'package:nowen_reader/widgets/reader_settings_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -315,10 +316,10 @@ void main() {
         of: find.text('音量键翻页'),
         matching: find.byType(Row),
       );
-      final sw = tester.widget<Switch>(
-        find.descendant(of: row, matching: find.byType(Switch)),
+      final sw = tester.widget<AppSwitch>(
+        find.descendant(of: row, matching: find.byType(AppSwitch)),
       );
-      expect(sw.onChanged, isNull, reason: '长条模式下不可用');
+      expect(sw.enabled, isFalse, reason: '长条模式下不可用');
       expect(sw.value, isFalse);
     });
 
@@ -392,6 +393,33 @@ void main() {
     expect(b.direction, ReadingDirection.rtl);
     expect(a.showPageNumber, isFalse);
     expect(b.autoPageInterval, 20);
+  });
+
+  test('global all-works setting wins over a library fallback', () async {
+    SharedPreferences.setMockInitialValues({
+      'reader_settings_version': ReaderSettings.settingsVersion,
+      'reader_mode': ComicReadingMode.single.index,
+      'reader_mode_library:L': ComicReadingMode.webtoon.index,
+    });
+
+    final inherited = await ReaderSettings.load(
+      scope: 'work:W',
+      fallbackScope: 'library:L',
+    );
+    expect(inherited.mode, ComicReadingMode.single,
+        reason: '从书里设置的“全部作品”不能被库默认值盖掉');
+
+    SharedPreferences.setMockInitialValues({
+      'reader_settings_version': ReaderSettings.settingsVersion,
+      'reader_mode': ComicReadingMode.single.index,
+      'reader_mode_library:L': ComicReadingMode.webtoon.index,
+      'reader_mode_work:W': ComicReadingMode.doublePage.index,
+    });
+    final overridden = await ReaderSettings.load(
+      scope: 'work:W',
+      fallbackScope: 'library:L',
+    );
+    expect(overridden.mode, ComicReadingMode.doublePage);
   });
 
   test('library defaults are used only when a Work has no override', () async {

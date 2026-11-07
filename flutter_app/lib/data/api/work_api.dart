@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/reading_history.dart';
 import '../models/work.dart';
 import 'api_client.dart';
 
@@ -205,6 +206,33 @@ class WorkApi {
         const [];
   }
 
+  Future<List<ReadingHistoryItem>> listReadingHistory() async {
+    final response = await _dio.get(
+      '/history',
+      queryParameters: const {'view': 'work', 'includeNovels': 'true'},
+    );
+    final data = Map<String, dynamic>.from(response.data as Map);
+    return (data['items'] as List?)
+            ?.whereType<Map>()
+            .map((item) =>
+                ReadingHistoryItem.fromJson(Map<String, dynamic>.from(item)))
+            .where((item) => item.id.isNotEmpty)
+            .toList() ??
+        const [];
+  }
+
+  Future<void> deleteReadingHistory({
+    List<String> workIds = const [],
+    List<String> comicIds = const [],
+    bool all = false,
+  }) async {
+    await _dio.delete('/history', data: {
+      if (all) 'all': true,
+      if (!all && workIds.isNotEmpty) 'workIds': workIds,
+      if (!all && comicIds.isNotEmpty) 'comicIds': comicIds,
+    });
+  }
+
   Future<void> setFavorite(String id, bool value) async {
     await _dio.put(
       '/works/${Uri.encodeComponent(id)}/favorite',
@@ -257,6 +285,7 @@ class WorkApi {
       '/works/${Uri.encodeComponent(workId)}/undo-last',
     );
   }
+
   Future<LibraryDirectoryListing> listLibraryDirectories(
     String libraryId, {
     String parent = '',

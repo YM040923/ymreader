@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../data/models/comic.dart';
 import '../../data/providers/comic_provider.dart';
 import '../../widgets/animations.dart';
+import '../../widgets/responsive.dart';
 
 /// 阅读统计页面 — 精致的数据可视化
 class StatsScreen extends ConsumerWidget {
@@ -13,9 +14,21 @@ class StatsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final statsAsync = ref.watch(statsProvider);
+    // 宽屏上收成一条居中的数据列，手机上仍是原来的 20。
+    final pagePadding = centeredColumnPadding(
+      MediaQuery.sizeOf(context).width,
+      contentWidth: kListColumnWidth,
+      base: 20,
+    );
+
+    // 标题单独算一份：宽屏上和正文同一条左边线，手机上仍是 Material 默认的 16。
+    final titlePadding = centeredColumnPadding(
+      MediaQuery.sizeOf(context).width,
+      contentWidth: kListColumnWidth,
+    );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('阅读统计')),
+      appBar: AppBar(title: const Text('阅读统计'), titleSpacing: titlePadding),
       body: statsAsync.when(
         loading: () => const Center(
           child: SizedBox(
@@ -29,16 +42,19 @@ class StatsScreen extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.error_outline_rounded,
-                  size: 48, color: Theme.of(context).colorScheme.error.withOpacity(0.5)),
+                  size: 48,
+                  color: Theme.of(context).colorScheme.error.withOpacity(0.5)),
               const SizedBox(height: 16),
-              Text('加载失败', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              Text('加载失败',
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
           ),
         ),
         data: (stats) => RefreshIndicator(
           onRefresh: () => ref.refresh(statsProvider.future),
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+            padding: EdgeInsets.fromLTRB(pagePadding, 8, pagePadding, 32),
             children: [
               // ─── 总览卡片 ───
               _buildOverviewCards(context, stats),
@@ -71,7 +87,6 @@ class StatsScreen extends ConsumerWidget {
             icon: Icons.timer_outlined,
             label: '总阅读',
             value: _formatDuration(stats.totalReadTime),
-            gradient: [cs.primary, cs.primary.withOpacity(0.7)],
           ),
         ),
         const SizedBox(width: 10),
@@ -80,7 +95,6 @@ class StatsScreen extends ConsumerWidget {
             icon: Icons.auto_stories_outlined,
             label: '阅读场次',
             value: '${stats.totalSessions}',
-            gradient: [cs.secondary, cs.secondary.withOpacity(0.7)],
           ),
         ),
         const SizedBox(width: 10),
@@ -89,7 +103,6 @@ class StatsScreen extends ConsumerWidget {
             icon: Icons.menu_book_outlined,
             label: '已读',
             value: '${stats.totalComicsRead}',
-            gradient: [cs.tertiary, cs.tertiary.withOpacity(0.7)],
           ),
         ),
       ],
@@ -137,19 +150,14 @@ class StatsScreen extends ConsumerWidget {
                       Flexible(
                         child: AnimatedBar(
                           heightFactor: ratio.clamp(0.05, 1.0),
-                          duration: Duration(milliseconds: 600 + (recent.indexOf(d) * 40)),
+                          duration: Duration(
+                              milliseconds: 600 + (recent.indexOf(d) * 40)),
                           child: Container(
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.bottomCenter,
-                                end: Alignment.topCenter,
-                                colors: [
-                                  cs.primary,
-                                  cs.primary.withOpacity(0.4),
-                                ],
-                              ),
+                              color: cs.primary,
                               borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(4)),
+                                top: Radius.circular(2),
+                              ),
                             ),
                           ),
                         ),
@@ -243,7 +251,8 @@ class _EmptyHint extends StatelessWidget {
         child: Text(
           text,
           style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.4),
+            color:
+                Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.4),
             fontSize: 14,
           ),
         ),
@@ -284,13 +293,13 @@ class _RecentSessionTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(8),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(8),
           onTap: () => context.push('/comic/${session.comicId}'),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -301,8 +310,9 @@ class _RecentSessionTile extends StatelessWidget {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: cs.primaryContainer.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(11),
+                    color: cs.surface,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: cs.outline),
                   ),
                   child: Icon(Icons.auto_stories_rounded,
                       color: cs.primary, size: 18),
@@ -366,46 +376,32 @@ class _StatCard extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  final List<Color> gradient;
-
   const _StatCard({
     required this.icon,
     required this.label,
     required this.value,
-    required this.gradient,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: gradient,
-        ),
+        color: colors.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: gradient.first.withOpacity(0.2),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: Column(
         children: [
-          Icon(icon, color: Colors.white.withOpacity(0.9), size: 24),
+          Icon(icon, color: colors.primary, size: 22),
           const SizedBox(height: 10),
           AnimatedCount(
             value: int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0,
             formatter: (_) => value,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: -0.5,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              color: colors.onSurface,
             ),
           ),
           const SizedBox(height: 4),
@@ -413,7 +409,7 @@ class _StatCard extends StatelessWidget {
             label,
             style: TextStyle(
               fontSize: 11,
-              color: Colors.white.withOpacity(0.75),
+              color: colors.onSurfaceVariant,
               fontWeight: FontWeight.w500,
             ),
           ),

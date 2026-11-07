@@ -49,7 +49,8 @@ class _TagManagerScreenState extends ConsumerState<TagManagerScreen>
             action: SnackBarAction(
               label: '关闭',
               textColor: cs.onError,
-              onPressed: () => ref.read(tagManagerProvider.notifier).clearError(),
+              onPressed: () =>
+                  ref.read(tagManagerProvider.notifier).clearError(),
             ),
           ),
         );
@@ -134,8 +135,7 @@ class _TagsTab extends ConsumerWidget {
     return Column(
       children: [
         // 工具栏
-        if (isAdmin)
-          _buildToolbar(context, ref, cs),
+        if (isAdmin) _buildToolbar(context, ref, cs),
         // 搜索栏
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -160,7 +160,8 @@ class _TagsTab extends ConsumerWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.label_off, size: 48, color: cs.onSurfaceVariant),
+                      Icon(Icons.label_off,
+                          size: 48, color: cs.onSurfaceVariant),
                       const SizedBox(height: 8),
                       Text(
                         searchQuery.isEmpty ? '暂无标签' : '未找到匹配的标签',
@@ -224,8 +225,10 @@ class _TagsTab extends ConsumerWidget {
                                 const PopupMenuItem(
                                   value: 'delete',
                                   child: ListTile(
-                                    leading: Icon(Icons.delete, color: Colors.red),
-                                    title: Text('删除', style: TextStyle(color: Colors.red)),
+                                    leading:
+                                        Icon(Icons.delete, color: Colors.red),
+                                    title: Text('删除',
+                                        style: TextStyle(color: Colors.red)),
                                     dense: true,
                                   ),
                                 ),
@@ -247,7 +250,8 @@ class _TagsTab extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
-        border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 0.5)),
+        border:
+            Border(bottom: BorderSide(color: cs.outlineVariant, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -259,7 +263,8 @@ class _TagsTab extends ConsumerWidget {
                   : Icons.check_box_outline_blank,
               size: 20,
             ),
-            label: Text(selectedIds.isEmpty ? '全选' : '${selectedIds.length} 已选'),
+            label:
+                Text(selectedIds.isEmpty ? '全选' : '${selectedIds.length} 已选'),
             onPressed: () {
               if (selectedIds.length == tags.length) {
                 ref.read(tagManagerProvider.notifier).clearTagSelection();
@@ -295,7 +300,9 @@ class _TagsTab extends ConsumerWidget {
       width: 32,
       height: 32,
       decoration: BoxDecoration(
-        color: color.isNotEmpty ? _parseColor(color, cs.primary) : cs.primaryContainer,
+        color: color.isNotEmpty
+            ? _parseColor(color, cs.primary)
+            : cs.primaryContainer,
         shape: BoxShape.circle,
       ),
       child: Icon(Icons.label, size: 16, color: cs.onPrimaryContainer),
@@ -337,7 +344,9 @@ class _TagsTab extends ConsumerWidget {
             onPressed: () async {
               final name = controller.text.trim();
               if (name.isNotEmpty && name != tag.name) {
-                await ref.read(tagManagerProvider.notifier).renameTag(tag.id, name);
+                await ref
+                    .read(tagManagerProvider.notifier)
+                    .renameTag(tag.id, name);
               }
               if (ctx.mounted) Navigator.pop(ctx);
             },
@@ -350,9 +359,20 @@ class _TagsTab extends ConsumerWidget {
 
   void _showColorDialog(BuildContext context, WidgetRef ref, Tag tag) {
     final colors = [
-      '#EF4444', '#F97316', '#EAB308', '#22C55E', '#06B6D4',
-      '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#F43F5E',
-      '#14B8A6', '#84CC16', '#A855F7', '#78716C',
+      '#EF4444',
+      '#F97316',
+      '#EAB308',
+      '#22C55E',
+      '#06B6D4',
+      '#3B82F6',
+      '#6366F1',
+      '#8B5CF6',
+      '#EC4899',
+      '#F43F5E',
+      '#14B8A6',
+      '#84CC16',
+      '#A855F7',
+      '#78716C',
     ];
     showDialog(
       context: context,
@@ -364,7 +384,9 @@ class _TagsTab extends ConsumerWidget {
           children: colors.map((c) {
             return InkWell(
               onTap: () async {
-                await ref.read(tagManagerProvider.notifier).updateTagColor(tag.id, c);
+                await ref
+                    .read(tagManagerProvider.notifier)
+                    .updateTagColor(tag.id, c);
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               borderRadius: BorderRadius.circular(20),
@@ -374,12 +396,12 @@ class _TagsTab extends ConsumerWidget {
                 decoration: BoxDecoration(
                   color: _parseColor(c, Colors.grey),
                   shape: BoxShape.circle,
-                  border: tag.color == c
-                      ? Border.all(color: Colors.white, width: 3)
-                      : null,
-                  boxShadow: tag.color == c
-                      ? [BoxShadow(color: _parseColor(c, Colors.grey).withValues(alpha: 0.5), blurRadius: 8)]
-                      : null,
+                  border: Border.all(
+                    color: tag.color == c
+                        ? Theme.of(context).colorScheme.onSurface
+                        : Colors.transparent,
+                    width: 2,
+                  ),
                 ),
               ),
             );
@@ -529,7 +551,8 @@ class _CategoriesTab extends ConsumerWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.category_outlined, size: 48, color: cs.onSurfaceVariant),
+                      Icon(Icons.category_outlined,
+                          size: 48, color: cs.onSurfaceVariant),
                       const SizedBox(height: 8),
                       Text(
                         searchQuery.isEmpty ? '暂无分类' : '未找到匹配的分类',
@@ -555,10 +578,12 @@ class _CategoriesTab extends ConsumerWidget {
                             )
                           : CircleAvatar(
                               backgroundColor: cs.secondaryContainer,
-                              child: Icon(Icons.folder, color: cs.onSecondaryContainer),
+                              child: Icon(Icons.folder,
+                                  color: cs.onSecondaryContainer),
                             ),
                       title: Text(cat.name),
-                      subtitle: Text(cat.slug, style: TextStyle(color: cs.onSurfaceVariant)),
+                      subtitle: Text(cat.slug,
+                          style: TextStyle(color: cs.onSurfaceVariant)),
                       trailing: isAdmin
                           ? PopupMenuButton<String>(
                               itemBuilder: (_) => [
@@ -573,14 +598,16 @@ class _CategoriesTab extends ConsumerWidget {
                                 const PopupMenuItem(
                                   value: 'delete',
                                   child: ListTile(
-                                    leading: Icon(Icons.delete, color: Colors.red),
-                                    title: Text('删除', style: TextStyle(color: Colors.red)),
+                                    leading:
+                                        Icon(Icons.delete, color: Colors.red),
+                                    title: Text('删除',
+                                        style: TextStyle(color: Colors.red)),
                                     dense: true,
                                   ),
                                 ),
                               ],
-                              onSelected: (action) =>
-                                  _handleCategoryAction(context, ref, cat, action),
+                              onSelected: (action) => _handleCategoryAction(
+                                  context, ref, cat, action),
                             )
                           : null,
                     );
@@ -596,7 +623,8 @@ class _CategoriesTab extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
-        border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 0.5)),
+        border:
+            Border(bottom: BorderSide(color: cs.outlineVariant, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -608,7 +636,8 @@ class _CategoriesTab extends ConsumerWidget {
                   : Icons.check_box_outline_blank,
               size: 20,
             ),
-            label: Text(selectedIds.isEmpty ? '全选' : '${selectedIds.length} 已选'),
+            label:
+                Text(selectedIds.isEmpty ? '全选' : '${selectedIds.length} 已选'),
             onPressed: () {
               if (selectedIds.length == categories.length) {
                 ref.read(tagManagerProvider.notifier).clearCategorySelection();
@@ -670,7 +699,9 @@ class _CategoriesTab extends ConsumerWidget {
             onPressed: () async {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
-                await ref.read(tagManagerProvider.notifier).createCategory(name);
+                await ref
+                    .read(tagManagerProvider.notifier)
+                    .createCategory(name);
               }
               if (ctx.mounted) Navigator.pop(ctx);
             },
@@ -721,7 +752,8 @@ class _CategoriesTab extends ConsumerWidget {
     );
   }
 
-  void _confirmDeleteCategory(BuildContext context, WidgetRef ref, Category cat) {
+  void _confirmDeleteCategory(
+      BuildContext context, WidgetRef ref, Category cat) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -734,7 +766,9 @@ class _CategoriesTab extends ConsumerWidget {
           ),
           FilledButton(
             onPressed: () async {
-              await ref.read(tagManagerProvider.notifier).deleteCategory(cat.slug);
+              await ref
+                  .read(tagManagerProvider.notifier)
+                  .deleteCategory(cat.slug);
               if (ctx.mounted) Navigator.pop(ctx);
             },
             style: FilledButton.styleFrom(

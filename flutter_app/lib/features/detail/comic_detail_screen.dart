@@ -122,133 +122,25 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          // ─── 沉浸式封面 AppBar ───
           SliverAppBar(
-            expandedHeight: 320,
             pinned: true,
-            stretch: true,
-            backgroundColor: cs.surface,
-            leading: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 20),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ),
+            title: const Text('作品详情'),
             actions: [
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: IconButton(
-                    icon: HeartBounce(
-                      trigger: comic.isFavorite,
-                      child: Icon(
-                        comic.isFavorite
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        color: comic.isFavorite
-                            ? const Color(0xFFFF6B6B)
-                            : Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    onPressed: _toggleFavorite,
+              IconButton(
+                tooltip: comic.isFavorite ? '取消收藏' : '收藏',
+                onPressed: _toggleFavorite,
+                icon: HeartBounce(
+                  trigger: comic.isFavorite,
+                  child: Icon(
+                    comic.isFavorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: comic.isFavorite ? cs.primary : cs.onSurface,
+                    size: 22,
                   ),
                 ),
               ),
             ],
-            flexibleSpace: FlexibleSpaceBar(
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // 封面图片
-                  AuthenticatedImage(
-                    imageUrl: thumbUrl,
-                    fit: BoxFit.cover,
-                    errorWidget: Container(color: cs.surfaceContainerHighest),
-                  ),
-                  // 渐变遮罩
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: const [0.0, 0.4, 1.0],
-                        colors: [
-                          Colors.black.withOpacity(0.3),
-                          Colors.transparent,
-                          Colors.black.withOpacity(0.85),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 底部信息
-                  Positioned(
-                    bottom: 20,
-                    left: 20,
-                    right: 20,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 类型标签
-                        if (comic.isNovel)
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              '小说',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        Text(
-                          comic.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.5,
-                            height: 1.2,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (comic.author != null && comic.author!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              comic.author!,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 14,
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
 
           // ─── 内容区域 ───
@@ -256,29 +148,85 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                // 书页式头：封面 + 标题/作者/页数
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: SizedBox(
+                          width: 112,
+                          height: 149,
+                          child: AuthenticatedImage(
+                            imageUrl: thumbUrl,
+                            fit: BoxFit.cover,
+                            errorWidget: ColoredBox(
+                              color: cs.surfaceContainerHighest,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: SizedBox(
+                          height: 149,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                comic.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.25,
+                                ),
+                              ),
+                              if (comic.author != null &&
+                                  comic.author!.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  comic.author!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 4),
+                              Text(
+                                '${comic.pageCount} 页 · ${comic.isNovel ? "小说" : "漫画"}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: cs.tertiary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 // 开始阅读按钮
                 SlideAndFade(
                   delay: const Duration(milliseconds: 100),
                   child: Container(
-                    height: 52,
+                    height: 48,
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [cs.primary, cs.primary.withOpacity(0.8)],
-                      ),
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: cs.primary.withOpacity(0.25),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                      color: cs.onSurface,
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Material(
                       color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(8),
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(8),
                         onTap: () {
                           HapticFeedback.lightImpact();
                           if (comic.isNovel) {
@@ -291,9 +239,11 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                               ),
                             );
                           } else if (comic.isPdf) {
-                            context.push('/pdf/${comic.id}?page=${comic.lastReadPage}');
+                            context.push(
+                                '/pdf/${comic.id}?page=${comic.lastReadPage}');
                           } else {
-                            context.push('/reader/${comic.id}?page=${comic.lastReadPage}');
+                            context.push(
+                                '/reader/${comic.id}?page=${comic.lastReadPage}');
                           }
                         },
                         child: Row(
@@ -303,17 +253,17 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                               comic.isNovel
                                   ? Icons.menu_book_rounded
                                   : Icons.play_arrow_rounded,
-                              color: Colors.white,
-                              size: 22,
+                              color: cs.surface,
+                              size: 18,
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Text(
                               comic.hasReadingProgress
                                   ? '继续阅读 (${comic.displayPage}/${comic.pageCount}${comic.isNovel ? "章" : "页"})'
                                   : '开始阅读',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
+                              style: TextStyle(
+                                color: cs.surface,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -356,28 +306,35 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: List.generate(5, (i) {
-                          final filled = i < (comic.rating ?? 0);
-                          return GestureDetector(
-                            onTap: () => _updateRating(i + 1),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 6),
-                              child: TweenAnimationBuilder<double>(
-                                tween: Tween(begin: 0.0, end: 1.0),
-                                duration: Duration(milliseconds: 300 + i * 80),
-                                curve: Curves.elasticOut,
-                                builder: (context, val, child) => Transform.scale(
-                                  scale: val,
-                                  child: child,
-                                ),
-                                child: Icon(
-                                  filled ? Icons.star_rounded : Icons.star_outline_rounded,
-                                  color: filled ? Colors.amber.shade600 : cs.onSurfaceVariant.withOpacity(0.2),
-                                  size: 32,
+                            final filled = i < (comic.rating ?? 0);
+                            return GestureDetector(
+                              onTap: () => _updateRating(i + 1),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 6),
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween(begin: 0.0, end: 1.0),
+                                  duration:
+                                      Duration(milliseconds: 300 + i * 80),
+                                  curve: Curves.elasticOut,
+                                  builder: (context, val, child) =>
+                                      Transform.scale(
+                                    scale: val,
+                                    child: child,
+                                  ),
+                                  child: Icon(
+                                    filled
+                                        ? Icons.star_rounded
+                                        : Icons.star_outline_rounded,
+                                    color: filled
+                                        ? Colors.amber.shade600
+                                        : cs.onSurfaceVariant.withOpacity(0.2),
+                                    size: 32,
+                                  ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          }),
                         ),
                       ],
                     ),
@@ -408,13 +365,17 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                         const SizedBox(height: 10),
                         Row(
                           children: [
-                            _StatusPill('想读', 'want', comic.readingStatus, _setReadingStatus, cs),
+                            _StatusPill('想读', 'want', comic.readingStatus,
+                                _setReadingStatus, cs),
                             const SizedBox(width: 8),
-                            _StatusPill('在读', 'reading', comic.readingStatus, _setReadingStatus, cs),
+                            _StatusPill('在读', 'reading', comic.readingStatus,
+                                _setReadingStatus, cs),
                             const SizedBox(width: 8),
-                            _StatusPill('读完', 'finished', comic.readingStatus, _setReadingStatus, cs),
+                            _StatusPill('读完', 'finished', comic.readingStatus,
+                                _setReadingStatus, cs),
                             const SizedBox(width: 8),
-                            _StatusPill('搁置', 'shelved', comic.readingStatus, _setReadingStatus, cs),
+                            _StatusPill('搁置', 'shelved', comic.readingStatus,
+                                _setReadingStatus, cs),
                           ],
                         ),
                       ],
@@ -442,23 +403,26 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                           });
                         },
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14),
                           child: Row(
                             children: [
                               Container(
                                 width: 34,
                                 height: 34,
                                 decoration: BoxDecoration(
-                                  color: Colors.purple.withOpacity(0.1),
+                                  color:
+                                      const Color(0xFFC2882F).withOpacity(0.12),
                                   borderRadius: BorderRadius.circular(9),
                                 ),
                                 child: const Icon(Icons.auto_fix_high_rounded,
-                                    size: 18, color: Colors.purple),
+                                    size: 18, color: Color(0xFFC2882F)),
                               ),
                               const SizedBox(width: 14),
                               Expanded(
                                 child: Text(
-                                  comic.metadataSource != null && comic.metadataSource!.isNotEmpty
+                                  comic.metadataSource != null &&
+                                          comic.metadataSource!.isNotEmpty
                                       ? '重新刮削元数据'
                                       : '刮削元数据',
                                   style: TextStyle(
@@ -469,7 +433,8 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                                 ),
                               ),
                               Icon(Icons.chevron_right_rounded,
-                                  size: 20, color: cs.onSurfaceVariant.withOpacity(0.3)),
+                                  size: 20,
+                                  color: cs.onSurfaceVariant.withOpacity(0.3)),
                             ],
                           ),
                         ),
@@ -532,7 +497,8 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
                 ],
 
                 // ─── 简介 ───
-                if (comic.description != null && comic.description!.isNotEmpty) ...[
+                if (comic.description != null &&
+                    comic.description!.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   Text(
                     '简介',
@@ -580,7 +546,8 @@ class _ComicDetailScreenState extends ConsumerState<ComicDetailScreen> {
       items.add(_InfoItem(Icons.business_outlined, '出版社', comic.publisher!));
     }
     if (comic.year != null) {
-      items.add(_InfoItem(Icons.calendar_today_outlined, '年份', '${comic.year}'));
+      items
+          .add(_InfoItem(Icons.calendar_today_outlined, '年份', '${comic.year}'));
     }
     if (comic.language != null && comic.language!.isNotEmpty) {
       items.add(_InfoItem(Icons.language_rounded, '语言', comic.language!));
@@ -689,7 +656,9 @@ class _StatusPill extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                color: isSelected ? cs.primary : cs.onSurfaceVariant.withOpacity(0.6),
+                color: isSelected
+                    ? cs.primary
+                    : cs.onSurfaceVariant.withOpacity(0.6),
               ),
             ),
           ),
@@ -765,7 +734,8 @@ class _CacheBookTileState extends ConsumerState<_CacheBookTile> {
               borderRadius: BorderRadius.circular(14),
               onTap: () => _handleTap(context, status, serverUrl),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Row(
                   children: [
                     Container(
@@ -818,7 +788,8 @@ class _CacheBookTileState extends ConsumerState<_CacheBookTile> {
                       )
                     else
                       Icon(Icons.chevron_right_rounded,
-                          size: 20, color: cs.onSurfaceVariant.withOpacity(0.3)),
+                          size: 20,
+                          color: cs.onSurfaceVariant.withOpacity(0.3)),
                   ],
                 ),
               ),
@@ -901,7 +872,9 @@ class _CacheBookTileState extends ConsumerState<_CacheBookTile> {
       ),
     );
     if (confirm == true) {
-      await ref.read(cacheEntriesProvider.notifier).deleteCache(widget.comic.id);
+      await ref
+          .read(cacheEntriesProvider.notifier)
+          .deleteCache(widget.comic.id);
     }
   }
 
@@ -921,7 +894,8 @@ class _AIInferTitleTile extends ConsumerStatefulWidget {
   final String comicId;
   final VoidCallback onTitleUpdated;
 
-  const _AIInferTitleTile({required this.comicId, required this.onTitleUpdated});
+  const _AIInferTitleTile(
+      {required this.comicId, required this.onTitleUpdated});
 
   @override
   ConsumerState<_AIInferTitleTile> createState() => _AIInferTitleTileState();
@@ -933,19 +907,32 @@ class _AIInferTitleTileState extends ConsumerState<_AIInferTitleTile> {
   bool _isError = false;
 
   Future<void> _inferTitle() async {
-    setState(() { _inferring = true; _result = null; _isError = false; });
+    setState(() {
+      _inferring = true;
+      _result = null;
+      _isError = false;
+    });
     try {
       final api = ref.read(comicApiProvider);
       final data = await api.aiInferTitle(widget.comicId);
       final title = data['title'] ?? data['inferredTitle'] ?? '';
       if (title.toString().isNotEmpty) {
-        setState(() { _result = '推断标题: $title'; _isError = false; });
+        setState(() {
+          _result = '推断标题: $title';
+          _isError = false;
+        });
         widget.onTitleUpdated();
       } else {
-        setState(() { _result = '未能推断出标题'; _isError = true; });
+        setState(() {
+          _result = '未能推断出标题';
+          _isError = true;
+        });
       }
     } catch (e) {
-      setState(() { _result = '推断失败: $e'; _isError = true; });
+      setState(() {
+        _result = '推断失败: $e';
+        _isError = true;
+      });
     } finally {
       setState(() => _inferring = false);
     }
@@ -969,14 +956,15 @@ class _AIInferTitleTileState extends ConsumerState<_AIInferTitleTile> {
               borderRadius: BorderRadius.circular(14),
               onTap: _inferring ? null : _inferTitle,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Row(
                   children: [
                     Container(
                       width: 34,
                       height: 34,
                       decoration: BoxDecoration(
-                        color: Colors.deepPurple.withOpacity(0.1),
+                        color: const Color(0xFFC2882F).withOpacity(0.12),
                         borderRadius: BorderRadius.circular(9),
                       ),
                       child: _inferring
@@ -985,7 +973,7 @@ class _AIInferTitleTileState extends ConsumerState<_AIInferTitleTile> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.auto_awesome_rounded,
-                              size: 18, color: Colors.deepPurple),
+                              size: 18, color: const Color(0xFFC2882F)),
                     ),
                     const SizedBox(width: 14),
                     Expanded(

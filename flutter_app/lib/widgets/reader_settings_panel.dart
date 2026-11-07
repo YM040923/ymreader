@@ -1,7 +1,9 @@
-import 'dart:ui' show ImageFilter;
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'app_switch.dart';
+
+const _accent = Color(0xFFFF7A6B);
 
 /// 漫画阅读模式
 enum ComicReadingMode { single, webtoon, doublePage }
@@ -140,14 +142,17 @@ class ReaderSettings {
         fallbackScope == null || fallbackScope.isEmpty
             ? key
             : '${key}_$fallbackScope';
+    // Work override > “全部作品” global > library default. Otherwise a global
+    // change made from a book is silently undone by a library default when the
+    // next chapter opens a fresh reader and re-reads the settings.
     int? readInt(String key) =>
         prefs.getInt(scoped(key)) ??
-        prefs.getInt(fallbackKey(key)) ??
-        prefs.getInt(key);
+        prefs.getInt(key) ??
+        prefs.getInt(fallbackKey(key));
     bool? readBool(String key) =>
         prefs.getBool(scoped(key)) ??
-        prefs.getBool(fallbackKey(key)) ??
-        prefs.getBool(key);
+        prefs.getBool(key) ??
+        prefs.getBool(fallbackKey(key));
     final storedVersion = prefs.getInt('reader_settings_version') ?? 1;
     var fitModeIndex = readInt('reader_fitMode');
 
@@ -353,233 +358,224 @@ class _ReaderSettingsPanelState extends State<ReaderSettingsPanel> {
     final isPaged = _settings.mode != ComicReadingMode.webtoon;
     final floating = scrollController == null;
     final radius = floating
-        ? const BorderRadius.all(Radius.circular(22))
-        : const BorderRadius.vertical(top: Radius.circular(22));
+        ? const BorderRadius.all(Radius.circular(16))
+        : const BorderRadius.vertical(top: Radius.circular(16));
     return ClipRRect(
       borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xDD0C0C10),
-            borderRadius: radius,
-            border: floating
-                ? Border.all(color: Colors.white.withValues(alpha: 0.07))
-                : Border(
-                    top:
-                        BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-                  ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 拖拽把手（居中卡片不可拖，只留一点呼吸）
-              if (floating)
-                const SizedBox(height: 14)
-              else
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6),
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF17171A),
+          borderRadius: radius,
+          border: floating
+              ? Border.all(color: Colors.white.withValues(alpha: 0.08))
+              : Border(
+                  top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
                 ),
-              // 标题栏
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                child: Row(
-                  children: [
-                    const Text(
-                      '阅读设置',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (!_isLibraryScope && !_isGlobalScope)
-                      _ScopeChip(appliesToAll: _appliesToAll)
-                    else if (_isGlobalScope)
-                      const _ScopeChip(appliesToAll: true),
-                  ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 6),
+            Center(
+              child: Container(
+                width: 32,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              // 可滚动的设置项
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
-                  children: [
-                    // ── 画面 ──
-                    const _SectionTitle('画面'),
-                    const _SettingLabel('适应显示'),
-                    _ToggleGroup<FitMode>(
-                      value: _settings.fitMode,
-                      items: const [
-                        _ToggleItem(FitMode.contain, '完整'),
-                        _ToggleItem(FitMode.width, '宽度'),
-                        _ToggleItem(FitMode.height, '高度'),
-                      ],
-                      onChanged: (v) => _update(_settings.copyWith(fitMode: v)),
+            ),
+            const SizedBox(height: 6),
+            // 标题栏
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                  const Text(
+                    '阅读设置',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                    if (_settings.mode == ComicReadingMode.webtoon &&
-                        _settings.direction != ReadingDirection.ttb)
-                      const _Hint(
-                          '横向长条按屏幕高度铺满，适应显示只在竖向长条和翻页模式生效'),
-                    const _SettingLabel('页面渲染'),
-                    _ToggleGroup<ComicReadingMode>(
-                      value: _settings.mode,
-                      items: const [
-                        _ToggleItem(ComicReadingMode.single, '单页'),
-                        _ToggleItem(ComicReadingMode.doublePage, '双页'),
-                        _ToggleItem(ComicReadingMode.webtoon, '长条'),
-                      ],
-                      onChanged: (v) => _update(_settings.copyWith(mode: v)),
-                    ),
-
-                    // 双页：封面单独显示（错页对齐）
-                    if (_settings.mode == ComicReadingMode.doublePage) ...[
-                      _SwitchRow(
-                        label: '封面单独显示',
-                        hint: '双页错页',
-                        value: _settings.doubleCoverAlone,
-                        onChanged: (v) =>
-                            _update(_settings.copyWith(doubleCoverAlone: v)),
-                      ),
-                      const _Hint(
-                        '关闭后从第 1 页开始两两配对，适合欧美漫画；开启后第 1 页单独显示，对齐日漫见开页',
-                      ),
-                      _SwitchRow(
-                        label: '双页贴合',
-                        hint: '去除中间缝',
-                        value: _settings.doublePageNoGap,
-                        onChanged: (v) =>
-                            _update(_settings.copyWith(doublePageNoGap: v)),
-                      ),
-                      const _Hint(
-                        '开启后两页在屏幕中央贴合拼接，跨页大图观感更佳；关闭则两页各自居中',
-                      ),
-                    ],
-
-                    const _SettingLabel('阅读方向'),
-                    _ToggleGroup<ReadingDirection>(
-                      value: _settings.direction,
-                      items: const [
-                        _ToggleItem(ReadingDirection.ltr, '左→右'),
-                        _ToggleItem(ReadingDirection.rtl, '右→左'),
-                        _ToggleItem(ReadingDirection.ttb, '上→下'),
-                      ],
-                      onChanged: (v) {
-                        var s = _settings.copyWith(direction: v);
-                        // 上→下 自动切换为长条模式
-                        if (v == ReadingDirection.ttb) {
-                          s = s.copyWith(mode: ComicReadingMode.webtoon);
-                        }
-                        _update(s);
-                      },
-                    ),
-
-                    // ── 屏幕 ──
-                    const _SectionTitle('屏幕'),
-                    _SliderRow(
-                      label: '亮度',
-                      icon: _settings.brightness >= 1.0
-                          ? Icons.brightness_high_rounded
-                          : Icons.brightness_6_rounded,
-                      value: _settings.brightness,
-                      min: ReaderSettings.minBrightness,
-                      max: 1.0,
-                      trailing: _settings.brightness >= 1.0
-                          ? const _MiniTag('跟随系统')
-                          : null,
-                      trailingAction: _settings.brightness < 1.0
-                          ? () => _update(_settings.copyWith(brightness: 1.0))
-                          : null,
-                      trailingActionLabel: '还原',
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(brightness: v)),
-                    ),
-                    const _SettingLabel('方向锁定'),
-                    _ToggleGroup<OrientationLock>(
-                      value: _settings.orientationLock,
-                      items: const [
-                        _ToggleItem(OrientationLock.followSystem, '跟随'),
-                        _ToggleItem(OrientationLock.portrait, '竖屏'),
-                        _ToggleItem(OrientationLock.landscape, '横屏'),
-                      ],
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(orientationLock: v)),
-                    ),
-
-                    // ── 操作 ──
-                    const _SectionTitle('操作'),
-                    _SwitchRow(
-                      label: '音量键翻页',
-                      value: _settings.volumeKeyPaging && isPaged,
-                      disabled: !isPaged,
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(volumeKeyPaging: v)),
-                    ),
-                    _SwitchRow(
-                      label: '左右点击区对调',
-                      value: _settings.swapTapZones && isPaged,
-                      disabled: !isPaged,
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(swapTapZones: v)),
-                    ),
-                    _SwitchRow(
-                      label: '页码指示器',
-                      value: _settings.showPageNumber,
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(showPageNumber: v)),
-                    ),
-                    _SwitchRow(
-                      label: '连续阅读',
-                      value: _settings.continuousReading,
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(continuousReading: v)),
-                    ),
-                    const _Hint('开启后当前话结束会自动接上下一话'),
-
-                    // ── 自动阅读 ──
-                    const _SectionTitle('自动阅读'),
-                    _ToggleGroup<int>(
-                      value: _autoSpeedValue,
-                      items: const [
-                        _ToggleItem(0, '关'),
-                        _ToggleItem(6, '慢'),
-                        _ToggleItem(4, '标准'),
-                        _ToggleItem(2, '快'),
-                      ],
-                      onChanged: (v) =>
-                          _update(_settings.copyWith(autoPageInterval: v)),
-                    ),
-                    const _Hint('翻页模式按间隔跳下一页，长条模式匀速下滚；翻到本话最后一会自动接下一话'),
-
-                    // ── 生效范围 ──
-                    if (!_isLibraryScope) ...[
-                      const SizedBox(height: 22),
-                      _SwitchRow(
-                        label: '对全部作品生效',
-                        value: _appliesToAll,
-                        onChanged: _setAppliesToAll,
-                      ),
-                      _Hint(_appliesToAll
-                          ? '本书已改用全局设置；关掉开关可恢复单独设置本书'
-                          : '打开后这套设置成为所有作品的默认值'),
-                    ],
-                    const SizedBox(height: 26),
-                  ],
-                ),
+                  ),
+                  const Spacer(),
+                  if (!_isLibraryScope && !_isGlobalScope)
+                    _ScopeChip(appliesToAll: _appliesToAll)
+                  else if (_isGlobalScope)
+                    const _ScopeChip(appliesToAll: true),
+                ],
               ),
-            ],
-          ),
+            ),
+            // 可滚动的设置项
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                children: [
+                  // ── 画面 ──
+                  const _SectionTitle('画面'),
+                  const _SettingLabel('适应显示'),
+                  _ToggleGroup<FitMode>(
+                    value: _settings.fitMode,
+                    items: const [
+                      _ToggleItem(FitMode.contain, '完整'),
+                      _ToggleItem(FitMode.width, '宽度'),
+                      _ToggleItem(FitMode.height, '高度'),
+                    ],
+                    onChanged: (v) => _update(_settings.copyWith(fitMode: v)),
+                  ),
+                  if (_settings.mode == ComicReadingMode.webtoon &&
+                      _settings.direction != ReadingDirection.ttb)
+                    const _Hint('横向长条按屏幕高度铺满，适应显示只在竖向长条和翻页模式生效'),
+                  const _SettingLabel('页面渲染'),
+                  _ToggleGroup<ComicReadingMode>(
+                    value: _settings.mode,
+                    items: const [
+                      _ToggleItem(ComicReadingMode.single, '单页'),
+                      _ToggleItem(ComicReadingMode.doublePage, '双页'),
+                      _ToggleItem(ComicReadingMode.webtoon, '长条'),
+                    ],
+                    onChanged: (v) => _update(_settings.copyWith(mode: v)),
+                  ),
+
+                  // 双页：封面单独显示（错页对齐）
+                  if (_settings.mode == ComicReadingMode.doublePage) ...[
+                    _SwitchRow(
+                      label: '封面单独显示',
+                      hint: '双页错页',
+                      value: _settings.doubleCoverAlone,
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(doubleCoverAlone: v)),
+                    ),
+                    const _Hint(
+                      '关闭后从第 1 页开始两两配对，适合欧美漫画；开启后第 1 页单独显示，对齐日漫见开页',
+                    ),
+                    _SwitchRow(
+                      label: '双页贴合',
+                      hint: '去除中间缝',
+                      value: _settings.doublePageNoGap,
+                      onChanged: (v) =>
+                          _update(_settings.copyWith(doublePageNoGap: v)),
+                    ),
+                    const _Hint(
+                      '开启后两页在屏幕中央贴合拼接，跨页大图观感更佳；关闭则两页各自居中',
+                    ),
+                  ],
+
+                  const _SettingLabel('阅读方向'),
+                  _ToggleGroup<ReadingDirection>(
+                    value: _settings.direction,
+                    items: const [
+                      _ToggleItem(ReadingDirection.ltr, '左→右'),
+                      _ToggleItem(ReadingDirection.rtl, '右→左'),
+                      _ToggleItem(ReadingDirection.ttb, '上→下'),
+                    ],
+                    onChanged: (v) {
+                      var s = _settings.copyWith(direction: v);
+                      // 上→下 自动切换为长条模式
+                      if (v == ReadingDirection.ttb) {
+                        s = s.copyWith(mode: ComicReadingMode.webtoon);
+                      }
+                      _update(s);
+                    },
+                  ),
+
+                  // ── 屏幕 ──
+                  const _SectionTitle('屏幕'),
+                  _SliderRow(
+                    label: '亮度',
+                    icon: _settings.brightness >= 1.0
+                        ? Icons.brightness_high_rounded
+                        : Icons.brightness_6_rounded,
+                    value: _settings.brightness,
+                    min: ReaderSettings.minBrightness,
+                    max: 1.0,
+                    trailing: _settings.brightness >= 1.0
+                        ? const _MiniTag('跟随系统')
+                        : null,
+                    trailingAction: _settings.brightness < 1.0
+                        ? () => _update(_settings.copyWith(brightness: 1.0))
+                        : null,
+                    trailingActionLabel: '还原',
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(brightness: v)),
+                  ),
+                  const _SettingLabel('方向锁定'),
+                  _ToggleGroup<OrientationLock>(
+                    value: _settings.orientationLock,
+                    items: const [
+                      _ToggleItem(OrientationLock.followSystem, '跟随'),
+                      _ToggleItem(OrientationLock.portrait, '竖屏'),
+                      _ToggleItem(OrientationLock.landscape, '横屏'),
+                    ],
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(orientationLock: v)),
+                  ),
+
+                  // ── 操作 ──
+                  const _SectionTitle('操作'),
+                  _SwitchRow(
+                    label: '音量键翻页',
+                    value: _settings.volumeKeyPaging && isPaged,
+                    disabled: !isPaged,
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(volumeKeyPaging: v)),
+                  ),
+                  _SwitchRow(
+                    label: '左右点击区对调',
+                    value: _settings.swapTapZones && isPaged,
+                    disabled: !isPaged,
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(swapTapZones: v)),
+                  ),
+                  _SwitchRow(
+                    label: '页码指示器',
+                    value: _settings.showPageNumber,
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(showPageNumber: v)),
+                  ),
+                  _SwitchRow(
+                    label: '连续阅读',
+                    value: _settings.continuousReading,
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(continuousReading: v)),
+                  ),
+                  const _Hint('开启后当前话结束会自动接上下一话'),
+
+                  // ── 自动阅读 ──
+                  const _SectionTitle('自动阅读'),
+                  _ToggleGroup<int>(
+                    value: _autoSpeedValue,
+                    items: const [
+                      _ToggleItem(0, '关'),
+                      _ToggleItem(6, '慢'),
+                      _ToggleItem(4, '标准'),
+                      _ToggleItem(2, '快'),
+                    ],
+                    onChanged: (v) =>
+                        _update(_settings.copyWith(autoPageInterval: v)),
+                  ),
+                  const _Hint('翻页模式按间隔跳下一页，长条模式匀速下滚；翻到本话最后一会自动接下一话'),
+
+                  // ── 生效范围 ──
+                  if (!_isLibraryScope) ...[
+                    const SizedBox(height: 22),
+                    _SwitchRow(
+                      label: '对全部作品生效',
+                      value: _appliesToAll,
+                      onChanged: _setAppliesToAll,
+                    ),
+                    _Hint(_appliesToAll
+                        ? '本书已改用全局设置；关掉开关可恢复单独设置本书'
+                        : '打开后这套设置成为所有作品的默认值'),
+                  ],
+                  const SizedBox(height: 26),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -612,9 +608,8 @@ class _SectionTitle extends StatelessWidget {
         title,
         style: TextStyle(
           fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.2,
-          color: Colors.white.withValues(alpha: 0.38),
+          fontWeight: FontWeight.w600,
+          color: Colors.white.withValues(alpha: 0.58),
         ),
       ),
     );
@@ -632,9 +627,9 @@ class _SettingLabel extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: FontWeight.w500,
-          color: Colors.white.withValues(alpha: 0.78),
+          color: Colors.white.withValues(alpha: 0.82),
         ),
       ),
     );
@@ -654,7 +649,7 @@ class _Hint extends StatelessWidget {
         style: TextStyle(
           fontSize: 11,
           height: 1.45,
-          color: Colors.white.withValues(alpha: 0.34),
+          color: Colors.white.withValues(alpha: 0.46),
         ),
       ),
     );
@@ -667,19 +662,10 @@ class _ScopeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = appliesToAll
-        ? Colors.blue.shade300
-        : Colors.white.withValues(alpha: 0.42);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
-      ),
-      child: Text(
-        appliesToAll ? '全部作品' : '仅本书',
-        style: TextStyle(fontSize: 10, color: color, height: 1.2),
-      ),
+    final color = appliesToAll ? _accent : Colors.white.withValues(alpha: 0.55);
+    return Text(
+      appliesToAll ? '全部作品' : '仅本书',
+      style: TextStyle(fontSize: 11, color: color, height: 1.2),
     );
   }
 }
@@ -694,7 +680,7 @@ class _MiniTag extends StatelessWidget {
       text,
       style: TextStyle(
         fontSize: 11,
-        color: Colors.white.withValues(alpha: 0.45),
+        color: Colors.white.withValues(alpha: 0.55),
       ),
     );
   }
@@ -730,16 +716,15 @@ class _ToggleGroup<T> extends StatelessWidget {
             onTap: () => onChanged(item.value),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: selected
-                    ? Colors.blue[600]
-                    : Colors.white.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(9),
+                    ? _accent.withValues(alpha: 0.10)
+                    : Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: selected
-                      ? Colors.blue[600]!
-                      : Colors.white.withValues(alpha: 0.06),
+                  color:
+                      selected ? _accent : Colors.white.withValues(alpha: 0.06),
                 ),
               ),
               child: Text(
@@ -747,7 +732,7 @@ class _ToggleGroup<T> extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: selected ? Colors.white : Colors.white70,
+                  color: selected ? _accent : Colors.white70,
                 ),
               ),
             ),
@@ -775,30 +760,23 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 参照做法：当前模式下用不上的项不隐藏，置灰并在标签上划一道斜线
+    // 当前模式下用不上的项不隐藏：降低文字和开关的对比度即可。
+    // 之前加删除线会把中文笔画切碎，看起来像渲染坏了。
     final on = disabled ? false : value;
     final labelColor = disabled
-        ? Colors.white.withValues(alpha: 0.26)
-        : Colors.white.withValues(alpha: 0.86);
+        ? Colors.white.withValues(alpha: 0.42)
+        : Colors.white.withValues(alpha: 0.90);
     return SizedBox(
-      height: 44,
+      height: 52,
       // 参照做法：整行都是点击区，只留开关本身一小块是合理的
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: disabled ? null : () => onChanged(!value),
         child: Row(
           children: [
-            SizedBox(
-              height: 18,
-              child: Center(
-                child: disabled
-                    ? _Strikethrough(
-                        text: label,
-                        style: TextStyle(fontSize: 13, color: labelColor),
-                      )
-                    : Text(label,
-                        style: TextStyle(fontSize: 13, color: labelColor)),
-              ),
+            Text(
+              label,
+              style: TextStyle(fontSize: 14, color: labelColor),
             ),
             if (hint != null && !disabled) ...[
               const SizedBox(width: 6),
@@ -806,41 +784,20 @@ class _SwitchRow extends StatelessWidget {
                 hint!,
                 style: TextStyle(
                   fontSize: 11,
-                  color: Colors.white.withValues(alpha: 0.32),
+                  color: Colors.white.withValues(alpha: 0.46),
                 ),
               ),
             ],
             const Spacer(),
-            SizedBox(
-              height: 26,
-              child: Switch(
-                value: on,
-                onChanged: disabled ? null : onChanged,
-                activeThumbColor: Colors.blue[600],
-                activeTrackColor: Colors.blue[600]?.withValues(alpha: 0.45),
-                inactiveThumbColor: Colors.white.withValues(alpha: 0.45),
-                inactiveTrackColor: Colors.white.withValues(alpha: 0.10),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+            AppSwitch(
+              value: on,
+              enabled: !disabled,
+              activeColor: _accent,
+              inactiveColor: Colors.white.withValues(alpha: 0.14),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// 文字上加一道斜线，表示“这项在当前模式下不可用”
-class _Strikethrough extends StatelessWidget {
-  final String text;
-  final TextStyle style;
-  const _Strikethrough({required this.text, required this.style});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: style.copyWith(decoration: TextDecoration.lineThrough),
     );
   }
 }
@@ -889,11 +846,11 @@ class _SliderRow extends StatelessWidget {
           Expanded(
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
-                trackHeight: 2.5,
-                activeTrackColor: Colors.white,
-                inactiveTrackColor: Colors.white24,
-                thumbColor: Colors.white,
-                overlayColor: Colors.white24,
+                trackHeight: 2,
+                activeTrackColor: _accent,
+                inactiveTrackColor: Colors.white.withValues(alpha: 0.18),
+                thumbColor: _accent,
+                overlayColor: _accent.withValues(alpha: 0.14),
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
               ),
@@ -916,7 +873,7 @@ class _SliderRow extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 6),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        foregroundColor: Colors.blue.shade300,
+                        foregroundColor: _accent,
                       ),
                       child: Text(
                         trailingActionLabel ?? '',

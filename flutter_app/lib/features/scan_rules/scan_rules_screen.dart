@@ -216,18 +216,13 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    cs.tertiaryContainer,
-                    cs.tertiaryContainer.withOpacity(0.5)
-                  ],
-                ),
+                color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Row(
                 children: [
                   Icon(Icons.auto_fix_high_rounded,
-                      size: 32, color: cs.tertiary),
+                      size: 28, color: cs.primary),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -235,14 +230,16 @@ class _ScanRulesScreenState extends ConsumerState<ScanRulesScreen> {
                       children: [
                         Text('扫描期统一规则',
                             style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: cs.onTertiaryContainer)),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface,
+                            )),
                         const SizedBox(height: 4),
                         Text('按作品智能识别 + Work 目录整理；推荐硬链接模式，不移动原文件',
                             style: TextStyle(
-                                fontSize: 11,
-                                color:
-                                    cs.onTertiaryContainer.withOpacity(0.7))),
+                              fontSize: 11,
+                              color: cs.onSurfaceVariant,
+                            )),
                       ],
                     ),
                   ),

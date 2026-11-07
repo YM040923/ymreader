@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 /// Public server identity, independent of the signed-in account.
 class ServerBranding {
-  static const defaultName = 'NowenReader';
+  static const defaultName = '折角';
 
   final String name;
   final Uint8List? iconBytes;

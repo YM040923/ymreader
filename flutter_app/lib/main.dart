@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'app/app.dart';
 import 'data/api/api_client.dart';
@@ -49,11 +50,19 @@ void main() async {
         systemNavigationBarDividerColor: Colors.transparent,
       ));
 
-      runApp(ProviderScope(
-        overrides: [
-          appLanguageProvider.overrideWith((ref) => AppLanguageNotifier(language)),
-        ],
-        child: const NowenReaderApp(),
+      // 预加载液态玻璃着色器，首帧即可用
+      await LiquidGlassWidgets.initialize();
+
+      runApp(LiquidGlassWidgets.wrap(
+        brightnessResolver: Theme.maybeBrightnessOf,
+        adaptiveQuality: true,
+        child: ProviderScope(
+          overrides: [
+            appLanguageProvider
+                .overrideWith((ref) => AppLanguageNotifier(language)),
+          ],
+          child: const NowenReaderApp(),
+        ),
       ));
     },
     (Object error, StackTrace stack) {

@@ -23,7 +23,14 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
   String? _successMessage;
 
   // 漫画文件扩展名
-  static const _comicExtensions = ['.cbz', '.cbr', '.zip', '.rar', '.7z', '.pdf'];
+  static const _comicExtensions = [
+    '.cbz',
+    '.cbr',
+    '.zip',
+    '.rar',
+    '.7z',
+    '.pdf'
+  ];
   // 小说文件扩展名
   static const _novelExtensions = ['.epub', '.mobi', '.azw3', '.txt', '.fb2'];
   // 所有支持的扩展名
@@ -118,8 +125,10 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
   }
 
   IconData _getFileIcon(String name) {
-    final ext = name.contains('.') ? '.${name.split('.').last.toLowerCase()}' : '';
-    if (_comicExtensions.contains(ext)) return Icons.collections_bookmark_rounded;
+    final ext =
+        name.contains('.') ? '.${name.split('.').last.toLowerCase()}' : '';
+    if (_comicExtensions.contains(ext))
+      return Icons.collections_bookmark_rounded;
     if (_novelExtensions.contains(ext)) return Icons.menu_book_rounded;
     return Icons.insert_drive_file_rounded;
   }
@@ -139,27 +148,28 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [cs.primaryContainer, cs.primaryContainer.withOpacity(0.5)],
-                ),
+                color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.cloud_upload_rounded, size: 36, color: cs.primary),
+                  Icon(Icons.cloud_upload_rounded, size: 28, color: cs.primary),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('上传到书库', style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: cs.onPrimaryContainer,
-                        )),
+                        Text('上传到书库',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurface,
+                            )),
                         const SizedBox(height: 4),
                         Text(
                           '支持漫画 (CBZ/CBR/ZIP/PDF) 和小说 (EPUB/MOBI/AZW3/TXT)',
-                          style: TextStyle(fontSize: 12, color: cs.onPrimaryContainer.withOpacity(0.7)),
+                          style: TextStyle(
+                              fontSize: 11, color: cs.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -176,25 +186,39 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('目标分类', style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurface,
-                )),
+                Text('目标分类',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    )),
                 const SizedBox(height: 8),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'auto', label: Text('自动'), icon: Icon(Icons.auto_awesome, size: 16)),
-                    ButtonSegment(value: 'comic', label: Text('漫画'), icon: Icon(Icons.collections_bookmark, size: 16)),
-                    ButtonSegment(value: 'novel', label: Text('小说'), icon: Icon(Icons.menu_book, size: 16)),
+                    ButtonSegment(
+                        value: 'auto',
+                        label: Text('自动'),
+                        icon: Icon(Icons.auto_awesome, size: 16)),
+                    ButtonSegment(
+                        value: 'comic',
+                        label: Text('漫画'),
+                        icon: Icon(Icons.collections_bookmark, size: 16)),
+                    ButtonSegment(
+                        value: 'novel',
+                        label: Text('小说'),
+                        icon: Icon(Icons.menu_book, size: 16)),
                   ],
                   selected: {_category},
-                  onSelectionChanged: (v) => setState(() => _category = v.first),
+                  onSelectionChanged: (v) =>
+                      setState(() => _category = v.first),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _category == 'auto' ? '根据文件扩展名自动判断存放目录' :
-                  _category == 'comic' ? '所有文件存放到漫画目录' : '所有文件存放到小说目录',
+                  _category == 'auto'
+                      ? '根据文件扩展名自动判断存放目录'
+                      : _category == 'comic'
+                          ? '所有文件存放到漫画目录'
+                          : '所有文件存放到小说目录',
                   style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
                 ),
               ],
@@ -219,13 +243,17 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
           // ─── 已选文件列表 ───
           if (_selectedFiles.isNotEmpty) ...[
             Text('已选择 ${_selectedFiles.length} 个文件',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface)),
             const SizedBox(height: 8),
             ...List.generate(_selectedFiles.length, (i) {
               final file = _selectedFiles[i];
               return Container(
                 margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: cs.surfaceContainerHighest.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(10),
@@ -238,8 +266,13 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(file.name, style: const TextStyle(fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
-                          Text(_formatFileSize(file.size), style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant)),
+                          Text(file.name,
+                              style: const TextStyle(fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                          Text(_formatFileSize(file.size),
+                              style: TextStyle(
+                                  fontSize: 10, color: cs.onSurfaceVariant)),
                         ],
                       ),
                     ),
@@ -247,9 +280,11 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
                       IconButton(
                         icon: Icon(Icons.close, size: 16, color: cs.error),
                         onPressed: () {
-                          setState(() => _selectedFiles = List.from(_selectedFiles)..removeAt(i));
+                          setState(() => _selectedFiles =
+                              List.from(_selectedFiles)..removeAt(i));
                         },
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        constraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
                         padding: EdgeInsets.zero,
                       ),
                   ],
@@ -262,9 +297,15 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
             FilledButton.icon(
               onPressed: _uploading ? null : _startUpload,
               icon: _uploading
-                  ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: cs.onPrimary))
                   : const Icon(Icons.cloud_upload_rounded),
-              label: Text(_uploading ? '上传中 $_uploadedCount/${_selectedFiles.length}' : '开始上传'),
+              label: Text(_uploading
+                  ? '上传中 $_uploadedCount/${_selectedFiles.length}'
+                  : '开始上传'),
               style: FilledButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
                 backgroundColor: cs.primary,
@@ -285,8 +326,8 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
             ),
             const SizedBox(height: 8),
             Text('${(_progress * 100).toInt()}%',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
           ],
 
           // ─── 结果消息 ───
@@ -302,7 +343,10 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
                 children: [
                   Icon(Icons.check_circle_rounded, color: cs.primary, size: 20),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(_successMessage!, style: TextStyle(fontSize: 12, color: cs.onPrimaryContainer))),
+                  Expanded(
+                      child: Text(_successMessage!,
+                          style: TextStyle(
+                              fontSize: 12, color: cs.onPrimaryContainer))),
                 ],
               ),
             ),
@@ -320,7 +364,10 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
                 children: [
                   Icon(Icons.error_rounded, color: cs.error, size: 20),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(_error!, style: TextStyle(fontSize: 12, color: cs.onErrorContainer))),
+                  Expanded(
+                      child: Text(_error!,
+                          style: TextStyle(
+                              fontSize: 12, color: cs.onErrorContainer))),
                 ],
               ),
             ),

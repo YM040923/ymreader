@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui' show FontFeature, ImageFilter;
+import 'dart:ui' show FontFeature;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -90,6 +90,18 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   ReaderSettings _settings = const ReaderSettings();
   Timer? _autoReaderTimer;
 
+  int _previewOffsetFor(ReaderSettings settings) {
+    final previous = _activeReaderContext?.previousUnit;
+    if (previous == null ||
+        !settings.continuousReading ||
+        settings.mode == ComicReadingMode.webtoon) {
+      return 0;
+    }
+    return 1;
+  }
+
+  int get _previewOffset => _previewOffsetFor(_settings);
+
   @override
   void initState() {
     super.initState();
@@ -98,7 +110,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     _activeUnitId = widget.workContext?.currentUnit.id;
     _favorite = widget.workContext?.work.isFavorite ?? false;
     _continuousPageCache = _buildContinuousPages();
-    _pageController = PageController(initialPage: _currentPage);
+    final initialOffset = widget.workContext?.previousUnit == null ||
+            !_settings.continuousReading ||
+            _settings.mode == ComicReadingMode.webtoon
+        ? 0
+        : 1;
+    _pageController = PageController(initialPage: _currentPage + initialOffset);
     // 提前缓存 API 引用
     _api = ref.read(comicApiProvider);
     final auth = ref.read(authProvider);
@@ -149,7 +166,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       scope: scope,
       fallbackScope: libraryId.isEmpty ? null : 'library:$libraryId',
     );
-    if (mounted) setState(() => _settings = s);
+    if (mounted) {
+      final offset = _previewOffsetFor(s);
+      _pageController.dispose();
+      _pageController = PageController(initialPage: _currentPage + offset);
+      setState(() => _settings = s);
+    }
     _applyOrientation(s.orientationLock);
     _restartAutoReader();
   }
@@ -535,8 +557,26 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   void _turnPage(int delta) {
-    final target = _currentPage + delta;
     final readerContext = _activeReaderContext;
+    if (_settings.mode == ComicReadingMode.doublePage) {
+      final target = _currentPage + delta * 2;
+      if (target < 0) {
+        final previous = readerContext?.previousUnit;
+        if (previous != null) {
+          _goToUnit(previous, page: previous.pageCount - 1);
+        }
+        return;
+      }
+      if (target >= _totalPages) {
+        final next = readerContext?.nextUnit;
+        if (next != null) _goToUnit(next);
+        return;
+      }
+      setState(() => _currentPage = target);
+      _trackPage(target);
+      return;
+    }
+    final target = _currentPage + delta;
     if (target < 0) {
       final previous = readerContext?.previousUnit;
       if (previous != null) {
@@ -564,7 +604,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       return;
     }
     _pageController.animateToPage(
-      target,
+      target + _previewOffset,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
@@ -587,9 +627,11 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       );
       return;
     }
-    if (previous.mode != s.mode) {
+    if (previous.mode != s.mode ||
+        previous.continuousReading != s.continuousReading) {
+      final offset = _previewOffsetFor(s);
       _pageController.dispose();
-      _pageController = PageController(initialPage: _currentPage);
+      _pageController = PageController(initialPage: _currentPage + offset);
     }
     setState(() => _settings = s);
     if (previous.orientationLock != s.orientationLock) {
@@ -733,30 +775,63 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     );
   }
 
+  Widget _previousUnitPreview(String serverUrl) {
+    final previous = _activeReaderContext?.previousUnit;
+    if (previous == null || previous.pageCount <= 0) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return AuthenticatedImage(
+      imageUrl:
+          getImageUrl(serverUrl, previous.comicId, page: previous.endPage),
+      comicId: previous.comicId,
+      pageIndex: previous.endPage,
+      fit: BoxFit.contain,
+      placeholder: const Center(child: CircularProgressIndicator()),
+      errorWidget: const Center(
+        child: Icon(Icons.broken_image, color: Colors.white54, size: 48),
+      ),
+    );
+  }
+
   /// 单页翻页模式
   Widget _buildPageView(String serverUrl) {
     final readerContext = _activeReaderContext;
+    final hasPrev =
+        _settings.continuousReading && readerContext?.previousUnit != null;
     final hasNext =
         _settings.continuousReading && readerContext?.nextUnit != null;
+    final offset = hasPrev ? 1 : 0;
     return PageView.builder(
       controller: _pageController,
-      itemCount: _totalPages + (hasNext ? 1 : 0),
+      itemCount: _totalPages + offset + (hasNext ? 1 : 0),
       onPageChanged: (page) {
-        if (page >= _totalPages && readerContext?.nextUnit != null) {
+        if (hasPrev && page == 0) {
+          final previous = readerContext?.previousUnit;
+          if (previous != null) {
+            _goToUnit(previous, page: previous.pageCount - 1);
+          }
+          return;
+        }
+        final pageIndex = page - offset;
+        if (pageIndex >= _totalPages && readerContext?.nextUnit != null) {
           _goToUnit(readerContext!.nextUnit!);
           return;
         }
-        _onPageChanged(page);
+        _onPageChanged(pageIndex);
       },
       reverse: _settings.direction == ReadingDirection.rtl,
       scrollDirection: _settings.direction == ReadingDirection.ttb
           ? Axis.vertical
           : Axis.horizontal,
       itemBuilder: (context, index) {
-        if (index >= _totalPages) {
+        if (hasPrev && index == 0) {
+          return _previousUnitPreview(serverUrl);
+        }
+        final pageIndex = index - offset;
+        if (pageIndex >= _totalPages) {
           return _nextUnitPreview(serverUrl);
         }
-        final physicalPage = _physicalPage(index);
+        final physicalPage = _physicalPage(pageIndex);
         final imageUrl =
             getImageUrl(serverUrl, widget.comicId, page: physicalPage);
         return PhotoView(
@@ -819,6 +894,9 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       }
     }
     final readerContext = _activeReaderContext;
+    if (_settings.continuousReading && readerContext?.previousUnit != null) {
+      pageGroups.insert(0, const [-2]);
+    }
     if (_settings.continuousReading && readerContext?.nextUnit != null) {
       pageGroups.add(const [-1]);
     }
@@ -840,7 +918,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       reverse: _settings.direction == ReadingDirection.rtl,
       onPageChanged: (groupIndex) {
         final firstPage = pageGroups[groupIndex].first;
-        if (firstPage < 0 && readerContext?.nextUnit != null) {
+        if (firstPage == -2 && readerContext?.previousUnit != null) {
+          final previous = readerContext!.previousUnit!;
+          _goToUnit(previous, page: previous.pageCount - 1);
+          return;
+        }
+        if (firstPage == -1 && readerContext?.nextUnit != null) {
           _goToUnit(readerContext!.nextUnit!);
           return;
         }
@@ -849,7 +932,10 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       },
       itemBuilder: (context, groupIndex) {
         final pages = pageGroups[groupIndex];
-        if (pages.first < 0) {
+        if (pages.first == -2) {
+          return _previousUnitPreview(serverUrl);
+        }
+        if (pages.first == -1) {
           return _nextUnitPreview(serverUrl);
         }
         if (pages.length == 1) {
@@ -1057,6 +1143,15 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   }
 
   /// 顶部工具栏 — 与后续章节一致：只有返回、章节名和工具入口。
+  void _openDetail() {
+    final work = widget.workContext?.work;
+    if (work != null) {
+      context.push(work.detailRoute());
+      return;
+    }
+    context.push('/comic/${Uri.encodeComponent(widget.comicId)}');
+  }
+
   Widget _buildTopOverlay() {
     final readerContext = _activeReaderContext;
     final chapter = readerContext == null
@@ -1071,50 +1166,49 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.only(top: 2),
           // 顶栏空白处同样吃掉点击，避免漏到翻页热区
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {},
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                child: Container(
-                  height: 46,
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.66),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.07),
-                    ),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xF20E0E10),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08),
                   ),
-                  child: Row(
-                    children: [
-                      _ReaderChromeButton(
-                        icon: Icons.arrow_back_ios_new_rounded,
-                        tooltip: '返回',
-                        onPressed: _onWillPop,
-                      ),
-                      Expanded(
-                        child: Text(
-                          chapter,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.2,
-                          ),
+                ),
+                child: Row(
+                  children: [
+                    _ReaderChromeButton(
+                      icon: Icons.arrow_back_ios_new_rounded,
+                      tooltip: '返回',
+                      onPressed: _onWillPop,
+                    ),
+                    Expanded(
+                      child: Text(
+                        chapter,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      // 与返回键等宽，保证标题真正居中；设置入口只在底栏出现一次
-                      const SizedBox(width: 44),
-                    ],
-                  ),
+                    ),
+                    _ReaderChromeButton(
+                      icon: Icons.info_outline_rounded,
+                      tooltip: '详情',
+                      onPressed: _openDetail,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1149,15 +1243,20 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     _hideOverlay();
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
+      backgroundColor: const Color(0xFF17171A),
+      showDragHandle: false,
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (sheetContext) => SafeArea(
         child: SizedBox(
           height: MediaQuery.sizeOf(sheetContext).height * 0.72,
           child: Column(
             children: [
+              const SizedBox(height: 16),
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Row(
                   children: [
                     Expanded(
@@ -1165,40 +1264,88 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                         readerContext.work.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(sheetContext)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                    Text('${readerContext.currentIndex + 1}/'
-                        '${readerContext.work.units.length}'),
+                    Text(
+                      '${readerContext.currentIndex + 1}/'
+                      '${readerContext.work.units.length}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const Divider(height: 1),
               Expanded(
                 child: ListView.builder(
                   itemCount: readerContext.work.units.length,
                   itemBuilder: (_, index) {
                     final unit = readerContext.work.units[index];
                     final selected = unit.id == readerContext.currentUnit.id;
-                    return ListTile(
-                      selected: selected,
-                      leading: CircleAvatar(child: Text('${index + 1}')),
-                      title: Text(
-                        unit.displayLabel.isEmpty
-                            ? unit.title
-                            : unit.displayLabel,
-                      ),
-                      subtitle: Text('${unit.pageCount}页'),
-                      trailing: selected
-                          ? const Icon(Icons.play_arrow_rounded)
-                          : null,
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
                         Navigator.of(sheetContext).pop();
                         _goToUnit(unit);
                       },
+                      child: SizedBox(
+                        height: 56,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                child: selected
+                                    ? Center(
+                                        child: Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xFFFF7A6B),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  unit.displayLabel.isEmpty
+                                      ? unit.title
+                                      : unit.displayLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: selected
+                                        ? Colors.white
+                                        : Colors.white70,
+                                    fontSize: 14,
+                                    fontWeight: selected
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                '${unit.pageCount} 页',
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     );
                   },
                 ),
@@ -1233,138 +1380,137 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.66),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.07),
-                        ),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xF20E0E10),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.08),
                       ),
-                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            height: 46,
-                            child: Row(
-                              children: [
-                                _ToolbarAction(
-                                  icon: Icons.menu_book_rounded,
-                                  label: '目录',
-                                  onPressed: readerContext == null
-                                      ? null
-                                      : _showWorkDirectory,
-                                ),
-                                // 章节名只在顶栏出现一次，这里两端收边
-                                const Spacer(),
-                                _ToolbarAction(
-                                  icon: Icons.tune_rounded,
-                                  label: '设置',
-                                  onPressed: _showSettings,
-                                ),
-                              ],
-                            ),
-                          ),
-                          Row(
+                    ),
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          height: 46,
+                          child: Row(
                             children: [
-                              _ChapterStepButton(
-                                icon: Icons.first_page_rounded,
-                                tooltip: '上一话',
-                                onPressed: readerContext?.previousUnit == null
+                              _ToolbarAction(
+                                icon: Icons.menu_book_rounded,
+                                label: '目录',
+                                onPressed: readerContext == null
                                     ? null
-                                    : () =>
-                                        _goToUnit(readerContext!.previousUnit!),
+                                    : _showWorkDirectory,
                               ),
-                              SizedBox(
-                                width: 30,
-                                child: Text(
-                                  pageLabel,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11,
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures()
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                child: SliderTheme(
-                                  data: SliderTheme.of(context).copyWith(
-                                    trackHeight: 2.5,
-                                    activeTrackColor: Colors.white,
-                                    inactiveTrackColor: Colors.white24,
-                                    thumbColor: Colors.white,
-                                    thumbShape: const RoundSliderThumbShape(
-                                      enabledThumbRadius: 6,
-                                    ),
-                                    overlayShape: const RoundSliderOverlayShape(
-                                      overlayRadius: 16,
-                                    ),
-                                    overlayColor: Colors.white24,
-                                  ),
-                                  child: Slider(
-                                    value: _currentPage
-                                        .toDouble()
-                                        .clamp(0, sliderMax),
-                                    min: 0,
-                                    max: sliderMax,
-                                    onChanged: (v) {
-                                      final page = v.toInt();
-                                      if (_settings.mode ==
-                                          ComicReadingMode.webtoon) {
-                                        final entries = _webtoonEntriesCache;
-                                        final target = _webtoonIndexFor(
-                                          entries,
-                                          readerContext?.currentUnit.id ??
-                                              _activeUnitId,
-                                          page,
-                                        );
-                                        if (target != null &&
-                                            _continuousScrollController
-                                                .hasClients) {
-                                          _continuousScrollController
-                                              .jumpToPage(target);
-                                        }
-                                        setState(() => _currentPage = page);
-                                      } else {
-                                        _pageController.jumpToPage(page);
-                                      }
-                                      _restartOverlayTimer();
-                                    },
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 30,
-                                child: Text(
-                                  '$_totalPages',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11,
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures()
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              _ChapterStepButton(
-                                icon: Icons.last_page_rounded,
-                                tooltip: '下一话',
-                                onPressed: readerContext?.nextUnit == null
-                                    ? null
-                                    : () => _goToUnit(readerContext!.nextUnit!),
+                              // 章节名只在顶栏出现一次，这里两端收边
+                              const Spacer(),
+                              _ToolbarAction(
+                                icon: Icons.tune_rounded,
+                                label: '设置',
+                                onPressed: _showSettings,
                               ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                        Row(
+                          children: [
+                            _ChapterStepButton(
+                              icon: Icons.first_page_rounded,
+                              tooltip: '上一话',
+                              onPressed: readerContext?.previousUnit == null
+                                  ? null
+                                  : () =>
+                                      _goToUnit(readerContext!.previousUnit!),
+                            ),
+                            SizedBox(
+                              width: 30,
+                              child: Text(
+                                pageLabel,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 2,
+                                  activeTrackColor: const Color(0xFFFF7A6B),
+                                  inactiveTrackColor: Colors.white24,
+                                  thumbColor: const Color(0xFFFF7A6B),
+                                  thumbShape: const RoundSliderThumbShape(
+                                    enabledThumbRadius: 6,
+                                  ),
+                                  overlayShape: const RoundSliderOverlayShape(
+                                    overlayRadius: 16,
+                                  ),
+                                  overlayColor: Colors.white24,
+                                ),
+                                child: Slider(
+                                  value: _currentPage
+                                      .toDouble()
+                                      .clamp(0, sliderMax),
+                                  min: 0,
+                                  max: sliderMax,
+                                  onChanged: (v) {
+                                    final page = v.toInt();
+                                    if (_settings.mode ==
+                                        ComicReadingMode.webtoon) {
+                                      final entries = _webtoonEntriesCache;
+                                      final target = _webtoonIndexFor(
+                                        entries,
+                                        readerContext?.currentUnit.id ??
+                                            _activeUnitId,
+                                        page,
+                                      );
+                                      if (target != null &&
+                                          _continuousScrollController
+                                              .hasClients) {
+                                        _continuousScrollController
+                                            .jumpToPage(target);
+                                      }
+                                      setState(() => _currentPage = page);
+                                    } else if (_settings.mode ==
+                                        ComicReadingMode.doublePage) {
+                                      setState(() => _currentPage = page);
+                                      _trackPage(page);
+                                    } else {
+                                      _pageController.jumpToPage(
+                                        page + _previewOffset,
+                                      );
+                                    }
+                                    _restartOverlayTimer();
+                                  },
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 30,
+                              child: Text(
+                                '$_totalPages',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontFeatures: [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ),
+                            _ChapterStepButton(
+                              icon: Icons.last_page_rounded,
+                              tooltip: '下一话',
+                              onPressed: readerContext?.nextUnit == null
+                                  ? null
+                                  : () => _goToUnit(readerContext!.nextUnit!),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1382,29 +1528,34 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           onTap: _toggleFavorite,
           child: Ink(
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.82),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE3A82B), width: 1.2),
+              color: const Color(0xF20E0E10),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.10),
+                width: 1,
+              ),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  _favorite ? Icons.star_rounded : Icons.star_border_rounded,
-                  size: 17,
-                  color: const Color(0xFFFFC53D),
+                  _favorite
+                      ? Icons.bookmark_rounded
+                      : Icons.bookmark_border_rounded,
+                  size: 16,
+                  color: _favorite ? const Color(0xFFFF7A6B) : Colors.white70,
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  _favorite ? '已追' : '追漫',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
+                  _favorite ? '已收藏' : '收藏',
+                  style: TextStyle(
+                    color: _favorite ? const Color(0xFFFF7A6B) : Colors.white70,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
                 ),

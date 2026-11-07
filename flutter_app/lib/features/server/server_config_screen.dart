@@ -282,20 +282,20 @@ class _ServerConfigScreenState extends ConsumerState<ServerConfigScreen> {
                       ),
                     ],
                     const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : _connect,
-                      icon: _busy
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Icon(Icons.login_rounded),
-                      label: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text(_busy ? '正在连接…' : '连接服务器'),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _busy ? null : _connect,
+                        icon: _busy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.login_rounded),
+                        label: Text(_busy ? '正在连接…' : '连接服务器'),
                       ),
                     ),
                     if (auth.isOffline) ...[

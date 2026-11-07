@@ -145,7 +145,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
       return true;
     }
     // → / D: 下一章
-    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.keyD) {
       if (_settings.pageMode == NovelPageMode.swipe) {
         _swipeNextPage();
       } else {
@@ -157,7 +158,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
     if (key == LogicalKeyboardKey.arrowUp) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          (_scrollController.offset - 200).clamp(0.0, _scrollController.position.maxScrollExtent),
+          (_scrollController.offset - 200)
+              .clamp(0.0, _scrollController.position.maxScrollExtent),
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
@@ -167,7 +169,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
     if (key == LogicalKeyboardKey.arrowDown) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          (_scrollController.offset + 200).clamp(0.0, _scrollController.position.maxScrollExtent),
+          (_scrollController.offset + 200)
+              .clamp(0.0, _scrollController.position.maxScrollExtent),
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
@@ -198,7 +201,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
 
   void _startTimeTimer() {
     _updateTime();
-    _timeTimer = Timer.periodic(const Duration(seconds: 30), (_) => _updateTime());
+    _timeTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) => _updateTime());
   }
 
   void _updateTime() {
@@ -311,8 +315,11 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
   void _startAutoScrollTimer() {
     _autoScrollTimer?.cancel();
     // 速度映射：1=慢(1px/50ms), 2=中(2px/50ms), 3=快(4px/50ms)
-    final speedPx =
-        _settings.autoScrollSpeed == 1 ? 1.0 : _settings.autoScrollSpeed == 2 ? 2.0 : 4.0;
+    final speedPx = _settings.autoScrollSpeed == 1
+        ? 1.0
+        : _settings.autoScrollSpeed == 2
+            ? 2.0
+            : 4.0;
     _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (_chapterLoading) return;
       if (!_scrollController.hasClients) return;
@@ -370,9 +377,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
     final bookmark = NovelBookmark(
       id: 'bookmark-${now.microsecondsSinceEpoch}',
       chapterIndex: _currentChapter,
-      chapterTitle: _chapterTitle.isNotEmpty
-          ? _chapterTitle
-          : '第${_currentChapter + 1}章',
+      chapterTitle:
+          _chapterTitle.isNotEmpty ? _chapterTitle : '第${_currentChapter + 1}章',
       positionRatio: positionRatio,
       timestamp: now.millisecondsSinceEpoch,
       updatedAt: now.millisecondsSinceEpoch,
@@ -602,7 +608,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
       if (!mounted) return;
       final screenSize = MediaQuery.of(context).size;
       final headerH = MediaQuery.of(context).padding.top + 4 + 16 + 4; // 顶部栏高度
-      final statusBarH = MediaQuery.of(context).padding.bottom + 2 + 14 + 2; // 底部状态栏高度
+      final statusBarH =
+          MediaQuery.of(context).padding.bottom + 2 + 14 + 2; // 底部状态栏高度
       final viewH = screenSize.height - headerH - statusBarH;
       final viewW = screenSize.width - _settings.horizontalPadding * 2;
       if (viewH <= 0 || viewW <= 0) {
@@ -612,7 +619,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
 
       final isHtml = _chapterMimeType == 'text/html' ||
           _chapterContent.trimLeft().startsWith('<');
-      final displayText = isHtml ? _stripHtml(_chapterContent) : _chapterContent;
+      final displayText =
+          isHtml ? _stripHtml(_chapterContent) : _chapterContent;
       final paragraphs = displayText
           .split('\n')
           .where((line) => line.trim().isNotEmpty)
@@ -972,8 +980,10 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
 
   /// 简单的 HTML 标签剥离
   String _stripHtml(String html) {
-    var text = html.replaceAll(RegExp(r'<style[^>]*>[\s\S]*?</style>', caseSensitive: false), '');
-    text = text.replaceAll(RegExp(r'<script[^>]*>[\s\S]*?</script>', caseSensitive: false), '');
+    var text = html.replaceAll(
+        RegExp(r'<style[^>]*>[\s\S]*?</style>', caseSensitive: false), '');
+    text = text.replaceAll(
+        RegExp(r'<script[^>]*>[\s\S]*?</script>', caseSensitive: false), '');
     text = text.replaceAll(RegExp(r'<br\s*/?>'), '\n');
     text = text.replaceAll(RegExp(r'</p>'), '\n\n');
     text = text.replaceAll(RegExp(r'</div>'), '\n');
@@ -1018,11 +1028,13 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 48, color: _settings.secondaryTextColor),
+              Icon(Icons.error_outline,
+                  size: 48, color: _settings.secondaryTextColor),
               const SizedBox(height: 16),
               Text(
                 _loadError!,
-                style: TextStyle(color: _settings.secondaryTextColor, fontSize: 14),
+                style: TextStyle(
+                    color: _settings.secondaryTextColor, fontSize: 14),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -1040,7 +1052,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text('返回', style: TextStyle(color: _settings.secondaryTextColor)),
+                child: Text('返回',
+                    style: TextStyle(color: _settings.secondaryTextColor)),
               ),
             ],
           ),
@@ -1195,22 +1208,23 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                 child: GestureDetector(
                   onTap: () => setState(() => _showTtsPanel = true),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary.withAlpha(220),
+                      color:
+                          Theme.of(context).colorScheme.primary.withAlpha(220),
                       borderRadius: BorderRadius.circular(20),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black26, blurRadius: 8),
-                      ],
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.volume_up, size: 14, color: Colors.white),
+                        const Icon(Icons.volume_up,
+                            size: 14, color: Colors.white),
                         const SizedBox(width: 4),
                         Text(
                           _ttsPaused ? '已暂停' : '朗读中...',
-                          style: const TextStyle(fontSize: 11, color: Colors.white),
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.white),
                         ),
                       ],
                     ),
@@ -1226,7 +1240,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                 right: 0,
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
                       color: _settings.isDark
                           ? Colors.green.withAlpha(25)
@@ -1258,7 +1273,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                         const SizedBox(width: 6),
                         GestureDetector(
                           onTap: _toggleAutoScroll,
-                          child: Icon(Icons.close, size: 14,
+                          child: Icon(Icons.close,
+                              size: 14,
                               color: _settings.isDark
                                   ? Colors.green[400]
                                   : Colors.green[600]),
@@ -1292,7 +1308,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               _showTOC = true;
               _showOverlay = false;
             }),
-            child: Icon(Icons.list, size: 16, color: _settings.secondaryTextColor),
+            child:
+                Icon(Icons.list, size: 16, color: _settings.secondaryTextColor),
           ),
           const SizedBox(width: 8),
           // 章节标题
@@ -1317,7 +1334,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               _showSearch = true;
               _showOverlay = false;
             }),
-            child: Icon(Icons.search, size: 16, color: _settings.secondaryTextColor),
+            child: Icon(Icons.search,
+                size: 16, color: _settings.secondaryTextColor),
           ),
           const SizedBox(width: 8),
           // 书签按钮
@@ -1333,7 +1351,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               _showSettings = true;
               _showOverlay = false;
             }),
-            child: Icon(Icons.text_fields, size: 16, color: _settings.secondaryTextColor),
+            child: Icon(Icons.text_fields,
+                size: 16, color: _settings.secondaryTextColor),
           ),
         ],
       ),
@@ -1364,20 +1383,23 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                 ? _chapterTitle
                 : '第${_currentChapter + 1}章',
             style: TextStyle(
-                color: _settings.secondaryTextColor.withAlpha(120), fontSize: 10),
+                color: _settings.secondaryTextColor.withAlpha(120),
+                fontSize: 10),
           ),
           Row(
             children: [
               Text(
                 '$progress%',
                 style: TextStyle(
-                    color: _settings.secondaryTextColor.withAlpha(120), fontSize: 10),
+                    color: _settings.secondaryTextColor.withAlpha(120),
+                    fontSize: 10),
               ),
               const SizedBox(width: 12),
               Text(
                 _currentTime,
                 style: TextStyle(
-                    color: _settings.secondaryTextColor.withAlpha(120), fontSize: 10),
+                    color: _settings.secondaryTextColor.withAlpha(120),
+                    fontSize: 10),
               ),
             ],
           ),
@@ -1402,11 +1424,13 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: 40, color: _settings.secondaryTextColor),
+            Icon(Icons.error_outline,
+                size: 40, color: _settings.secondaryTextColor),
             const SizedBox(height: 12),
             Text(
               _loadError!,
-              style: TextStyle(color: _settings.secondaryTextColor, fontSize: 13),
+              style:
+                  TextStyle(color: _settings.secondaryTextColor, fontSize: 13),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -1472,7 +1496,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
           if (_currentChapter > 0)
             TextButton.icon(
               onPressed: _prevChapter,
-              icon: Icon(Icons.chevron_left, color: _settings.secondaryTextColor),
+              icon:
+                  Icon(Icons.chevron_left, color: _settings.secondaryTextColor),
               label: Text('上一章',
                   style: TextStyle(color: _settings.secondaryTextColor)),
             ),
@@ -1483,7 +1508,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
           if (_currentChapter < _totalChapters - 1)
             TextButton.icon(
               onPressed: _nextChapter,
-              icon: Icon(Icons.chevron_right, color: _settings.secondaryTextColor),
+              icon: Icon(Icons.chevron_right,
+                  color: _settings.secondaryTextColor),
               label: Text('下一章',
                   style: TextStyle(color: _settings.secondaryTextColor)),
             ),
@@ -1522,7 +1548,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: _settings.isDark
                         ? Colors.white.withAlpha(20)
@@ -1563,13 +1590,7 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
       left: 0,
       right: 0,
       child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
+        decoration: const BoxDecoration(color: Color(0xE60E0E10)),
         child: SafeArea(
           bottom: false,
           child: Row(
@@ -1582,17 +1603,16 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                 child: Text(
                   _title,
                   style: const TextStyle(
-                      color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                 ),
               ),
-              // 信息按钮
-              IconButton(
-                icon: const Icon(Icons.info_outline, color: Colors.white, size: 20),
-                onPressed: () {}, // TODO: 书籍信息
-              ),
+              // 右侧留同宽空位，保证标题在整行里仍然居中。
+              const SizedBox(width: 48),
             ],
           ),
         ),
@@ -1607,13 +1627,7 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
       left: 0,
       right: 0,
       child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
+        decoration: const BoxDecoration(color: Color(0xF20E0E10)),
         child: SafeArea(
           top: false,
           child: Column(
@@ -1625,25 +1639,33 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.chevron_left, color: Colors.white70, size: 22),
+                      icon: const Icon(Icons.chevron_left,
+                          color: Colors.white70, size: 22),
                       onPressed: _currentChapter > 0 ? _prevChapter : null,
                     ),
                     Expanded(
                       child: Slider(
                         value: _currentChapter.toDouble(),
                         min: 0,
-                        max: (_totalChapters - 1).toDouble().clamp(0, double.infinity),
+                        max: (_totalChapters - 1)
+                            .toDouble()
+                            .clamp(0, double.infinity),
                         onChanged: (v) => _goToChapter(v.toInt()),
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.chevron_right, color: Colors.white70, size: 22),
-                      onPressed:
-                          _currentChapter < _totalChapters - 1 ? _nextChapter : null,
+                      icon: const Icon(Icons.chevron_right,
+                          color: Colors.white70, size: 22),
+                      onPressed: _currentChapter < _totalChapters - 1
+                          ? _nextChapter
+                          : null,
                     ),
                     Text(
                       '${_currentChapter + 1}/$_totalChapters',
-                      style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontFamily: 'monospace'),
                     ),
                   ],
                 ),
@@ -1738,7 +1760,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                     ].map((t) {
                       final isActive = _settings.theme == t.$1;
                       return GestureDetector(
-                        onTap: () => _updateSettings(_settings.copyWith(theme: t.$1)),
+                        onTap: () =>
+                            _updateSettings(_settings.copyWith(theme: t.$1)),
                         child: Container(
                           width: 22,
                           height: 22,
@@ -1752,17 +1775,6 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
                                   : Colors.white24,
                               width: isActive ? 2 : 1,
                             ),
-                            boxShadow: isActive
-                                ? [
-                                    BoxShadow(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary
-                                          .withAlpha(60),
-                                      blurRadius: 4,
-                                    )
-                                  ]
-                                : null,
                           ),
                         ),
                       );
@@ -1817,7 +1829,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
     }
 
     final info = _swipePageInfos[pageIndex];
-    final useParagraphs = _cachedParagraphs.isNotEmpty ? _cachedParagraphs : paragraphs;
+    final useParagraphs =
+        _cachedParagraphs.isNotEmpty ? _cachedParagraphs : paragraphs;
     final isLastPage = pageIndex == _swipeTotalPages - 1;
 
     return Column(
@@ -1830,7 +1843,9 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
             child: SizedBox(
               width: double.infinity,
               child: Text(
-                _cachedChapterTitle.isNotEmpty ? _cachedChapterTitle : _chapterTitle,
+                _cachedChapterTitle.isNotEmpty
+                    ? _cachedChapterTitle
+                    : _chapterTitle,
                 style: TextStyle(
                   color: _settings.textColor,
                   fontSize: _settings.fontSize + 4,
@@ -1844,7 +1859,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
           ),
         // 该页对应的段落
         ...List.generate(
-          (info.endParagraph - info.startParagraph).clamp(0, useParagraphs.length),
+          (info.endParagraph - info.startParagraph)
+              .clamp(0, useParagraphs.length),
           (i) {
             final idx = info.startParagraph + i;
             if (idx >= useParagraphs.length) return const SizedBox.shrink();
@@ -1873,18 +1889,21 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
               if (_currentChapter > 0)
                 TextButton.icon(
                   onPressed: _prevChapter,
-                  icon: Icon(Icons.chevron_left, color: _settings.secondaryTextColor),
+                  icon: Icon(Icons.chevron_left,
+                      color: _settings.secondaryTextColor),
                   label: Text('上一章',
                       style: TextStyle(color: _settings.secondaryTextColor)),
                 ),
               Text(
                 '${_currentChapter + 1} / $_totalChapters',
-                style: TextStyle(fontSize: 12, color: _settings.secondaryTextColor),
+                style: TextStyle(
+                    fontSize: 12, color: _settings.secondaryTextColor),
               ),
               if (_currentChapter < _totalChapters - 1)
                 TextButton.icon(
                   onPressed: _nextChapter,
-                  icon: Icon(Icons.chevron_right, color: _settings.secondaryTextColor),
+                  icon: Icon(Icons.chevron_right,
+                      color: _settings.secondaryTextColor),
                   label: Text('下一章',
                       style: TextStyle(color: _settings.secondaryTextColor)),
                 ),
@@ -1900,8 +1919,8 @@ class _NovelReaderScreenState extends ConsumerState<NovelReaderScreen> {
 /// Swipe 模式每页的分页信息
 class _SwipePageInfo {
   final int startParagraph; // 起始段落索引（包含）
-  final int endParagraph;   // 结束段落索引（不包含）
-  final bool hasTitle;      // 该页是否包含章节标题
+  final int endParagraph; // 结束段落索引（不包含）
+  final bool hasTitle; // 该页是否包含章节标题
 
   const _SwipePageInfo({
     required this.startParagraph,
@@ -1927,9 +1946,8 @@ class _ToolButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    final activeColor = isActive
-        ? Theme.of(context).colorScheme.primary
-        : Colors.white;
+    final activeColor =
+        isActive ? Theme.of(context).colorScheme.primary : Colors.white;
     return GestureDetector(
       onTap: onTap,
       child: Padding(
@@ -1937,8 +1955,7 @@ class _ToolButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon,
-                color: enabled ? activeColor : Colors.white30, size: 22),
+            Icon(icon, color: enabled ? activeColor : Colors.white30, size: 22),
             const SizedBox(height: 3),
             Text(
               label,

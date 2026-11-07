@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/api/work_api.dart';
 import '../../data/models/work.dart';
 import '../../data/providers/auth_provider.dart';
+import '../../widgets/responsive.dart';
 import '../../widgets/work_card.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
@@ -47,11 +48,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   Widget build(BuildContext context) {
     final serverUrl = ref.watch(authProvider).serverUrl;
     final width = MediaQuery.sizeOf(context).width;
-    final columns = width >= 650
-        ? 5
-        : width >= 420
-            ? 4
-            : 3;
+    final columns = coverColumns(width);
     return Scaffold(
       appBar: AppBar(title: const Text('收藏')),
       body: RefreshIndicator(
@@ -69,9 +66,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                     padding: const EdgeInsets.all(12),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: columns,
-                      childAspectRatio: 0.59,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 14,
+                      childAspectRatio: 0.645,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 16,
                     ),
                     itemCount: _works.length,
                     itemBuilder: (_, index) {
