@@ -20,10 +20,11 @@ double pagePadding(double width, {double phone = 16}) {
 /// 封面网格列数。首页、搜索、收藏、作品详情目录共用一份。
 /// Fushi 参考：手机 390dp 三列，1200dp 六列，再宽不再加列。
 int coverColumns(double width) {
-  if (width < 600) return 3;
+  if (width < 600) return 2;
+  if (width < 900) return 3;
   final content = width > kPageMaxWidth ? kPageMaxWidth : width;
   final columns = ((content - 32) / 180).floor();
-  return columns.clamp(3, 6);
+  return columns.clamp(4, 6);
 }
 
 /// 正文列宽：简介这类连续文本。14sp 中文约 45 字/行，再宽就读不动了。

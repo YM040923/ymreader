@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../design/backdrop.dart';
+import '../../design/tokens.dart';
 import '../../widgets/phosphor_icons.dart';
 
 /// 新客户端的 Fushi 式外壳：
@@ -8,7 +10,7 @@ import '../../widgets/phosphor_icons.dart';
 /// 保留旧页面的 `shellBarClearance` 约定，让已有滚动页不用改。
 double shellBarClearance(BuildContext context) {
   if (MediaQuery.sizeOf(context).width >= 900) return 0;
-  return 72 + MediaQuery.paddingOf(context).bottom;
+  return 88 + MediaQuery.paddingOf(context).bottom;
 }
 
 class AppShell extends StatelessWidget {
@@ -49,19 +51,23 @@ class AppShell extends StatelessWidget {
         ],
       );
     }
-    return Stack(
-      children: [
-        Positioned.fill(child: child),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Stack(
+        children: [
+          const Positioned.fill(child: BlobBackdrop()),
+          Positioned.fill(child: child),
+          Positioned(
+          left: 16,
+          right: 16,
+          bottom: 12 + MediaQuery.paddingOf(context).bottom,
           child: _MobileNav(
             index: index,
             onSelected: (i) => _go(context, i),
           ),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -193,66 +199,54 @@ class _MobileNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
     return Container(
+      height: 64,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerLowest,
-        border: Border(top: BorderSide(color: colors.outlineVariant)),
+        color: colors.tertiaryContainer,
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: colors.shadow.withValues(alpha: 0.10),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 72,
-          child: Row(
-            children: [
-              for (var i = 0; i < _items.length; i++)
-                Expanded(
+      child: Row(
+        children: [
+          for (var i = 0; i < _items.length; i++)
+            Expanded(
+              child: Tooltip(
+                message: _items[i].label,
+                child: InkWell(
+                  onTap: () => onSelected(i),
+                  borderRadius: BorderRadius.circular(24),
                   child: Center(
-                    child: InkWell(
-                      onTap: () => onSelected(i),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        width: 64,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: i == index
-                              ? colors.primaryContainer
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              i == index
-                                  ? _items[i].activeIcon
-                                  : _items[i].icon,
-                              size: 24,
-                              color: i == index
-                                  ? colors.primary
-                                  : colors.onSurfaceVariant,
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              _items[i].label,
-                              style: text.labelSmall?.copyWith(
-                                color: i == index
-                                    ? colors.primary
-                                    : colors.onSurfaceVariant,
-                                fontWeight: i == index
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
+                    child: AnimatedContainer(
+                      duration: ZMotion.short,
+                      curve: ZMotion.standard,
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: i == index
+                            ? colors.primary
+                            : Colors.transparent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        i == index ? _items[i].activeIcon : _items[i].icon,
+                        size: 23,
+                        color: i == index
+                            ? colors.onPrimary
+                            : colors.onTertiaryContainer,
                       ),
                     ),
                   ),
                 ),
-            ],
-          ),
-        ),
+              ),
+            ),
+        ],
       ),
     );
   }

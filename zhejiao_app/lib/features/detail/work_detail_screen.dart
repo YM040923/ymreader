@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -214,11 +216,36 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
         slivers: [
           SliverAppBar(
             pinned: true,
-            title: const Text('作品详情'),
+            expandedHeight: width >= 860 ? 380 : 340,
+            toolbarHeight: 64,
+            backgroundColor: colors.surface,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            leadingWidth: 64,
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: IconButton(
+                tooltip: '返回',
+                onPressed: () => context.pop(),
+                style: IconButton.styleFrom(
+                  backgroundColor: colors.surface.withValues(alpha: 0.72),
+                  foregroundColor: colors.onSurface,
+                ),
+                icon: const Icon(Icons.arrow_back_rounded, size: 22),
+              ),
+            ),
             actions: [
               if (canManage)
                 PopupMenuButton<String>(
                   tooltip: '整理作品',
+                  icon: Icon(
+                    Icons.more_horiz_rounded,
+                    color: colors.onSurface,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: colors.surface.withValues(alpha: 0.72),
+                  ),
                   onSelected: (value) {
                     switch (value) {
                       case 'merge':
@@ -269,21 +296,41 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                       ),
                   ],
                 ),
-              IconButton(
-                tooltip: work.isFavorite ? '取消收藏' : '收藏',
-                onPressed: () async {
-                  await ref
-                      .read(workApiProvider)
-                      .setFavorite(work.id, !work.isFavorite);
-                  ref.invalidate(workDetailProvider(work.id));
-                },
-                icon: Icon(
-                  work.isFavorite
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
+              const SizedBox(width: 6),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: IconButton(
+                  tooltip: work.isFavorite ? '取消收藏' : '收藏',
+                  onPressed: () async {
+                    await ref
+                        .read(workApiProvider)
+                        .setFavorite(work.id, !work.isFavorite);
+                    ref.invalidate(workDetailProvider(work.id));
+                  },
+                  style: IconButton.styleFrom(
+                    backgroundColor: colors.surface.withValues(alpha: 0.72),
+                    foregroundColor: work.isFavorite
+                        ? colors.error
+                        : colors.onSurface,
+                  ),
+                  icon: Icon(
+                    work.isFavorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                  ),
                 ),
               ),
             ],
+            flexibleSpace: FlexibleSpaceBar(
+              collapseMode: CollapseMode.parallax,
+              background: _DetailHero(
+                work: work,
+                serverUrl: serverUrl,
+                target: target,
+                horizontal: horizontal,
+                wide: width >= 860,
+              ),
+            ),
           ),
           SliverToBoxAdapter(
             child: Padding(
@@ -291,91 +338,6 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: SizedBox(
-                          width: 112,
-                          height: 149,
-                          child: AuthenticatedImage(
-                            imageUrl: work.resolvedCoverUrl(serverUrl),
-                            fit: BoxFit.cover,
-                            placeholder: ColoredBox(
-                              color: colors.surfaceContainerHighest,
-                            ),
-                            errorWidget: ColoredBox(
-                              color: colors.surfaceContainerHighest,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: SizedBox(
-                          height: 149,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                work.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1.25,
-                                ),
-                              ),
-                              if (work.author.isNotEmpty) ...[
-                                const SizedBox(height: 6),
-                                Text(
-                                  work.author,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 4),
-                              Text(
-                                '${work.itemCount}话 · ${work.pageCount}页',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: colors.tertiary,
-                                ),
-                              ),
-                              if (target != null) ...[
-                                const SizedBox(height: 12),
-                                Text(
-                                  '上次读到 ${target.unit.displayLabel} · 第${target.relativePage + 1}页',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(1),
-                                  child: LinearProgressIndicator(
-                                    value: work.progress / 100,
-                                    minHeight: 2,
-                                    color: colors.primary,
-                                    backgroundColor: colors.outlineVariant,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                   const SizedBox(height: 16),
                   SizedBox(
                     width: width >= 860 ? 320 : double.infinity,
@@ -383,6 +345,12 @@ class _WorkDetailBodyState extends ConsumerState<_WorkDetailBody> {
                       onPressed: target == null
                           ? null
                           : () => _openReader(work.readerRoute()),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                      ),
                       child: Text(
                         target == null
                             ? '开始阅读'
@@ -648,6 +616,175 @@ class _DirectoryTab extends StatelessWidget {
           fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
           color: selected ? colors.onSurface : colors.tertiary,
         ),
+      ),
+    );
+  }
+}
+
+
+class _DetailHero extends StatelessWidget {
+  const _DetailHero({
+    required this.work,
+    required this.serverUrl,
+    required this.target,
+    required this.horizontal,
+    required this.wide,
+  });
+
+  final Work work;
+  final String serverUrl;
+  final WorkReadingTarget? target;
+  final double horizontal;
+  final bool wide;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final coverWidth = wide ? 140.0 : 112.0;
+    final coverHeight = coverWidth * 4 / 3;
+    final coverUrl = work.resolvedCoverUrl(serverUrl);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+          child: Transform.scale(
+            scale: 1.18,
+            child: AuthenticatedImage(
+              imageUrl: coverUrl,
+              fit: BoxFit.cover,
+              placeholder: ColoredBox(color: colors.surfaceContainerHighest),
+              errorWidget: ColoredBox(color: colors.surfaceContainerHighest),
+            ),
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                colors.surface.withValues(alpha: 0.30),
+                colors.surface.withValues(alpha: 0.72),
+                colors.surface,
+              ],
+              stops: const [0, 0.62, 1],
+            ),
+          ),
+        ),
+        Positioned(
+          left: horizontal,
+          right: horizontal,
+          bottom: 24,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              SizedBox(
+                width: coverWidth,
+                height: coverHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AuthenticatedImage(
+                    imageUrl: coverUrl,
+                    fit: BoxFit.cover,
+                    placeholder:
+                        ColoredBox(color: colors.surfaceContainerHighest),
+                    errorWidget:
+                        ColoredBox(color: colors.surfaceContainerHighest),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      work.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.headlineSmall?.copyWith(
+                        fontSize: wide ? 30 : 26,
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                      ),
+                    ),
+                    if (work.author.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        work.author,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _MetaChip('${work.itemCount} 话'),
+                        _MetaChip('${work.pageCount} 页'),
+                        if (work.status.isNotEmpty) _MetaChip(work.status),
+                      ],
+                    ),
+                    if (target != null) ...[
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: work.progress / 100,
+                          minHeight: 4,
+                          color: colors.primary,
+                          backgroundColor:
+                              colors.onSurface.withValues(alpha: 0.12),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '上次读到 ${target!.unit.displayLabel} · 第${target!.relativePage + 1}页',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.labelSmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
       ),
     );
   }

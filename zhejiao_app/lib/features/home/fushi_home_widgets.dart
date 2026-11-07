@@ -266,7 +266,7 @@ class _FushiContinueBannerState extends ConsumerState<_FushiContinueBanner> {
     final target = work.continueTarget;
     final label = target == null
         ? '${work.progress}%'
-        : '${target.unit.displayLabel} · ${work.progress}%';
+        : '${target.unit.displayLabel} · 已读 ${work.progress}%';
 
     return Material(
       color: colors.secondaryContainer,
@@ -296,7 +296,7 @@ class _FushiContinueBannerState extends ConsumerState<_FushiContinueBanner> {
                   ),
                 ),
               ),
-              SizedBox(width: desktop ? 20 : 14),
+              SizedBox(width: desktop ? 20 : 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

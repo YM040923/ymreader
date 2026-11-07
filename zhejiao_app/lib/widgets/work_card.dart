@@ -45,18 +45,6 @@ class WorkCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   _cover(colors),
-                  if (work.hasReadingProgress)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: LinearProgressIndicator(
-                        value: work.progress / 100,
-                        minHeight: 3,
-                        backgroundColor: Colors.black26,
-                        color: colors.primary,
-                      ),
-                    ),
                   if (onFavorite != null)
                     Positioned(
                       top: 6,
@@ -84,7 +72,7 @@ class WorkCard extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 8),
           Text(
             work.title,
             maxLines: 1,
@@ -95,6 +83,18 @@ class WorkCard extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+          if (work.hasReadingProgress) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: (work.progress / 100).clamp(0.0, 1.0),
+                minHeight: 3,
+                color: colors.primary,
+                backgroundColor: colors.surfaceContainerHighest,
+              ),
+            ),
+          ],
           if (showMeta) ...[
             const SizedBox(height: 3),
             Text(

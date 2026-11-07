@@ -57,10 +57,15 @@ class NowenReader(
     private val apiKey: String
         get() = preferences.getString(PREF_API_KEY, "")!!.trim()
 
+    private val sessionCookie: String
+        get() = preferences.getString(PREF_COOKIE, "")!!.trim()
+
     override fun Headers.Builder.configureHeaders() = apply {
         set("User-Agent", "NowenReader/1.0")
         if (apiKey.isNotBlank()) {
             set("Authorization", "Bearer $apiKey")
+        } else if (sessionCookie.isNotBlank()) {
+            set("Cookie", "nowen_session=$sessionCookie")
         }
     }
 
@@ -253,6 +258,8 @@ class NowenReader(
         // 空 Bearer 会让已经登录的 nowen_session 也一起失效（图片 401）。
         if (apiKey.isNotBlank()) {
             builder.header("Authorization", "Bearer $apiKey")
+        } else if (sessionCookie.isNotBlank()) {
+            builder.header("Cookie", "nowen_session=$sessionCookie")
         }
         return builder.build()
     }
@@ -282,6 +289,18 @@ class NowenReader(
                 } else {
                     "已设置"
                 }
+                true
+            }
+        }.let(screen::addPreference)
+
+        EditTextPreference(screen.context).apply {
+            key = PREF_COOKIE
+            title = "Session Cookie（可选）"
+            summary = if (sessionCookie.isBlank()) "未设置" else "已设置"
+            setDefaultValue("")
+            dialogTitle = "nowen_session 的值"
+            setOnPreferenceChangeListener { pref, value ->
+                pref.summary = if (value.toString().isBlank()) "未设置" else "已设置"
                 true
             }
         }.let(screen::addPreference)
@@ -382,6 +401,7 @@ class NowenReader(
         private const val POPULAR_PAGE_SIZE = 300
         private const val PREF_URL = "server_url"
         private const val PREF_API_KEY = "api_key"
+        private const val PREF_COOKIE = "session_cookie"
         private const val PREF_LAST_POPULAR = "last_popular_first"
 
         private val json = Json {

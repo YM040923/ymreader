@@ -247,6 +247,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final gridHorizontal = desktop ? 40.0 : 16.0;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: RefreshIndicator(
         onRefresh: () async {
           setState(() => _featuredRefresh++);
